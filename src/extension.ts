@@ -114,7 +114,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
                 // Now write the generated content to file
                 const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-                if (!wsFolder) throw new Error('No workspace folder open.');
+                if (!wsFolder) throw new Error('No workspace folder open. Open a folder in VS Code first to use /write command.');
                 const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
 
                 // Create parent directories if they don't exist
@@ -132,9 +132,14 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   success: true,
                 });
               } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                const errorDetail = errMsg.includes('EACCES') ? 'Permission denied. Check file permissions.' :
+                                    errMsg.includes('ENOENT') ? 'Path not found. Check workspace folder.' :
+                                    errMsg.includes('EISDIR') ? 'Target is a directory, not a file.' :
+                                    errMsg;
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
-                  error: `Error writing file: ${relPath}\n${err instanceof Error ? err.message : String(err)}`,
+                  error: `Error writing file: ${relPath}\nReason: ${errorDetail}`,
                   success: false,
                 });
               }
@@ -160,9 +165,14 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   success: true,
                 });
               } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                const errorDetail = errMsg.includes('EACCES') ? 'Permission denied. Check file permissions.' :
+                                    errMsg.includes('ENOENT') ? `File not found: ${relPath}` :
+                                    errMsg.includes('EISDIR') ? 'Target is a directory, not a file.' :
+                                    errMsg;
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
-                  error: `Error reading file: ${relPath}\n${err instanceof Error ? err.message : String(err)}`,
+                  error: `Error reading file: ${relPath}\nReason: ${errorDetail}`,
                   success: false,
                 });
               }
@@ -360,7 +370,13 @@ export function activate(context: vscode.ExtensionContext) {
     if (isHealthy) {
       vscode.window.showInformationMessage('✅ Successfully connected to LLM server!');
     } else {
-      vscode.window.showErrorMessage('❌ Could not connect to LLM server. Check endpoint and ensure server is running.');
+      const config = getLLMConfig();
+      const errorMsg = `❌ Could not connect to LLM server at ${config.endpoint}.\n\nSuggestions:\n` +
+        `1. Verify the server is running (e.g., 'ollama run ${config.model}')\n` +
+        `2. Check endpoint in settings: llm-assistant.endpoint\n` +
+        `3. Ensure model '${config.model}' is installed\n` +
+        `4. If using non-default port, update llm-assistant.endpoint`;
+      vscode.window.showErrorMessage(errorMsg);
     }
   });
 

@@ -18,7 +18,7 @@ export async function ollamaGenerate({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, prompt })
   });
-  if (!res.ok) throw new Error(`Ollama error: ${res.statusText}`);
+  if (!res.ok) throw new Error(`LLM API error: ${res.status} ${res.statusText}. Check endpoint and model availability.`);
   const data = await res.json() as any;
   return data.response as string;
 }
@@ -110,7 +110,10 @@ export class LLMClient {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`LLM server error: ${response.statusText}`);
+        const statusError = response.status === 404 ? 'Model not found. Check llm-assistant.model setting.' :
+                            response.status === 503 ? 'LLM server is busy. Try again in a moment.' :
+                            `Server error: ${response.statusText}`;
+        throw new Error(statusError);
       }
 
       // Process streaming response
