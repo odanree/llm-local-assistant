@@ -65,9 +65,7 @@ export function getWebviewContent(): string {
         const div = document.createElement('div');
         div.className = 'msg assistant';
         if (msg.error) {
-          div.style.color = '#dc2626';
-          div.style.background = 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)';
-          div.style.border = '1px solid #fca5a5';
+          div.className = 'msg assistant error';
           const strong = document.createElement('strong');
           strong.textContent = '⚠ Error: ';
           const span = document.createElement('span');
@@ -81,9 +79,7 @@ export function getWebviewContent(): string {
         chat.scrollTop = chat.scrollHeight;
       } else if (msg.command === 'status') {
         const div = document.createElement('div');
-        div.className = 'msg assistant';
-        div.style.color = '#6b7280';
-        div.style.background = 'linear-gradient(135deg, rgba(249,250,251,0.8) 0%, rgba(243,244,246,0.8) 100%)';
+        div.className = 'msg assistant status';
         const em = document.createElement('em');
         em.textContent = msg.text;
         div.appendChild(em);
@@ -99,134 +95,158 @@ export function getWebviewContent(): string {
         <title>LLM Assistant</title>
         ${csp}
         <style>
+          * {
+            box-sizing: border-box;
+          }
           body {
-            font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             margin: 0;
             padding: 0;
-            background: linear-gradient(180deg, var(--vscode-editor-background) 60%, #23272e 100%);
-            color: var(--vscode-foreground);
+            background: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+            font-size: 13px;
+            line-height: 1.5;
           }
           #app {
             display: flex;
             flex-direction: column;
             height: 100vh;
-            max-width: 600px;
-            margin: 0 auto;
-            box-shadow: 0 2px 16px 0 rgba(0,0,0,0.08);
-            background: rgba(255,255,255,0.03);
-            border-radius: 16px;
-            overflow: hidden;
+            background: var(--vscode-editor-background);
           }
           #chat {
             flex: 1;
             overflow-y: auto;
-            padding: 24px 16px 0 16px;
-            background: none;
+            padding: 16px;
             display: flex;
             flex-direction: column;
-            gap: 2px;
+            gap: 8px;
+            background: var(--vscode-editor-background);
+          }
+          #chat::-webkit-scrollbar {
+            width: 10px;
+          }
+          #chat::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          #chat::-webkit-scrollbar-thumb {
+            background: var(--vscode-scrollbarSlider-background);
+            border-radius: 5px;
+          }
+          #chat::-webkit-scrollbar-thumb:hover {
+            background: var(--vscode-scrollbarSlider-hoverBackground);
           }
           .msg {
-            padding: 14px 18px;
-            border-radius: 12px;
-            margin-bottom: 12px;
-            font-size: 0.95rem;
-            line-height: 1.6;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            padding: 12px 14px;
+            border-radius: 6px;
             word-break: break-word;
-            max-width: 85%;
-            transition: all 0.15s ease;
             white-space: pre-wrap;
             overflow-x: auto;
+            line-height: 1.6;
           }
-          .msg:hover {
-            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+          .msg code {
+            background: var(--vscode-textCodeBlock-background);
+            color: var(--vscode-textPreformat-foreground);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+          }
+          .msg pre {
+            background: var(--vscode-textCodeBlock-background);
+            color: var(--vscode-textPreformat-foreground);
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            margin: 6px 0;
           }
           .user {
             align-self: flex-end;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: #fff;
-            border-bottom-right-radius: 4px;
-            box-shadow: 0 2px 6px rgba(59,130,246,0.15);
-            margin-right: 0;
+            max-width: 85%;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border-radius: 6px;
             margin-left: auto;
             text-align: right;
           }
-          .user:hover {
-            box-shadow: 0 3px 8px rgba(59,130,246,0.2);
-          }
           .assistant {
             align-self: flex-start;
-            background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-            color: #1f2937;
-            border-bottom-left-radius: 4px;
-            border: 1px solid #d1d5db;
+            max-width: 100%;
+            background: transparent;
+            color: var(--vscode-editor-foreground);
+            border-left: 3px solid var(--vscode-textSeparator-foreground);
+            padding-left: 12px;
           }
-          .assistant:hover {
-            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+          .assistant.error {
+            border-left-color: #d32f2f;
+            color: #d32f2f;
+            background: transparent;
+          }
+          .assistant.error strong {
+            font-weight: 600;
+          }
+          .assistant.status {
+            border-left-color: var(--vscode-textSeparator-foreground);
+            color: var(--vscode-disabledForeground);
+            font-style: italic;
           }
           .input-row {
             display: flex;
-            gap: 10px;
-            padding: 16px;
-            background: rgba(245,245,245,0.85);
-            border-top: 1px solid #e5e7eb;
+            gap: 8px;
+            padding: 12px 16px;
+            background: var(--vscode-input-background);
+            border-top: 1px solid var(--vscode-panel-border);
             align-items: center;
           }
           input[type="text"] {
-            padding: 12px 14px;
-            border: 1.5px solid #d1d5db;
-            background: var(--vscode-input-background, #f9fafb);
-            color: var(--vscode-input-foreground, #23272e);
-            border-radius: 6px;
+            padding: 10px 12px;
+            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border-radius: 4px;
             flex: 1;
-            font-size: 0.95rem;
+            font-size: 13px;
+            font-family: inherit;
             outline: none;
-            transition: all 0.15s ease;
+            transition: border-color 0.1s ease;
           }
           input[type="text"]:focus {
-            border: 1.5px solid #3b82f6;
-            background: var(--vscode-input-background, #fff);
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+            border: 1px solid var(--vscode-focusBorder);
+            outline: 1px solid var(--vscode-focusBorder);
+            outline-offset: -1px;
           }
           input[type="text"]::placeholder {
-            color: #9ca3af;
+            color: var(--vscode-input-placeholderForeground);
           }
           button {
-            padding: 0 16px;
-            height: 38px;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: #fff;
+            padding: 6px 14px;
+            height: 32px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
             border: none;
-            border-radius: 6px;
-            font-size: 0.95rem;
-            font-weight: 600;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(59,130,246,0.2);
-            transition: all 0.15s ease;
+            transition: background-color 0.1s ease;
+            font-family: inherit;
           }
           button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(59,130,246,0.25);
+            background: var(--vscode-button-hoverBackground);
           }
           button:active {
-            transform: translateY(0);
-            box-shadow: 0 1px 2px rgba(59,130,246,0.15);
+            background: var(--vscode-button-background);
+            opacity: 0.8;
           }
           button#clear {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            color: #fff;
-            border: none;
-            box-shadow: 0 2px 4px rgba(239,68,68,0.2);
+            background: transparent;
+            color: var(--vscode-button-secondaryForeground);
+            border: 1px solid var(--vscode-button-border);
             margin-left: auto;
           }
           button#clear:hover {
-            box-shadow: 0 4px 8px rgba(239,68,68,0.25);
-          }
-            margin-left: 0;
-          }
-          button:active {
-            filter: brightness(0.95);
+            background: var(--vscode-button-secondaryHoverBackground);
           }
         </style>
       </head>
