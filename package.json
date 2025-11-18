@@ -1,0 +1,90 @@
+{
+  "name": "llm-local-assistant",
+  "displayName": "LLM Local Assistant",
+  "description": "VS Code extension that connects to a local LLM (Mistral 7B) for code assistance and chat",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.106.1"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:llm-local-assistant.openChat",
+    "onCommand:llm-local-assistant.testConnection"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "llm-local-assistant.openChat",
+        "title": "Open LLM Chat",
+        "category": "LLM Assistant"
+      },
+      {
+        "command": "llm-local-assistant.testConnection",
+        "title": "Test LLM Connection",
+        "category": "LLM Assistant"
+      }
+    ],
+    "configuration": [
+      {
+        "title": "LLM Assistant",
+        "properties": {
+          "llm-assistant.endpoint": {
+            "type": "string",
+            "default": "http://localhost:11434",
+            "description": "LLM server endpoint (e.g., Ollama, LM Studio)"
+          },
+          "llm-assistant.model": {
+            "type": "string",
+            "default": "mistral",
+            "description": "Model name to use (e.g., 'mistral', 'neural-chat', 'orca-2')"
+          },
+          "llm-assistant.temperature": {
+            "type": "number",
+            "default": 0.7,
+            "minimum": 0,
+            "maximum": 2,
+            "description": "Sampling temperature (lower = more deterministic, higher = more creative)"
+          },
+          "llm-assistant.maxTokens": {
+            "type": "number",
+            "default": 2048,
+            "minimum": 256,
+            "description": "Maximum tokens in response"
+          },
+          "llm-assistant.timeout": {
+            "type": "number",
+            "default": 30000,
+            "description": "Request timeout in milliseconds"
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.106.1",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.46.3",
+    "eslint": "^9.39.1",
+    "typescript": "^5.9.3",
+    "ts-loader": "^9.5.4",
+    "webpack": "^5.102.1",
+    "webpack-cli": "^6.0.1",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

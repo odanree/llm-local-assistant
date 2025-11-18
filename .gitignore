@@ -1,0 +1,9 @@
+out
+dist
+node_modules
+.vscode-test/
+*.vsix
+
+# AI Coding Agent Instructions (internal development context)
+.github/copilot-instructions.md
+

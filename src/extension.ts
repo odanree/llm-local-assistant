@@ -1,0 +1,384 @@
+// The module 'vscode' contains the VS Code extensibility API
+import * as vscode from 'vscode';
+import { LLMClient, LLMConfig } from './llmClient';
+import { getWebviewContent } from './webviewContent';
+import * as path from 'path';
+
+let llmClient: LLMClient;
+let chatPanel: vscode.WebviewPanel | undefined;
+
+/**
+ * Get LLM configuration from VS Code settings
+ */
+function getLLMConfig(): LLMConfig {
+  const config = vscode.workspace.getConfiguration('llm-assistant');
+  
+  return {
+    endpoint: config.get('endpoint', 'http://localhost:11434'),
+    model: config.get('model', 'mistral'),
+    temperature: config.get('temperature', 0.7),
+    maxTokens: config.get('maxTokens', 2048),
+    timeout: config.get('timeout', 30000),
+    stream: true,
+  };
+}
+
+/**
+ * Open the LLM Chat panel
+ */
+function openLLMChat(context: vscode.ExtensionContext): void {
+  if (chatPanel) {
+    chatPanel.reveal(vscode.ViewColumn.Two);
+    return;
+  }
+
+  // Create webview panel
+  chatPanel = vscode.window.createWebviewPanel(
+    'llmChat',
+    'LLM Assistant',
+    vscode.ViewColumn.Two,
+    {
+      enableScripts: true,
+    }
+  );
+
+  // Set the webview's initial html content
+  chatPanel.webview.html = getWebviewContent();
+
+  // Show agent mode command help when panel opens
+  setTimeout(() => {
+    chatPanel?.webview.postMessage({
+      command: 'addMessage',
+      text: `**Agent Mode Commands:**\n\n` +
+        `- /read <relative-path> — Read a file from your workspace.\n` +
+        `- /write <relative-path> <content> — Write content to a file.\n` +
+        `- /suggestwrite <relative-path> <content> — LLM suggests a file change, you confirm before writing.`,
+      type: 'info',
+      success: true,
+    });
+  }, 500);
+
+  // Handle webview messages
+  chatPanel.webview.onDidReceiveMessage(
+    async (message) => {
+      console.log('[LLM Assistant] Received message from webview:', message);
+      try {
+        switch (message.command) {
+          case 'sendMessage': {
+            const text: string = message.text || '';
+            console.log('[LLM Assistant] Processing message:', text);
+
+            // Check for /write command
+            const writeMatch = text.match(/\/write\s+(\S+)(?:\s+(.+))?$/);
+            
+            // AGENT MODE: /write <path> [prompt]
+            if (writeMatch) {
+              const relPath = writeMatch[1];
+              const prompt: string = (writeMatch[2] || 'Generate appropriate content for this file based on its name.').trim();
+              
+              console.log('[LLM Assistant] /write detected - path:', relPath, 'prompt:', prompt);
+              
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: `Generating content for ${relPath}...`,
+                type: 'info',
+              });
+
+              try {
+                const endpoint: string = llmClient["config"].endpoint;
+                const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
+                let generatedContent = '';
+
+                if (isOllamaNonDefaultPort) {
+                  // Use non-streaming response
+                  const response = await llmClient.sendMessage(prompt);
+                  if (response.success) {
+                    generatedContent = response.message || '';
+                  } else {
+                    throw new Error(response.error);
+                  }
+                } else {
+                  // Use streaming response - collect all tokens
+                  const response = await llmClient.sendMessageStream(
+                    prompt,
+                    async (token: string, complete: boolean) => {
+                      if (!complete && token) {
+                        generatedContent += token;
+                      }
+                    }
+                  );
+                  if (!response.success) {
+                    throw new Error(response.error);
+                  }
+                }
+
+                // Now write the generated content to file
+                const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+                if (!wsFolder) throw new Error('No workspace folder open.');
+                const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
+
+                // Create parent directories if they don't exist
+                const dirUri = vscode.Uri.joinPath(fileUri, '..');
+                try {
+                  await vscode.workspace.fs.createDirectory(dirUri);
+                } catch (e) {
+                  // Directory might already exist, that's ok
+                }
+
+                await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(generatedContent));
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: `✅ Successfully generated and wrote file: ${relPath}\n\n\`\`\`\n${generatedContent}\n\`\`\``,
+                  success: true,
+                });
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Error writing file: ${relPath}\n${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /read command
+            const readMatch = text.match(/\/read\s+(\S+)/);
+
+            // AGENT MODE: /read <path>
+            if (readMatch) {
+              const relPath = readMatch[1];
+              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+              if (!wsFolder) throw new Error('No workspace folder open.');
+              const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
+
+              try {
+                const data = await vscode.workspace.fs.readFile(fileUri);
+                const fileContent = new TextDecoder('utf-8').decode(data);
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: `Read file: ${relPath}\n\n\`\`\`\n${fileContent}\n\`\`\``,
+                  success: true,
+                });
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Error reading file: ${relPath}\n${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /suggestwrite command
+            const suggestwriteMatch = text.match(/\/suggestwrite\s+(\S+)(?:\s+(.+))?$/);
+
+            // AGENT MODE: /suggestwrite <path> [prompt]
+            if (suggestwriteMatch) {
+              const relPath = suggestwriteMatch[1];
+              const prompt: string = (suggestwriteMatch[2] || 'Generate appropriate content for this file based on its name.').trim();
+              
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: `Generating content for ${relPath}...`,
+                type: 'info',
+              });
+
+              try {
+                const endpoint: string = llmClient["config"].endpoint;
+                const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
+                let generatedContent = '';
+
+                if (isOllamaNonDefaultPort) {
+                  // Use non-streaming response
+                  const response = await llmClient.sendMessage(prompt);
+                  if (response.success) {
+                    generatedContent = response.message || '';
+                  } else {
+                    throw new Error(response.error);
+                  }
+                } else {
+                  // Use streaming response - collect all tokens
+                  const response = await llmClient.sendMessageStream(
+                    prompt,
+                    async (token: string, complete: boolean) => {
+                      if (!complete && token) {
+                        generatedContent += token;
+                      }
+                    }
+                  );
+                  if (!response.success) {
+                    throw new Error(response.error);
+                  }
+                }
+
+                const confirm = await vscode.window.showInformationMessage(
+                  `LLM suggests writing to ${relPath}. Preview:\n\n${generatedContent.substring(0, 200)}${generatedContent.length > 200 ? '...' : ''}\n\nProceed?`,
+                  { modal: true },
+                  'Yes',
+                  'No'
+                );
+
+                if (confirm === 'Yes') {
+                  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+                  if (!wsFolder) throw new Error('No workspace folder open.');
+                  const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
+
+                  // Create parent directories if they don't exist
+                  const dirUri = vscode.Uri.joinPath(fileUri, '..');
+                  try {
+                    await vscode.workspace.fs.createDirectory(dirUri);
+                  } catch (e) {
+                    // Directory might already exist, that's ok
+                  }
+
+                  await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(generatedContent));
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    text: `✅ Successfully wrote file: ${relPath}`,
+                    success: true,
+                  });
+                } else {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    error: `User cancelled writing to file: ${relPath}`,
+                    success: false,
+                  });
+                }
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Normal LLM chat
+            chatPanel?.webview.postMessage({
+              command: 'status',
+              text: 'Streaming response...',
+              type: 'info',
+            });
+
+            const endpoint: string = llmClient["config"].endpoint;
+            const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
+
+            if (isOllamaNonDefaultPort) {
+              // Use non-streaming response
+              const response = await llmClient.sendMessage(text);
+              if (response.success) {
+                chatPanel?.webview.postMessage({
+                  command: 'streamToken',
+                  token: response.message,
+                });
+              } else {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: response.error,
+                  success: false,
+                });
+              }
+            } else {
+              // Use streaming response
+              const response = await llmClient.sendMessageStream(
+                text,
+                async (token: string, complete: boolean) => {
+                  if (complete) {
+                    chatPanel?.webview.postMessage({
+                      command: 'streamComplete',
+                    });
+                  } else if (token) {
+                    chatPanel?.webview.postMessage({
+                      command: 'streamToken',
+                      token: token,
+                    });
+                  }
+                }
+              );
+              if (!response.success) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: response.error,
+                  success: false,
+                });
+              }
+            }
+            break;
+          }
+
+          case 'clearChat': {
+            llmClient.clearHistory();
+            chatPanel?.webview.postMessage({
+              command: 'status',
+              text: 'Chat history cleared',
+              type: 'info',
+            });
+            break;
+          }
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        chatPanel?.webview.postMessage({
+          command: 'addMessage',
+          error: errorMsg,
+          success: false,
+        });
+      }
+    },
+    undefined,
+    context.subscriptions
+  );
+
+  // Handle panel close
+  chatPanel.onDidDispose(
+    () => {
+      chatPanel = undefined;
+    },
+    undefined,
+    context.subscriptions
+  );
+}
+
+/**
+ * Extension activation
+ */
+export function activate(context: vscode.ExtensionContext) {
+  console.log('LLM Local Assistant is now active!');
+
+  // Initialize LLM client with config
+  const config = getLLMConfig();
+  llmClient = new LLMClient(config);
+
+  // Register commands
+  const openChatCommand = vscode.commands.registerCommand('llm-local-assistant.openChat', () => {
+    openLLMChat(context);
+  });
+
+  const testConnectionCommand = vscode.commands.registerCommand('llm-local-assistant.testConnection', async () => {
+    const isHealthy = await llmClient.isServerHealthy();
+    if (isHealthy) {
+      vscode.window.showInformationMessage('✅ Successfully connected to LLM server!');
+    } else {
+      vscode.window.showErrorMessage('❌ Could not connect to LLM server. Check endpoint and ensure server is running.');
+    }
+  });
+
+  context.subscriptions.push(openChatCommand, testConnectionCommand);
+
+  // Create status bar item to open chat
+  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBarItem.command = 'llm-local-assistant.openChat';
+  statusBarItem.text = '$(sparkle) LLM Assistant';
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+}
+
+/**
+ * Extension deactivation
+ */
+export function deactivate() {
+  if (chatPanel) {
+    chatPanel.dispose();
+  }
+}
