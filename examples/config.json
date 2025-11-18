@@ -1,0 +1,28 @@
+{
+  "name": "LLM Assistant Demo Configuration",
+  "version": "1.0.0",
+  "description": "Example configuration file for the LLM Assistant extension",
+  "llm": {
+    "endpoint": "http://localhost:11434",
+    "model": "mistral",
+    "temperature": 0.7,
+    "maxTokens": 2048,
+    "timeout": 30000
+  },
+  "features": {
+    "streamingEnabled": true,
+    "conversationHistory": true,
+    "fileOperationsEnabled": true
+  },
+  "supportedModels": [
+    "mistral",
+    "llama2",
+    "neural-chat",
+    "starling-lm"
+  ],
+  "commands": {
+    "read": "Read file content from workspace",
+    "write": "Generate and write new files",
+    "suggestwrite": "Suggest file changes with approval"
+  }
+}
