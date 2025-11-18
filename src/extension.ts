@@ -158,10 +158,17 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
               try {
                 const data = await vscode.workspace.fs.readFile(fileUri);
-                const fileContent = new TextDecoder('utf-8').decode(data);
+                // Performance optimization: Warn and truncate files larger than 5MB
+                const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+                let fileContent = new TextDecoder('utf-8').decode(data);
+                let sizeWarning = '';
+                if (data.byteLength > MAX_FILE_SIZE) {
+                  sizeWarning = `\n⚠️ File is ${(data.byteLength / (1024 * 1024)).toFixed(2)}MB. Showing first 5MB.\n`;
+                  fileContent = fileContent.substring(0, MAX_FILE_SIZE);
+                }
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
-                  text: `Read file: ${relPath}\n\n\`\`\`\n${fileContent}\n\`\`\``,
+                  text: `Read file: ${relPath}${sizeWarning}\n\`\`\`\n${fileContent}\n\`\`\``,
                   success: true,
                 });
               } catch (err) {

@@ -7,6 +7,24 @@ export function getWebviewContent(): string {
     const input = document.getElementById('input');
     const send = document.getElementById('send');
     const clear = document.getElementById('clear');
+    let tokenBuffer = '';
+    let bufferTimeout = null;
+    function flushTokenBuffer() {
+      if (tokenBuffer) {
+        const msgs = chat.children;
+        if (msgs.length === 0 || msgs[msgs.length - 1].className === 'msg user') {
+          const div = document.createElement('div');
+          div.className = 'msg assistant';
+          div.setAttribute('data-type', 'streaming');
+          chat.appendChild(div);
+        }
+        const lastMsg = chat.children[chat.children.length - 1];
+        lastMsg.textContent += tokenBuffer;
+        chat.scrollTop = chat.scrollHeight;
+        tokenBuffer = '';
+      }
+      bufferTimeout = null;
+    }
     function sendMessage() {
       const msg = input.value.trim();
       if (msg) {
@@ -28,17 +46,20 @@ export function getWebviewContent(): string {
     window.addEventListener('message', (e) => {
       const msg = e.data;
       if (msg.command === 'streamToken') {
-        const msgs = chat.children;
-        if (msgs.length === 0 || msgs[msgs.length - 1].className === 'msg user') {
-          const div = document.createElement('div');
-          div.className = 'msg assistant';
-          div.setAttribute('data-type', 'streaming');
-          chat.appendChild(div);
+        // Buffer tokens for batch DOM updates (every ~10 tokens)
+        tokenBuffer += msg.token;
+        if (tokenBuffer.length >= 10) {
+          flushTokenBuffer();
+        } else if (!bufferTimeout) {
+          // Ensure buffer flushes even if we get fewer than 10 tokens
+          bufferTimeout = setTimeout(flushTokenBuffer, 50);
         }
-        const lastMsg = chat.children[chat.children.length - 1];
-        lastMsg.textContent += msg.token;
-        chat.scrollTop = chat.scrollHeight;
       } else if (msg.command === 'streamComplete') {
+        // Flush any remaining buffered tokens
+        if (bufferTimeout) {
+          clearTimeout(bufferTimeout);
+        }
+        flushTokenBuffer();
         chat.scrollTop = chat.scrollHeight;
       } else if (msg.command === 'addMessage') {
         const div = document.createElement('div');
