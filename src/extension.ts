@@ -1,6 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 import * as vscode from 'vscode';
 import { LLMClient, LLMConfig } from './llmClient';
+import { GitClient } from './gitClient';
 import { getWebviewContent } from './webviewContent';
 import * as path from 'path';
 
@@ -50,9 +51,13 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     chatPanel?.webview.postMessage({
       command: 'addMessage',
       text: `**Agent Mode Commands:**\n\n` +
-        `- /read <relative-path> — Read a file from your workspace.\n` +
-        `- /write <relative-path> <content> — Write content to a file.\n` +
-        `- /suggestwrite <relative-path> <content> — LLM suggests a file change, you confirm before writing.`,
+        `📄 **File Operations:**\n` +
+        `- /read <path> — Read a file from workspace\n` +
+        `- /write <path> <prompt> — Generate and write file content\n` +
+        `- /suggestwrite <path> <prompt> — Preview before writing\n\n` +
+        `📝 **Git Integration:**\n` +
+        `- /git-commit-msg — Generate commit message from staged changes\n` +
+        `- /git-review [staged|unstaged|all] — Review code changes with AI`,
       type: 'info',
       success: true,
     });
@@ -265,6 +270,160 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
                   error: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /git-commit-msg command
+            const gitCommitMatch = text.match(/\/git-commit-msg/);
+
+            // AGENT MODE: /git-commit-msg - Generate commit message from staged changes
+            if (gitCommitMatch) {
+              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+              if (!wsFolder) throw new Error('No workspace folder open.');
+
+              try {
+                const gitClient = new GitClient(wsFolder);
+                const status = await gitClient.getStatus();
+
+                if (status.stagedChanges.length === 0) {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    error: 'No staged changes found. Stage files with "git add" first.',
+                    success: false,
+                  });
+                  return;
+                }
+
+                const diff = await gitClient.getStagedDiff();
+                const prompt = `Generate a concise, professional git commit message for these changes:\n\n${diff.summary}\n\nFiles changed: ${diff.filesChanged.join(', ')}\n\nDiff:\n${diff.diff}\n\nRespond with ONLY the commit message, nothing else. Keep it under 72 characters for the title, then optionally add a blank line and body.`;
+
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `Analyzing staged changes (${status.stagedChanges.length} file(s))...`,
+                });
+
+                const endpoint: string = llmClient["config"].endpoint;
+                const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
+
+                if (isOllamaNonDefaultPort) {
+                  const response = await llmClient.sendMessage(prompt);
+                  if (response.success) {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `📝 Suggested commit message:\n\n\`\`\`\n${response.message}\n\`\`\`\n\nCopy this message and run: git commit -m "your message here"`,
+                      success: true,
+                    });
+                  } else {
+                    throw new Error(response.error);
+                  }
+                } else {
+                  let commitMsg = '';
+                  const response = await llmClient.sendMessageStream(
+                    prompt,
+                    async (token: string, complete: boolean) => {
+                      if (!complete && token) {
+                        commitMsg += token;
+                      }
+                    }
+                  );
+                  if (response.success) {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `📝 Suggested commit message:\n\n\`\`\`\n${commitMsg}\n\`\`\`\n\nCopy this message and run: git commit -m "your message here"`,
+                      success: true,
+                    });
+                  } else {
+                    throw new Error(response.error);
+                  }
+                }
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Git error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /git-review command
+            const gitReviewMatch = text.match(/\/git-review(?:\s+(\S+))?/);
+
+            // AGENT MODE: /git-review [staged|unstaged|all] - Review code changes
+            if (gitReviewMatch) {
+              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+              if (!wsFolder) throw new Error('No workspace folder open.');
+
+              try {
+                const gitClient = new GitClient(wsFolder);
+                const reviewType = gitReviewMatch[1] || 'staged';
+                
+                let diff: any;
+                if (reviewType === 'unstaged') {
+                  diff = await gitClient.getUnstagedDiff();
+                } else if (reviewType === 'all') {
+                  diff = await gitClient.getAllChanges();
+                } else {
+                  diff = await gitClient.getStagedDiff();
+                }
+
+                if (diff.filesChanged.length === 0) {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    error: `No ${reviewType} changes found.`,
+                    success: false,
+                  });
+                  return;
+                }
+
+                const prompt = `Please review these code changes for quality, best practices, and potential issues:\n\n${diff.summary}\n\nFiles: ${diff.filesChanged.join(', ')}\n\nDiff:\n${diff.diff}\n\nProvide constructive feedback on:\n1. Code quality and style\n2. Potential bugs or issues\n3. Performance considerations\n4. Testing recommendations`;
+
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `Reviewing ${reviewType} changes (${diff.filesChanged.length} file(s))...`,
+                });
+
+                const endpoint: string = llmClient["config"].endpoint;
+                const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
+
+                if (isOllamaNonDefaultPort) {
+                  const response = await llmClient.sendMessage(prompt);
+                  if (response.success) {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `🔍 Code Review:\n\n${response.message}`,
+                      success: true,
+                    });
+                  } else {
+                    throw new Error(response.error);
+                  }
+                } else {
+                  const response = await llmClient.sendMessageStream(
+                    prompt,
+                    async (token: string, complete: boolean) => {
+                      if (complete) {
+                        chatPanel?.webview.postMessage({
+                          command: 'streamComplete',
+                        });
+                      } else if (token) {
+                        chatPanel?.webview.postMessage({
+                          command: 'streamToken',
+                          token: token,
+                        });
+                      }
+                    }
+                  );
+                  if (!response.success) {
+                    throw new Error(response.error);
+                  }
+                }
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Git error: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }
