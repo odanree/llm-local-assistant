@@ -4,21 +4,41 @@
 
 ---
 
-🚀 Just released v0.1.0: LLM Local Assistant for VS Code
+🚀 Just published v0.2.0: LLM Local Assistant for VS Code to the Marketplace!
 
-Chat with local LLMs (Ollama, LM Studio), generate files with AI, auto-create commit messages, and AI-powered code reviews—all 100% private and offline.
 
-✅ 92 tests (100% passing), TypeScript strict mode
-✅ 21 commits, production-ready architecture
-✅ Git integration for commits & reviews
-✅ Packaged as VSIX (one-command install)
 
-GitHub: https://github.com/odanree/llm-local-assistant
-Install: code --install-extension llm-local-assistant-0.0.1.vsix
+This tool enables users to chat with local LLMs (Ollama, LM Studio), generate files with AI, auto-create commit messages, and conduct AI-powered code reviews—all while ensuring 100% privacy and offline functionality.
 
-**Screenshot:** https://github.com/odanree/llm-local-assistant/raw/main/assets/chat-git-commands.png
 
-#OpenSource #VSCode #TypeScript #AI #Developer
+
+Key features include:
+
+- 92 tests with 100% passing, utilizing TypeScript strict mode
+
+- 22 commits with a production-ready architecture
+
+- Git integration for commits and reviews
+
+- Packaged as VSIX for easy one-command installation
+
+
+
+GitHub: https://github.com/odanree/llm-local-assistant  
+
+VS Code Marketplace: https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
+
+Install: Search "LLM Local Assistant" in VS Code Extensions or run `code --install-extension odanree.llm-local-assistant`  
+
+
+
+Screenshot: https://github.com/odanree/llm-local-assistant/raw/main/assets/chat-git-commands.png  
+
+
+
+#OpenSource #VSCode #TypeScript #AI #Developer 
+
+scheduled for 10am
 
 ---
 

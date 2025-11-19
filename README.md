@@ -31,13 +31,13 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 
 ## 📊 Project Status
 
-**v0.1.0** - Production-Ready MVP
+**v0.2.0** - Production-Ready MVP with Marketplace Support
 
-- ✅ **21 commits** - Clean, atomic git history showing full development progression
+- ✅ **22 commits** - Clean, atomic git history showing full development progression
 - ✅ **92 tests** - 100% passing (36 extension + 33 llmClient + 23 gitClient)
 - ✅ **TypeScript strict mode** - 0 type errors, full type safety
 - ✅ **4 core modules** - extension, llmClient, gitClient, webviewContent
-- ✅ **Packaged as VSIX** - One-command installation for users
+- ✅ **Published to VS Code Marketplace** - Fully accessible at marketplace.visualstudio.com
 - ✅ **Complete documentation** - README, ARCHITECTURE, INSTALL, guides, and more
 
 **Features included:**
@@ -81,22 +81,30 @@ python -m vllm.entrypoints.openai.api_server \
 
 ### Quick Install (One Command)
 
+**From VS Code Marketplace (Easiest):**
 ```bash
-code --install-extension llm-local-assistant-0.0.1.vsix
+code --install-extension odanree.llm-local-assistant
 ```
 
-Download the VSIX from [Latest Release](https://github.com/odanree/llm-local-assistant/releases/tag/v0.1.0), then run the command above.
+Or search for "LLM Local Assistant" in VS Code Extensions marketplace: https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
 
 **See [docs/INSTALL.md](https://github.com/odanree/llm-local-assistant/blob/main/docs/INSTALL.md) for detailed platform-specific setup, troubleshooting, and development instructions.**
 
-### Option A: Install from VSIX (Recommended for Users)
+### Option A: Install from VS Code Marketplace (Recommended)
 
-1. Download `llm-local-assistant-0.0.1.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
-2. In VS Code, run: `code --install-extension llm-local-assistant-0.0.1.vsix`
+1. Open VS Code Extensions (`Ctrl+Shift+X`)
+2. Search for "LLM Local Assistant"
+3. Click "Install"
+4. Reload VS Code
+
+### Option B: Install from VSIX
+
+1. Download `llm-local-assistant-0.0.2.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
+2. In VS Code, run: `code --install-extension llm-local-assistant-0.0.2.vsix`
    - Or open Command Palette (`Ctrl+Shift+P`) → "Extensions: Install from VSIX"
 3. Reload VS Code
 
-### Option B: Build from Source (Development)
+### Option C: Build from Source (Development)
 
 1. **Install & Compile**
 ```bash

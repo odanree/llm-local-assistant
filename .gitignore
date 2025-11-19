@@ -7,3 +7,6 @@ node_modules
 # AI Coding Agent Instructions (internal development context)
 .github/copilot-instructions.md
 
+# LinkedIn post (less transparency on social media strategy)
+docs/LINKEDIN_POST.md
+
