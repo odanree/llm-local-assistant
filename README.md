@@ -2,7 +2,7 @@
 
 A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM) to provide intelligent code assistance, autonomous file operations, and chat capabilities directly in your editor.
 
-> ⚠️ **DOCUMENTATION CONSTRAINT**: The root directory contains fixed documentation files. New docs go to `/docs/`. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+> 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Features
 
@@ -43,8 +43,16 @@ python -m vllm.entrypoints.openai.api_server \
 
 ## 🚀 Getting Started
 
-### 1. Install & Compile
+### Option A: Install from VSIX (Recommended for Users)
 
+1. Download `llm-local-assistant-0.0.1.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
+2. In VS Code, run: `code --install-extension llm-local-assistant-0.0.1.vsix`
+   - Or open Command Palette (`Ctrl+Shift+P`) → "Extensions: Install from VSIX"
+3. Reload VS Code
+
+### Option B: Build from Source (Development)
+
+1. **Install & Compile**
 ```bash
 npm install
 npm run compile
@@ -52,7 +60,10 @@ npm run compile
 npm run watch
 ```
 
-### 2. Configure Endpoint
+2. **Launch in Debug Mode**
+   - Press `F5` in VS Code to open debug window with extension loaded
+
+### 3. Configure Endpoint
 
 Open VS Code Settings (`Ctrl+,`) and set:
 
@@ -197,7 +208,7 @@ Three clear extension points for Phase 2:
 2. **LLM Client Enhancements**: Extend `LLMClient` class with new capabilities
 3. **Webview Features**: Enhance UI in `webviewContent.ts`
 
-See [ROADMAP.md](./ROADMAP.md) for planned enhancements.
+See [ROADMAP.md](https://github.com/odanree/llm-local-assistant/blob/main/ROADMAP.md) for planned enhancements.
 
 ## 📦 Configuration Reference
 
@@ -235,7 +246,7 @@ Press `F5` in VS Code to launch extension in debug mode with breakpoints.
 
 ## 🗺️ Roadmap
 
-See [ROADMAP.md](./ROADMAP.md) for planned features including:
+See [ROADMAP.md](https://github.com/odanree/llm-local-assistant/blob/main/ROADMAP.md) for planned features including:
 - GitHub Copilot Agent Mode integration
 - Persistent conversation history
 - Custom system prompts
@@ -243,11 +254,11 @@ See [ROADMAP.md](./ROADMAP.md) for planned features including:
 
 ## 📚 Documentation
 
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Deep dive into component design
-- **[PROJECT_STATUS.md](./PROJECT_STATUS.md)** - Development phase tracking
-- **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Developer quick start
-- **[CHANGELOG.md](./CHANGELOG.md)** - Version history
-- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Contribution guidelines
+- **[ARCHITECTURE.md](https://github.com/odanree/llm-local-assistant/blob/main/ARCHITECTURE.md)** - Deep dive into component design
+- **[PROJECT_STATUS.md](https://github.com/odanree/llm-local-assistant/blob/main/PROJECT_STATUS.md)** - Development phase tracking
+- **[QUICK_REFERENCE.md](https://github.com/odanree/llm-local-assistant/blob/main/QUICK_REFERENCE.md)** - Developer quick start
+- **[CHANGELOG.md](https://github.com/odanree/llm-local-assistant/blob/main/CHANGELOG.md)** - Version history
+- **[CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md)** - Contribution guidelines
 
 For advanced topics, see `/docs/` folder.
 
