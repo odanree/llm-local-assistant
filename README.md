@@ -31,14 +31,14 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 
 ## 📊 Project Status
 
-**v0.2.0** - Production-Ready MVP with Marketplace Support
+**v1.0.0** - First Stable Release
 
-- ✅ **22 commits** - Clean, atomic git history showing full development progression
+- ✅ **23 commits** - Clean, atomic git history showing full development progression
 - ✅ **92 tests** - 100% passing (36 extension + 33 llmClient + 23 gitClient)
 - ✅ **TypeScript strict mode** - 0 type errors, full type safety
 - ✅ **4 core modules** - extension, llmClient, gitClient, webviewContent
-- ✅ **Published to VS Code Marketplace** - Fully accessible at marketplace.visualstudio.com
-- ✅ **Complete documentation** - README, ARCHITECTURE, INSTALL, guides, and more
+- ✅ **Published to VS Code Marketplace** - v1.0.0 stable release
+- ✅ **Production-Ready** - Comprehensive error handling and documentation
 
 **Features included:**
 - Chat interface with streaming support
@@ -99,8 +99,8 @@ Or search for "LLM Local Assistant" in VS Code Extensions marketplace: https://m
 
 ### Option B: Install from VSIX
 
-1. Download `llm-local-assistant-0.0.2.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
-2. In VS Code, run: `code --install-extension llm-local-assistant-0.0.2.vsix`
+1. Download `llm-local-assistant-1.0.0.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
+2. In VS Code, run: `code --install-extension llm-local-assistant-1.0.0.vsix`
    - Or open Command Palette (`Ctrl+Shift+P`) → "Extensions: Install from VSIX"
 3. Reload VS Code
 

@@ -4,12 +4,13 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.0.2] - 2025-11-19
+## [1.0.0] - 2025-11-19
 
-### Published
-- Published to VS Code Marketplace - now available for one-click installation
-- Added marketplace icon support for improved visual presentation
-- Extension ID: `odanree.llm-local-assistant`
+### Released
+- First stable release with semantic versioning
+- Production-ready extension published to VS Code Marketplace
+- All core features complete and tested
+- Comprehensive documentation and error handling
 
 ## [Unreleased]
 
