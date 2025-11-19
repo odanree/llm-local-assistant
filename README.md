@@ -18,6 +18,17 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 - ⚡ **Streaming Support** - Real-time token streaming for responsive UX
 - ✅ **Production-Ready** - Comprehensive error handling, type safety, test coverage
 
+## 📸 Screenshots
+
+### Chat Interface with Git Integration Commands
+![Chat Interface - Git Commands](https://github.com/odanree/llm-local-assistant/raw/main/assets/chat-git-commands.png)
+
+*Chat window showing `/git-commit-msg` and `/git-review` commands in action. The interface displays:*
+- *Interactive chat messages with streaming responses*
+- *Git integration commands for autonomous commit message generation and code review*
+- *Light gray text styling for optimal readability in dark themes*
+- *Real-time command execution with status feedback*
+
 ## 📊 Project Status
 
 **v0.1.0** - Production-Ready MVP
