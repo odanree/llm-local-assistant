@@ -4,17 +4,21 @@
 
 ---
 
-🚀 Just shipped an open-source VS Code extension for local LLM integration!
+🚀 Just released v0.1.0: LLM Local Assistant for VS Code
 
-Chat with Ollama/LM Studio, generate files with AI, auto-create commit messages, and more—all offline and private.
+Chat with local LLMs (Ollama, LM Studio), generate files with AI, auto-create commit messages, and AI-powered code reviews—all 100% private and offline.
 
-✅ 92 tests, TypeScript strict mode
-✅ 13 commits, clean architecture  
-✅ Production-ready
+✅ 125 tests (100% passing), TypeScript strict mode
+✅ 20 commits, production-ready architecture
+✅ Git integration for commits & reviews
+✅ Packaged as VSIX (one-command install)
 
-Check it out: https://github.com/odanree/llm-local-assistant
+GitHub: https://github.com/odanree/llm-local-assistant
+Install: code --install-extension llm-local-assistant-0.0.1.vsix
 
-#OpenSource #VSCode #TypeScript #AI
+**Screenshot:** https://github.com/odanree/llm-local-assistant/raw/main/assets/chat-git-commands.png
+
+#OpenSource #VSCode #TypeScript #AI #Developer
 
 ---
 
@@ -38,16 +42,35 @@ Check it out: https://github.com/odanree/llm-local-assistant
 
 ### Longer Version (if you want more details):
 
-🚀 Just shipped: LLM Local Assistant
+🚀 Shipped v0.1.0: LLM Local Assistant
 
-I built and open-sourced a VS Code extension that brings local LLM capabilities directly into the editor.
+I built and open-sourced a production-ready VS Code extension that brings local LLM capabilities directly into the editor.
 
 **What it does:**
-🤖 Chat with Ollama/LM Studio without sending data to external servers
-📝 Generate and write files via AI (`/write`, `/read`, `/suggestwrite`)
-🔧 Auto-generate commit messages from git diffs (`/git-commit-msg`)
-📚 One-command project documentation generation (`/auto-docs`)
-🎨 AI-powered code review of staged changes (`/git-review`)
+🤖 Chat with Ollama/LM Studio/vLLM without sending data to external servers
+📝 Generate and write files via AI (`/read`, `/write`, `/suggestwrite`)
+🔧 Auto-generate conventional commit messages (`/git-commit-msg`)
+📚 AI-powered code review of staged changes (`/git-review`)
+🎨 Monochrome UI optimized for dark themes, WCAG AA accessibility
+
+**Built with:**
+TypeScript + VS Code Extension API + Webpack
+100% private, runs offline
+125 tests (100% passing), TypeScript strict mode
+
+**Under the hood:**
+- 20 commits showing full development progression
+- Clean architecture with 5 core modules
+- Real-time streaming responses for responsive UX
+- Packaged as VSIX for instant installation
+- Screenshot documentation for easy onboarding
+
+**Try it now:**
+GitHub: https://github.com/odanree/llm-local-assistant
+Install: `code --install-extension llm-local-assistant-0.0.1.vsix`
+Docs: Complete setup guides and troubleshooting
+
+#OpenSource #TypeScript #VSCode #AI #Developer
 
 **Built with:**
 TypeScript + VS Code Extension API + Webpack
@@ -70,18 +93,15 @@ Install: `code --install-extension llm-local-assistant-0.0.1.vsix`
 
 ### Twitter/X Version:
 
-Just open-sourced my VS Code extension for local LLM integration 🚀
+v0.1.0 shipped 🚀 LLM Local Assistant for VS Code
 
-Features:
-• Chat with local LLMs
-• Git integration (auto-generate commits)
-• Auto-documentation generation
-• File I/O with AI
+Local LLM chat, AI file generation, auto-commit messages, code reviews—all private & offline.
 
-MIT licensed. 100% private.
-https://github.com/odanree/llm-local-assistant
+125 tests ✅ | 20 commits ✅ | TypeScript strict ✅
 
-#OpenSource #TypeScript #VSCode
+github.com/odanree/llm-local-assistant
+
+#OpenSource #TypeScript #VSCode #AI
 
 ---
 
