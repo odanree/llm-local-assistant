@@ -4,6 +4,14 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.0.1] - 2025-11-19
+
+### Updated
+- Documentation updates for v1.0.0 stable release
+- Updated README with semantic versioning details
+- Updated CHANGELOG with v1.0.0 release information
+- All metrics synchronized across documentation
+
 ## [1.0.0] - 2025-11-19
 
 ### Released
