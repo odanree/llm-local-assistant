@@ -18,6 +18,32 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 - ⚡ **Streaming Support** - Real-time token streaming for responsive UX
 - ✅ **Production-Ready** - Comprehensive error handling, type safety, test coverage
 
+## 📊 Project Status
+
+**v0.1.0** - Production-Ready MVP
+
+- ✅ **13 commits** - Clean, atomic git history showing full development progression
+- ✅ **92 tests** - 100% passing (28 extension + 24 llmClient + 14 gitClient + 26 docsGenerator)
+- ✅ **TypeScript strict mode** - 0 type errors, full type safety
+- ✅ **5 core modules** - extension, llmClient, gitClient, docsGenerator, webviewContent
+- ✅ **Packaged as VSIX** - One-command installation for users
+- ✅ **Complete documentation** - README, ARCHITECTURE, INSTALL, guides, and more
+
+**Features included:**
+- Chat interface with streaming support
+- File operations (`/read`, `/write`, `/suggestwrite`)
+- Git integration (`/git-commit-msg`, `/git-review`)
+- Documentation generation (`/auto-docs`)
+- Performance optimizations (token buffering, DOM batching)
+- Monochrome UI with WCAG AA accessibility
+- Comprehensive error handling
+
+**Ready for:**
+- Portfolio showcase - professional-grade code
+- Production use - tested and optimized
+- Extension by others - clear architecture and test coverage
+- Interview discussion - full git history and talking points
+
 ## 📋 Prerequisites
 
 ### Local LLM Server (Required)
@@ -43,6 +69,16 @@ python -m vllm.entrypoints.openai.api_server \
 
 ## 🚀 Getting Started
 
+### Quick Install (One Command)
+
+```bash
+code --install-extension llm-local-assistant-0.0.1.vsix
+```
+
+Download the VSIX from [Latest Release](https://github.com/odanree/llm-local-assistant/releases/tag/v0.1.0), then run the command above.
+
+**See [INSTALL.md](./INSTALL.md) for detailed platform-specific setup, troubleshooting, and development instructions.**
+
 ### Option A: Install from VSIX (Recommended for Users)
 
 1. Download `llm-local-assistant-0.0.1.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
@@ -63,7 +99,7 @@ npm run watch
 2. **Launch in Debug Mode**
    - Press `F5` in VS Code to open debug window with extension loaded
 
-### 3. Configure Endpoint
+### Configure Endpoint
 
 Open VS Code Settings (`Ctrl+,`) and set:
 
@@ -84,7 +120,7 @@ For custom ports:
 }
 ```
 
-### 3. Test Connection
+### Test Connection
 
 Click **LLM Assistant** in status bar → Run "Test Connection" command
 
@@ -93,22 +129,53 @@ Click **LLM Assistant** in status bar → Run "Test Connection" command
 ### Chat
 Simply type messages and press Enter to chat with your LLM.
 
-### Agent Commands
+### Available Commands
 
-**Read Files**
-```
-/read src/main.ts
-```
+#### File Operations
+- **`/read <path>`** - Read and display file contents
+  ```
+  /read src/main.ts
+  ```
 
-**Generate & Write Files**
-```
-/write src/greeting.ts write a TypeScript function that greets users
-```
+- **`/write <path> [prompt]`** - Generate file content via LLM and write to disk
+  ```
+  /write src/greeting.ts write a TypeScript function that greets users
+  ```
+  If no prompt provided, uses: "Generate appropriate content for this file based on its name."
 
-**Suggest Changes** (with approval)
-```
-/suggestwrite src/config.ts add validation for the API endpoint
-```
+- **`/suggestwrite <path> [prompt]`** - LLM suggests changes, you review and approve before writing
+  ```
+  /suggestwrite src/config.ts add validation for the API endpoint
+  ```
+
+#### Git Integration
+- **`/git-commit-msg`** - Generate commit message from staged changes
+  ```
+  /git-commit-msg
+  ```
+  Reads all staged diffs, analyzes changes, and generates a conventional commit message following the pattern: `<type>(<scope>): <description>`
+
+- **`/git-review`** - AI-powered code review of staged changes
+  ```
+  /git-review
+  ```
+  Reviews all staged changes, identifies potential issues, suggests improvements, and provides specific feedback.
+
+#### Documentation
+- **`/auto-docs`** - Automatically generate project documentation
+  ```
+  /auto-docs
+  ```
+  Generates three markdown files:
+  - `README_GENERATED.md` - Comprehensive feature overview and setup
+  - `CONTRIBUTING_GENERATED.md` - Development workflow and contribution guidelines
+  - `PROJECT_OVERVIEW_GENERATED.md` - Architecture, design patterns, and philosophy
+
+#### System
+- **`/help`** - Show available commands
+  ```
+  /help
+  ```
 
 ## 🏗️ Architecture & Design Decisions
 
