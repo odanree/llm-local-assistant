@@ -2,7 +2,6 @@
 import * as vscode from 'vscode';
 import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
-import { DocsGenerator } from './docsGenerator';
 import { getWebviewContent } from './webviewContent';
 import * as path from 'path';
 
@@ -58,9 +57,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
         `- /suggestwrite <path> <prompt> — Preview before writing\n\n` +
         `📝 **Git Integration:**\n` +
         `- /git-commit-msg — Generate commit message from staged changes\n` +
-        `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
-        `📚 **Documentation:**\n` +
-        `- /auto-docs — Generate README, CONTRIBUTING, and PROJECT_OVERVIEW`,
+        `- /git-review [staged|unstaged|all] — Review code changes with AI`,
       type: 'info',
       success: true,
     });
@@ -427,78 +424,6 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
                   error: `Git error: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
-              return;
-            }
-
-            // Check for /auto-docs command
-            const autoDocsMatch = text.match(/\/auto-docs/);
-
-            // AGENT MODE: /auto-docs - Generate project documentation
-            if (autoDocsMatch) {
-              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-              if (!wsFolder) throw new Error('No workspace folder open.');
-
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: 'Generating documentation (README, CONTRIBUTING, PROJECT_OVERVIEW)...',
-                });
-
-                const docsGen = new DocsGenerator(wsFolder);
-                const { readme, contributing, overview } =
-                  await docsGen.analyzeAndGenerate();
-
-                // Write README.md
-                try {
-                  const readmeUri = vscode.Uri.joinPath(wsFolder, 'README_GENERATED.md');
-                  await vscode.workspace.fs.writeFile(
-                    readmeUri,
-                    new TextEncoder().encode(readme)
-                  );
-                } catch (e) {
-                  // Silently handle if can't write
-                }
-
-                // Write CONTRIBUTING.md
-                try {
-                  const contributingUri = vscode.Uri.joinPath(
-                    wsFolder,
-                    'CONTRIBUTING_GENERATED.md'
-                  );
-                  await vscode.workspace.fs.writeFile(
-                    contributingUri,
-                    new TextEncoder().encode(contributing)
-                  );
-                } catch (e) {
-                  // Silently handle if can't write
-                }
-
-                // Write PROJECT_OVERVIEW.md
-                try {
-                  const overviewUri = vscode.Uri.joinPath(
-                    wsFolder,
-                    'PROJECT_OVERVIEW_GENERATED.md'
-                  );
-                  await vscode.workspace.fs.writeFile(
-                    overviewUri,
-                    new TextEncoder().encode(overview)
-                  );
-                } catch (e) {
-                  // Silently handle if can't write
-                }
-
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  text: `✅ Generated documentation files:\n\n- README_GENERATED.md (comprehensive setup & usage guide)\n- CONTRIBUTING_GENERATED.md (contribution guidelines)\n- PROJECT_OVERVIEW_GENERATED.md (architecture & philosophy)\n\nFiles written to workspace root. Review and merge into existing docs.`,
-                  success: true,
-                });
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Documentation generation error: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }

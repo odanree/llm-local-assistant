@@ -62,7 +62,6 @@ If your LLM isn't at default localhost:11434:
    - `/read src/main.ts` - Read a file
    - `/write test.ts generate a hello world function` - Create a file
    - `/git-commit-msg` - Generate commit message from staged changes
-   - `/auto-docs` - Generate project documentation
 
 ---
 

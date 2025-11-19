@@ -174,7 +174,7 @@ export function getWebviewContent(): string {
             align-self: flex-start;
             max-width: 100%;
             background: transparent;
-            color: var(--vscode-editor-foreground);
+            color: #e0e0e0;
             border-left: 3px solid var(--vscode-textSeparator-foreground);
             padding-left: 12px;
           }
@@ -188,7 +188,7 @@ export function getWebviewContent(): string {
           }
           .assistant.status {
             border-left-color: var(--vscode-textSeparator-foreground);
-            color: var(--vscode-disabledForeground);
+            color: #e0e0e0;
             font-style: italic;
           }
           .input-row {

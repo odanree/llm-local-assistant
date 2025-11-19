@@ -33,7 +33,6 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 - Chat interface with streaming support
 - File operations (`/read`, `/write`, `/suggestwrite`)
 - Git integration (`/git-commit-msg`, `/git-review`)
-- Documentation generation (`/auto-docs`)
 - Performance optimizations (token buffering, DOM batching)
 - Monochrome UI with WCAG AA accessibility
 - Comprehensive error handling
@@ -160,16 +159,6 @@ Simply type messages and press Enter to chat with your LLM.
   /git-review
   ```
   Reviews all staged changes, identifies potential issues, suggests improvements, and provides specific feedback.
-
-#### Documentation
-- **`/auto-docs`** - Automatically generate project documentation
-  ```
-  /auto-docs
-  ```
-  Generates three markdown files:
-  - `README_GENERATED.md` - Comprehensive feature overview and setup
-  - `CONTRIBUTING_GENERATED.md` - Development workflow and contribution guidelines
-  - `PROJECT_OVERVIEW_GENERATED.md` - Architecture, design patterns, and philosophy
 
 #### System
 - **`/help`** - Show available commands
