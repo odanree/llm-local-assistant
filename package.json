@@ -3,6 +3,7 @@
   "displayName": "LLM Local Assistant",
   "description": "VS Code extension that connects to a local LLM (Mistral 7B) for code assistance and chat",
   "version": "0.0.1",
+  "publisher": "odanree",
   "engines": {
     "vscode": "^1.106.1"
   },

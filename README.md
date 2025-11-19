@@ -77,7 +77,7 @@ code --install-extension llm-local-assistant-0.0.1.vsix
 
 Download the VSIX from [Latest Release](https://github.com/odanree/llm-local-assistant/releases/tag/v0.1.0), then run the command above.
 
-**See [docs/INSTALL.md](./docs/INSTALL.md) for detailed platform-specific setup, troubleshooting, and development instructions.**
+**See [docs/INSTALL.md](https://github.com/odanree/llm-local-assistant/blob/main/docs/INSTALL.md) for detailed platform-specific setup, troubleshooting, and development instructions.**
 
 ### Option A: Install from VSIX (Recommended for Users)
 
