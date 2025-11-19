@@ -33,10 +33,10 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 
 **v0.1.0** - Production-Ready MVP
 
-- ✅ **13 commits** - Clean, atomic git history showing full development progression
-- ✅ **92 tests** - 100% passing (28 extension + 24 llmClient + 14 gitClient + 26 docsGenerator)
+- ✅ **21 commits** - Clean, atomic git history showing full development progression
+- ✅ **92 tests** - 100% passing (36 extension + 33 llmClient + 23 gitClient)
 - ✅ **TypeScript strict mode** - 0 type errors, full type safety
-- ✅ **5 core modules** - extension, llmClient, gitClient, docsGenerator, webviewContent
+- ✅ **4 core modules** - extension, llmClient, gitClient, webviewContent
 - ✅ **Packaged as VSIX** - One-command installation for users
 - ✅ **Complete documentation** - README, ARCHITECTURE, INSTALL, guides, and more
 

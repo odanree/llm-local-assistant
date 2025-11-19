@@ -8,8 +8,8 @@
 
 Chat with local LLMs (Ollama, LM Studio), generate files with AI, auto-create commit messages, and AI-powered code reviews—all 100% private and offline.
 
-✅ 125 tests (100% passing), TypeScript strict mode
-✅ 20 commits, production-ready architecture
+✅ 92 tests (100% passing), TypeScript strict mode
+✅ 21 commits, production-ready architecture
 ✅ Git integration for commits & reviews
 ✅ Packaged as VSIX (one-command install)
 
@@ -56,10 +56,10 @@ I built and open-sourced a production-ready VS Code extension that brings local 
 **Built with:**
 TypeScript + VS Code Extension API + Webpack
 100% private, runs offline
-125 tests (100% passing), TypeScript strict mode
+92 tests (100% passing), TypeScript strict mode
 
 **Under the hood:**
-- 20 commits showing full development progression
+- 21 commits showing full development progression
 - Clean architecture with 5 core modules
 - Real-time streaming responses for responsive UX
 - Packaged as VSIX for instant installation
@@ -97,7 +97,7 @@ v0.1.0 shipped 🚀 LLM Local Assistant for VS Code
 
 Local LLM chat, AI file generation, auto-commit messages, code reviews—all private & offline.
 
-125 tests ✅ | 20 commits ✅ | TypeScript strict ✅
+92 tests ✅ | 21 commits ✅ | TypeScript strict ✅
 
 github.com/odanree/llm-local-assistant
 
