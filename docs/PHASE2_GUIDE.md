@@ -1,10 +1,32 @@
 # Phase 2 Implementation Guide: Agent Loop Foundation
 
+**Status**: ✅ Core Implementation Complete (Dec 8, 2025) | Now: Making It Like Copilot/Claude
+
 **Objective**: Build autonomous multi-step task execution with planning and error correction.
 
-**Build Time**: 10-15 person-days (can break into smaller PRs)
+**Build Time**: 10-15 person-days for core (complete) + 13 days for Copilot improvements (Priority 1-3)
 
 **Stability Promise**: Phase 1 codebase remains untouched; Phase 2 is additive.
+
+---
+
+## 📌 Current Status
+
+**Phase 2 Core (Agent Loop)**: ✅ Complete
+- ✅ Planner module (generates multi-step plans)
+- ✅ Executor module (executes plans with retry logic)
+- ✅ Integration with extension (`,/plan`, `/approve`, `/reject` commands)
+- ✅ 94 passing tests (>85% coverage)
+- ✅ No Phase 1 regressions
+
+**Next**: Making it feel like GitHub Copilot/Claude (Priority 1-3)
+- See `PHASE2_COPILOT_IMPROVEMENTS.md` for detailed specifications
+- Quick summary:
+  - **Priority 1** (v1.2.0): Conversational context + streaming output + thinking phase + smart errors
+  - **Priority 2** (v1.3.0): Auto-correction + codebase awareness + follow-ups + /explain
+  - **Priority 3** (v1.4.0): Tree visualization + progress bars + rollback + history
+
+**Estimated Timeline**: 3 weeks for all improvements (~13 days of work)
 
 ---
 

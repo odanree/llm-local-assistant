@@ -22,6 +22,7 @@ describe('Executor', () => {
   beforeEach(() => {
     mockLLMClient = {
       sendMessage: vi.fn(),
+      clearHistory: vi.fn(),
     };
 
     mockWorkspace = {
