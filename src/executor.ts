@@ -205,7 +205,19 @@ export class Executor {
       throw new Error('Write step requires path');
     }
 
-    const prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
+    // Build a detailed prompt that asks for code-only output
+    let prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
+    
+    // Add instruction to output ONLY code, no explanations
+    // Detect file type from extension
+    const fileExtension = step.path.split('.').pop()?.toLowerCase();
+    const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
+    
+    if (isCodeFile) {
+      prompt = `${prompt}
+
+IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO comments, NO text outside the code. Start immediately with the code.`;
+    }
 
     const response = await this.config.llmClient.sendMessage(prompt);
     if (!response.success) {
@@ -215,8 +227,23 @@ export class Executor {
     const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
     
     try {
+      // Extract content and clean up if it's code
+      let content = response.message || '';
+      
+      // If response contains markdown code blocks, extract the code
+      const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+      if (codeBlockMatch) {
+        content = codeBlockMatch[1];
+      } else if (isCodeFile) {
+        // For code files, try to extract just the code portion
+        // Remove common explanation patterns
+        content = content
+          .replace(/^[\s\S]*?(?=^[/\*{<]|^[\w\-])/m, '') // Remove text before code starts
+          .replace(/\n\n[\s\S]*$/, '') // Remove trailing explanation
+          .trim();
+      }
+      
       // Encode string to bytes
-      const content = response.message || '';
       const bytes = new Uint8Array(content.length);
       for (let i = 0; i < content.length; i++) {
         bytes[i] = content.charCodeAt(i);
