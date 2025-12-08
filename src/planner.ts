@@ -49,20 +49,21 @@ RESPOND ONLY WITH JSON. NO OTHER TEXT.
 VALID ACTIONS ONLY: write, read, run
 
 Example:
-{"steps": [{"stepId": 1, "action": "write", "path": "src/Hello.js", "prompt": "Create a React component that displays Hello World", "description": "Create Hello component"}, {"stepId": 2, "action": "write", "path": "src/Hello.test.js", "prompt": "Write Jest tests for the Hello component", "description": "Write tests"}]}
+{"steps": [{"stepId": 1, "action": "read", "path": "src/Hello.js", "description": "Read existing component"}, {"stepId": 2, "action": "write", "path": "src/Hello.js", "prompt": "Create an improved React component", "description": "Write improved component"}]}
 
 Rules:
 1. RESPOND ONLY WITH JSON - no markdown, no explanation
 2. Return exactly this format: {"steps": [...]}
-3. Steps array: 3-5 objects maximum
-4. Each step needs: stepId (number), action (string), path (string), description (short string, max 50 chars)
-5. For write: also include prompt (max 100 chars describing what to generate)
-6. For read: path only
-7. For run: command instead of path
-8. Keep descriptions SHORT (under 50 characters)
-9. Keep prompts CONCISE (under 100 characters)
+3. Steps array: 2-4 objects maximum (keep plans simple)
+4. Each step needs: stepId (number), action (string), path (string), description (short, max 40 chars)
+5. For write: also include prompt (max 80 chars describing what to generate)
+6. For read: path only, used to read files before improving them
+7. For run: ONLY for critical shell operations like git, tests. Avoid diff/echo/cat
+8. Keep descriptions SHORT (under 40 characters)
+9. Keep prompts CONCISE (under 80 characters)
 10. NO "content" field, NO code examples, NO extra fields
-11. Valid JSON that can be parsed immediately`;
+11. Most tasks: read → write (improve/create content)
+12. Valid JSON that can be parsed immediately`;
 
 export class Planner {
   private config: PlannerConfig;
