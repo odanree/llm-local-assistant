@@ -78,6 +78,46 @@ export class Planner {
   }
 
   /**
+   * Generate thinking/reasoning before creating a plan
+   * Shows the LLM's analysis of how to approach the task
+   * Returns natural language explanation of the planned approach
+   */
+  async generateThinking(userRequest: string, context?: ConversationContext): Promise<string> {
+    const contextStr = context && context.messages.length > 0
+      ? `\n\nPrevious context:\n${context.messages.slice(-4).map(m => 
+          `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
+        ).join('\n')}\n`
+      : '';
+
+    const prompt = `You are an expert code assistant analyzing a task request.
+
+${contextStr}
+
+User request: "${userRequest}"
+
+Analyze this request and provide your thinking in 2-3 sentences. Explain:
+1. What you need to understand or check first
+2. The main steps you'll take
+3. Any potential issues to watch for
+
+Be concise and direct. Do NOT generate code or detailed plans yet.`;
+
+    const response = await this.config.llmClient.sendMessage(prompt);
+    if (!response.success) {
+      throw new Error(`Failed to generate thinking: ${response.error}`);
+    }
+
+    // Clean up the response (remove markdown, formatting)
+    let thinking = response.message || '';
+    thinking = thinking
+      .replace(/^["']|["']$/g, '') // Remove surrounding quotes
+      .replace(/\*\*/g, '')        // Remove bold markers
+      .trim();
+
+    return thinking;
+  }
+
+  /**
    * Generate a plan for a complex user request
    * Optionally uses conversation context for multi-turn awareness
    * Returns plan + markdown description for user approval

@@ -90,11 +90,30 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               
               chatPanel?.webview.postMessage({
                 command: 'status',
-                text: `Planning task: ${userRequest}...`,
+                text: `🤔 Analyzing task...`,
                 type: 'info',
               });
 
               try {
+                // First: Generate thinking to show reasoning
+                const thinking = await planner.generateThinking(
+                  userRequest,
+                  { messages: llmClient.getHistory() }
+                );
+
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: `**My approach:**\n\n${thinking}`,
+                  success: true,
+                });
+
+                // Second: Generate the actual plan
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `Creating detailed plan...`,
+                  type: 'info',
+                });
+
                 const { plan, markdown } = await planner.generatePlan(
                   userRequest,
                   { messages: llmClient.getHistory() }

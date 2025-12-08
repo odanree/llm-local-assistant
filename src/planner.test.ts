@@ -22,6 +22,72 @@ describe('Planner', () => {
     planner = new Planner({ llmClient: mockLLMClient });
   });
 
+  describe('generateThinking', () => {
+    it('should generate thinking/reasoning about the task', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: 'I need to read the existing component first to understand its structure, then create comprehensive tests that cover all edge cases and user interactions.',
+      });
+
+      const thinking = await planner.generateThinking('Create tests for the Button component');
+
+      expect(thinking).toContain('read the existing component');
+      expect(thinking).toContain('tests');
+      expect(mockLLMClient.sendMessage).toHaveBeenCalled();
+      
+      const prompt = mockLLMClient.sendMessage.mock.calls[0][0];
+      expect(prompt).toContain('Create tests for the Button component');
+      expect(prompt).toContain('Analyze');
+    });
+
+    it('should handle thinking with conversation context', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: 'Based on the Button component you created, I will write unit tests that verify all props and event handlers work correctly.',
+      });
+
+      const context = {
+        messages: [
+          { role: 'user', content: 'Create Button component' },
+          { role: 'assistant', content: 'Created Button.tsx' },
+        ],
+      };
+
+      const thinking = await planner.generateThinking('Add tests', context);
+
+      expect(thinking).toBeTruthy();
+      
+      const prompt = mockLLMClient.sendMessage.mock.calls[0][0];
+      expect(prompt).toContain('Previous context');
+      expect(prompt).toContain('Create Button component');
+    });
+
+    it('should clean up markdown formatting from thinking', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: '**First**, I\'ll read the existing file. **Then**, I\'ll generate the tests.',
+      });
+
+      const thinking = await planner.generateThinking('Create tests');
+
+      // Bold markers should be removed
+      expect(thinking).not.toContain('**');
+      expect(thinking).toContain('First');
+      expect(thinking).toContain('generate the tests');
+    });
+
+    it('should throw error on LLM failure during thinking', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: false,
+        error: 'LLM connection failed',
+      });
+
+      await expect(planner.generateThinking('Test task')).rejects.toThrow(
+        'Failed to generate thinking'
+      );
+    });
+  });
+
   describe('generatePlan', () => {
     it('should generate valid plan from simple request', async () => {
       mockLLMClient.sendMessage.mockResolvedValue({
