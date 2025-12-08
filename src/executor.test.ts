@@ -178,6 +178,53 @@ describe('Executor', () => {
       expect(result.error).toContain('not yet implemented');
     });
 
+    it('should emit onStepOutput callback during execution', async () => {
+      const onStepOutput = vi.fn();
+      const config = {
+        ...mockConfig,
+        onStepOutput,
+      };
+      const executorWithCallback = new Executor(config);
+
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: 'function test() { return 42; }',
+      });
+
+      const plan: TaskPlan = {
+        taskId: 'task_1',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'test.ts',
+            description: 'Write test file',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executorWithCallback.executeStep(plan, 1);
+
+      // Should emit step start, content preview, and completion
+      expect(onStepOutput).toHaveBeenCalled();
+      
+      const calls = onStepOutput.mock.calls;
+      // First call should be step start
+      expect(calls[0][0]).toBe(1);  // stepId
+      expect(calls[0][1]).toContain('Write test file');  // description
+      expect(calls[0][2]).toBe(true);  // isStart
+      
+      // Should have additional calls for content preview
+      expect(calls.length).toBeGreaterThan(1);
+
+      expect(result.success).toBe(true);
+    });
+
     it('should handle unknown action', async () => {
       const plan: TaskPlan = {
         taskId: 'task_1',

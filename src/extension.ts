@@ -669,8 +669,17 @@ export function activate(context: vscode.ExtensionContext) {
         chatPanel.webview.postMessage({
           command: 'addMessage',
           text: message,
-          type,
           success: type === 'info',
+        });
+      }
+    },
+    onStepOutput: (stepId: number, output: string, isStart: boolean) => {
+      // Stream step output to webview
+      if (chatPanel) {
+        chatPanel.webview.postMessage({
+          command: isStart ? 'status' : 'addMessage',
+          text: output,
+          success: true,
         });
       }
     },

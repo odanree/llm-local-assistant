@@ -20,6 +20,7 @@ export interface ExecutorConfig {
   timeout?: number;         // Default: 30000ms
   onProgress?: (step: number, total: number, description: string) => void;
   onMessage?: (message: string, type: 'info' | 'error') => void;
+  onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;  // Stream step output
 }
 
 export interface ExecutionResult {
@@ -143,24 +144,43 @@ export class Executor {
 
     const startTime = Date.now();
 
+    // Emit step start
+    this.config.onStepOutput?.(stepId, `⟳ ${step.description}...`, true);
+
     try {
+      let result: StepResult;
+      
       switch (step.action) {
         case 'read':
-          return await this.executeRead(step, startTime);
+          result = await this.executeRead(step, startTime);
+          break;
         case 'write':
-          return await this.executeWrite(step, startTime);
+          result = await this.executeWrite(step, startTime);
+          break;
         case 'suggestwrite':
-          return await this.executeSuggestWrite(step, startTime);
+          result = await this.executeSuggestWrite(step, startTime);
+          break;
         case 'run':
-          return await this.executeRun(step, startTime);
+          result = await this.executeRun(step, startTime);
+          break;
         default:
           throw new Error(`Unknown action: ${step.action}`);
       }
+
+      // Emit step completion
+      if (result.success) {
+        const output = result.output || `✓ ${step.description} completed`;
+        this.config.onStepOutput?.(stepId, output, false);
+      }
+
+      return result;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.config.onStepOutput?.(stepId, `✗ Error: ${errorMsg}`, false);
       return {
         stepId,
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMsg,
         duration: Date.now() - startTime,
       };
     }
@@ -199,6 +219,7 @@ export class Executor {
 
   /**
    * Execute /write step: Generate content and write to file
+   * Streams generated content back to callback
    */
   private async executeWrite(step: PlanStep, startTime: number): Promise<StepResult> {
     if (!step.path) {
@@ -218,6 +239,9 @@ export class Executor {
 
 IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO comments, NO text outside the code. Start immediately with the code.`;
     }
+
+    // Emit that we're generating content
+    this.config.onStepOutput?.(step.stepId, `📝 Generating ${step.path}...`, false);
 
     const response = await this.config.llmClient.sendMessage(prompt);
     if (!response.success) {
@@ -241,6 +265,15 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
           .replace(/^[\s\S]*?(?=^[/\*{<]|^[\w\-])/m, '') // Remove text before code starts
           .replace(/\n\n[\s\S]*$/, '') // Remove trailing explanation
           .trim();
+      }
+      
+      // Stream the generated content to callback
+      if (this.config.onStepOutput && content.length > 0) {
+        // Show first 200 chars as preview, or full content if shorter
+        const preview = content.length > 200 
+          ? `\`\`\`${fileExtension || ''}\n${content.substring(0, 200)}...\n\`\`\``
+          : `\`\`\`${fileExtension || ''}\n${content}\n\`\`\``;
+        this.config.onStepOutput(step.stepId, preview, false);
       }
       
       // Encode string to bytes
