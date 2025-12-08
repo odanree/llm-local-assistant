@@ -42,32 +42,26 @@ export interface PlannerConfig {
 /**
  * System prompt for LLM to generate structured plans
  */
-const PLAN_SYSTEM_PROMPT = `You are an expert code assistant that breaks down complex requests into atomic steps.
+const PLAN_SYSTEM_PROMPT = `You generate step-by-step PLANS in JSON format. NOT code.
 
-Generate a JSON plan with this exact structure:
-{
-  "steps": [
-    {
-      "stepId": 1,
-      "action": "read|write|suggestwrite|run",
-      "path": "file/path.ts" (for file actions),
-      "command": "command" (for run actions),
-      "prompt": "optional prompt",
-      "description": "Human-readable step description"
-    },
-    ...
-  ],
-  "summary": "Brief overview of the plan"
-}
+RESPOND ONLY WITH JSON. NO OTHER TEXT.
+
+VALID ACTIONS ONLY: write, read, run
+
+Example with prompts for write actions:
+{"steps": [{"stepId": 1, "action": "write", "path": "src/Hello.js", "prompt": "Create a React component that displays Hello World", "description": "Create Hello component"}, {"stepId": 2, "action": "write", "path": "src/Hello.test.js", "prompt": "Write Jest tests for the Hello component", "description": "Write tests"}], "summary": "Create component and tests"}
 
 Rules:
-- Break large tasks into 3-10 small steps
-- Read dependencies first, then write
-- Use "read" to understand existing code
-- Use "write" for new code, "suggestwrite" for modifications
-- End with "run" to verify (tests, lint, build)
-- Each step must be independently understandable
-- Respond ONLY with valid JSON, no markdown code blocks`;
+1. ONLY JSON output - no markdown, no code
+2. steps array with 3-5 objects
+3. Each step: {"stepId": 1, "action": "write", "path": "file.js", "prompt": "...", "description": "..."}
+4. Fields for write: stepId, action, path, prompt, description
+5. Fields for read: stepId, action, path, description
+6. Fields for run: stepId, action, command, description
+7. prompt field is REQUIRED for write steps - tells LLM what to generate
+8. NO "content" field, NO code examples
+9. ONLY actions: write (create file), read (analyze file), run (shell command)
+10. Output valid JSON that JSON.parse() can read`;
 
 export class Planner {
   private config: PlannerConfig;
@@ -93,22 +87,65 @@ export class Planner {
 
     // Extract JSON from response (handle various formats)
     let planData: any;
+    const message = response.message || '';
+    
     try {
       // Try to parse as plain JSON first
-      planData = JSON.parse(response.message || '');
+      planData = JSON.parse(message);
     } catch (e) {
-      // Try to extract JSON from markdown code blocks
-      const jsonMatch = (response.message || '').match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) ||
-                        (response.message || '').match(/(\{[\s\S]*\})/);
+      // Try to extract JSON from response that has text before/after it
+      let jsonStr: string | undefined;
       
-      if (!jsonMatch) {
-        throw new Error('LLM did not return valid JSON plan');
+      // Find the first { and match it with the last }
+      const startIdx = message.indexOf('{');
+      if (startIdx !== -1) {
+        // Find the matching closing brace
+        let braceCount = 0;
+        let endIdx = -1;
+        for (let i = startIdx; i < message.length; i++) {
+          if (message[i] === '{') braceCount++;
+          if (message[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              endIdx = i;
+              break;
+            }
+          }
+        }
+        
+        if (endIdx !== -1) {
+          jsonStr = message.substring(startIdx, endIdx + 1);
+          try {
+            planData = JSON.parse(jsonStr);
+          } catch {
+            jsonStr = undefined;
+          }
+        }
       }
       
-      try {
-        planData = JSON.parse(jsonMatch[1]);
-      } catch (parseError) {
-        throw new Error('Failed to parse plan JSON: ' + (parseError as Error).message);
+      // If brace matching didn't work, try regex patterns
+      if (!planData) {
+        const patterns = [
+          /```(?:json)?\s*\n?([\s\S]*?)\n?```/,  // Markdown code block
+          /```([\s\S]*?)```/,                      // Generic code block
+        ];
+        
+        for (const pattern of patterns) {
+          const match = message.match(pattern);
+          if (match && match[1]) {
+            jsonStr = match[1].trim();
+            try {
+              planData = JSON.parse(jsonStr);
+              break;
+            } catch {
+              continue;
+            }
+          }
+        }
+      }
+      
+      if (!planData) {
+        throw new Error(`Failed to parse plan JSON. Response: ${message.substring(0, 300)}`);
       }
     }
 
@@ -117,16 +154,41 @@ export class Planner {
       throw new Error('Invalid plan: no steps found');
     }
 
-    // Construct TaskPlan
-    const steps: PlanStep[] = planData.steps.map((s: any) => ({
-      stepId: s.stepId || 0,
-      action: s.action || 'write',
-      path: s.path,
-      command: s.command,
-      prompt: s.prompt,
-      description: s.description || `Step ${s.stepId}`,
-      dependsOn: s.dependsOn,
-    }));
+    // Valid actions that the executor supports
+    const VALID_ACTIONS = ['read', 'write', 'suggestwrite', 'run'];
+
+    // Construct TaskPlan - filter out invalid steps
+    const steps: PlanStep[] = planData.steps
+      .filter((s: any) => {
+        const action = (s.action || 'write').toLowerCase();
+        if (!VALID_ACTIONS.includes(action)) {
+          console.warn(`[Planner] Skipping step with invalid action: ${s.action}`);
+          return false;
+        }
+        // Ensure step has required fields
+        if (!s.path && action !== 'run') {
+          console.warn(`[Planner] Skipping step without path: ${s.description}`);
+          return false;
+        }
+        if (!s.command && action === 'run') {
+          console.warn(`[Planner] Skipping run step without command`);
+          return false;
+        }
+        return true;
+      })
+      .map((s: any) => ({
+        stepId: s.stepId || 0,
+        action: (s.action || 'write').toLowerCase() as any,
+        path: s.path,
+        command: s.command,
+        prompt: s.prompt,  // Include prompt for write steps
+        description: s.description || `Step ${s.stepId}`,
+        dependsOn: s.dependsOn,
+      }));
+
+    if (steps.length === 0) {
+      throw new Error('No valid steps found after filtering');
+    }
 
     const plan: TaskPlan = {
       taskId: `task_${Date.now()}`,

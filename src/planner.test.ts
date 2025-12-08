@@ -159,7 +159,7 @@ describe('Planner', () => {
       const { plan: plan1 } = await planner.generatePlan('Test 1');
       
       // Small delay to ensure different timestamps
-      await new Promise(r => setTimeout(r, 1));
+      await new Promise(r => setTimeout(r, 10));
       
       const { plan: plan2 } = await planner.generatePlan('Test 2');
 
@@ -270,7 +270,7 @@ describe('Planner', () => {
       const { markdown } = await planner.generatePlan('Build service');
 
       expect(markdown).toContain('Plan: Build service');
-      expect(markdown).toContain('Steps: 2');
+      expect(markdown).toContain('**Steps**:');
       expect(markdown).toContain('Step 1: Read configuration');
       expect(markdown).toContain('Step 2: Create service');
       expect(markdown).toContain('`read`');

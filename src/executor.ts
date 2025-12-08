@@ -56,6 +56,9 @@ export class Executor {
     this.cancelled = false;
     plan.status = 'executing';
 
+    // Clear LLM conversation history to avoid context pollution from planning phase
+    this.config.llmClient.clearHistory();
+
     const startTime = Date.now();
 
     for (const step of plan.steps) {

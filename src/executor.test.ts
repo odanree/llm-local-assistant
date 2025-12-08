@@ -259,7 +259,7 @@ describe('Executor', () => {
       expect(result.success).toBeDefined();
       expect(result.completedSteps).toBeGreaterThanOrEqual(0);
       expect(result.totalDuration).toBeGreaterThanOrEqual(0);
-      expect(plan.status).toBe('executing' || 'completed' || 'failed');
+      expect(['executing', 'completed', 'failed']).toContain(plan.status);
     });
 
     it('should update plan status on success', async () => {
@@ -287,7 +287,7 @@ describe('Executor', () => {
 
       await executor.executePlan(plan);
 
-      expect(plan.status === 'completed' || plan.status === 'executing').toBe(true);
+      expect(['completed', 'executing']).toContain(plan.status);
     });
 
     it('should call onProgress callback', async () => {
