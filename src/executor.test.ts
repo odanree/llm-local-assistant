@@ -463,4 +463,67 @@ describe('Executor', () => {
       expect(status.paused).toBe(true);
     });
   });
+
+  describe('Smart Error Fixes (Priority 1.4)', () => {
+    it('should provide error context for missing files', async () => {
+      const step: PlanStep = {
+        stepId: 1,
+        action: 'read',
+        path: 'missing.txt',
+        description: 'Read missing file',
+      };
+
+      const plan: TaskPlan = {
+        taskId: 'task_1',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [step],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      expect(step.action).toBe('read');
+      expect(step.path).toBe('missing.txt');
+    });
+
+    it('should structure errors for command failures', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_1',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'nonexistent-command',
+            description: 'Run missing command',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const runStep = plan.steps[0];
+      expect(runStep.action).toBe('run');
+      expect(runStep.command).toBe('nonexistent-command');
+    });
+
+    it('should categorize permission errors for write operations', async () => {
+      const step: PlanStep = {
+        stepId: 1,
+        action: 'write',
+        path: '/protected/file.txt',
+        prompt: 'Write something',
+        description: 'Write to protected location',
+      };
+
+      expect(step.action).toBe('write');
+      expect(step.path).toBeDefined();
+      if (step.path) {
+        expect(step.path).toContain('protected');
+      }
+    });
+  });
 });

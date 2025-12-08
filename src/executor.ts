@@ -129,6 +129,32 @@ export class Executor {
   }
 
   /**
+   * Suggest fixes for common errors (Priority 1.4: Smart Error Fixes)
+   * Provides helpful hints based on error type and context
+   */
+  private suggestErrorFix(action: string, path: string, error: string): string | null {
+    if (action === 'read' && error.includes('ENOENT')) {
+      // File not found - suggest creating it or checking path
+      const filename = path.split('/').pop();
+      return `File '${filename}' doesn't exist. Create it with /write or check the path is correct.`;
+    }
+    if (action === 'write' && error.includes('EACCES')) {
+      // Permission denied
+      return `No write permission. Check file permissions or try a different location.`;
+    }
+    if (action === 'run' && error.includes('not found')) {
+      // Command not found
+      const cmd = error.split("'")[1];
+      return `Command '${cmd}' not found. Make sure it's installed and in your PATH.`;
+    }
+    if (action === 'read' && error.includes('EISDIR')) {
+      // Tried to read a directory
+      return `'${path}' is a directory, not a file. Specify a file inside the directory instead.`;
+    }
+    return null;
+  }
+
+  /**
    * Execute a single step
    */
   async executeStep(plan: TaskPlan, stepId: number): Promise<StepResult> {
@@ -209,10 +235,10 @@ export class Executor {
         duration: Date.now() - startTime,
       };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const suggestion = this.suggestErrorFix('read', step.path, errorMsg);
       throw new Error(
-        `Failed to read ${step.path}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Failed to read ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
     }
   }
@@ -291,10 +317,10 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
         duration: Date.now() - startTime,
       };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const suggestion = this.suggestErrorFix('write', step.path, errorMsg);
       throw new Error(
-        `Failed to write ${step.path}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `Failed to write ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
     }
   }
@@ -337,10 +363,12 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
         duration: Date.now() - startTime,
       };
     } catch (error: any) {
+      const errorMsg = error.stderr || error.message;
+      const suggestion = this.suggestErrorFix('run', step.command, errorMsg);
       return {
         stepId: step.stepId,
         success: false,
-        error: error.stderr || error.message,
+        error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
         duration: Date.now() - startTime,
       };
     }
