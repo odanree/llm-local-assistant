@@ -95,7 +95,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               });
 
               try {
-                const { plan, markdown } = await planner.generatePlan(userRequest);
+                const { plan, markdown } = await planner.generatePlan(
+                  userRequest,
+                  { messages: llmClient.getHistory() }
+                );
                 
                 // Store current plan for approval
                 (chatPanel as any)._currentPlan = plan;

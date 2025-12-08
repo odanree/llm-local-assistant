@@ -39,6 +39,10 @@ export interface PlannerConfig {
   timeout?: number;        // Default: 30000ms
 }
 
+export interface ConversationContext {
+  messages: Array<{ role: string; content: string }>;
+}
+
 /**
  * System prompt for LLM to generate structured plans
  */
@@ -63,7 +67,8 @@ Rules:
 9. Keep prompts CONCISE (under 80 characters)
 10. NO "content" field, NO code examples, NO extra fields
 11. Most tasks: read → write (improve/create content)
-12. Valid JSON that can be parsed immediately`;
+12. Valid JSON that can be parsed immediately
+13. If conversation context is provided: use it to understand multi-turn requests and maintain consistency`;
 
 export class Planner {
   private config: PlannerConfig;
@@ -74,13 +79,14 @@ export class Planner {
 
   /**
    * Generate a plan for a complex user request
+   * Optionally uses conversation context for multi-turn awareness
    * Returns plan + markdown description for user approval
    */
-  async generatePlan(userRequest: string): Promise<{
+  async generatePlan(userRequest: string, context?: ConversationContext): Promise<{
     plan: TaskPlan;
     markdown: string;
   }> {
-    const prompt = this.generatePlanPrompt(userRequest);
+    const prompt = this.generatePlanPrompt(userRequest, context);
     
     const response = await this.config.llmClient.sendMessage(prompt);
     if (!response.success) {
@@ -271,13 +277,17 @@ Please generate a refined plan that addresses the feedback. Use the same JSON fo
 
   /**
    * Generate LLM prompt for plan generation
+   * Includes conversation context if provided for multi-turn awareness
    */
-  private generatePlanPrompt(userRequest: string): string {
-    return `${PLAN_SYSTEM_PROMPT}
-
-User request: "${userRequest}"
-
-Generate a step-by-step plan in JSON format.`;
+  private generatePlanPrompt(userRequest: string, context?: ConversationContext): string {
+    let contextStr = '';
+    if (context && context.messages.length > 0) {
+      const recentMessages = context.messages.slice(-6).map(m => 
+        `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
+      ).join('\n');
+      contextStr = `\n\nPrevious conversation context:\n${recentMessages}\n`;
+    }
+    return `${PLAN_SYSTEM_PROMPT}${contextStr}\nNew user request: "${userRequest}"\n\nGenerate a step-by-step plan in JSON format.`;
   }
 
   /**

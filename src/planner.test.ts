@@ -99,6 +99,119 @@ describe('Planner', () => {
       expect(markdown).toContain('Step 4:');
     });
 
+    it('should use conversation context for multi-turn awareness', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: JSON.stringify({
+          steps: [
+            {
+              stepId: 1,
+              action: 'read',
+              path: 'src/Button.tsx',
+              description: 'Read Button component',
+            },
+            {
+              stepId: 2,
+              action: 'write',
+              path: 'src/Button.test.tsx',
+              description: 'Create Button tests',
+              prompt: 'Create comprehensive unit tests',
+            },
+          ],
+          summary: 'Add tests for Button component',
+        }),
+      });
+
+      const context = {
+        messages: [
+          { role: 'user', content: 'Create a Button component' },
+          { role: 'assistant', content: 'I created src/Button.tsx' },
+          { role: 'user', content: 'Now add error handling' },
+          { role: 'assistant', content: 'Updated with error handling' },
+        ],
+      };
+
+      const { plan } = await planner.generatePlan(
+        'Add tests for it',
+        context
+      );
+
+      // Verify sendMessage was called with context included
+      expect(mockLLMClient.sendMessage).toHaveBeenCalled();
+      const callArg = mockLLMClient.sendMessage.mock.calls[0][0];
+      
+      // Context should be included in the prompt
+      expect(callArg).toContain('Previous conversation context');
+      expect(callArg).toContain('Button component');
+      expect(callArg).toContain('error handling');
+
+      expect(plan.steps).toHaveLength(2);
+      expect(plan.steps[0].path).toBe('src/Button.tsx');
+      expect(plan.steps[1].path).toBe('src/Button.test.tsx');
+    });
+
+    it('should handle empty conversation context gracefully', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: JSON.stringify({
+          steps: [
+            {
+              stepId: 1,
+              action: 'write',
+              path: 'hello.ts',
+              description: 'Create hello',
+            },
+          ],
+          summary: 'Hello',
+        }),
+      });
+
+      const context = { messages: [] };
+
+      const { plan } = await planner.generatePlan('Create hello', context);
+
+      expect(plan.steps).toHaveLength(1);
+      
+      // Verify sendMessage was called without context in prompt
+      const callArg = mockLLMClient.sendMessage.mock.calls[0][0];
+      expect(callArg).not.toContain('Previous conversation context');
+    });
+
+    it('should handle context with more than 6 messages by limiting to recent', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: JSON.stringify({
+          steps: [{ stepId: 1, action: 'write', path: 'f.ts', description: 'D' }],
+          summary: 'Test',
+        }),
+      });
+
+      const context = {
+        messages: [
+          { role: 'user', content: 'msg1' },
+          { role: 'user', content: 'msg2' },
+          { role: 'user', content: 'msg3' },
+          { role: 'user', content: 'msg4' },
+          { role: 'user', content: 'msg5' },
+          { role: 'user', content: 'msg6' },
+          { role: 'user', content: 'msg7' },
+          { role: 'user', content: 'msg8' },
+        ],
+      };
+
+      await planner.generatePlan('Test', context);
+
+      const callArg = mockLLMClient.sendMessage.mock.calls[0][0];
+      
+      // Should include context
+      expect(callArg).toContain('Previous conversation context');
+      // But only the last 6 messages should be included
+      expect(callArg).toContain('msg3');  // Last 6 starts from msg3
+      expect(callArg).toContain('msg8');  // Last message
+      expect(callArg).not.toContain('msg1');  // First message should not be included
+      expect(callArg).not.toContain('msg2');  // Second message should not be included
+    });
+
     it('should handle JSON in markdown code blocks', async () => {
       mockLLMClient.sendMessage.mockResolvedValue({
         success: true,
