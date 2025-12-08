@@ -18,7 +18,7 @@ export async function ollamaGenerate({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, prompt })
   });
-  if (!res.ok) throw new Error(`LLM API error: ${res.status} ${res.statusText}. Check endpoint and model availability.`);
+  if (!res.ok) {throw new Error(`LLM API error: ${res.status} ${res.statusText}. Check endpoint and model availability.`);}
   const data = await res.json() as any;
   return data.response as string;
 }
@@ -128,7 +128,7 @@ export class LLMClient {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {break;}
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -136,7 +136,7 @@ export class LLMClient {
 
         for (let i = 0; i < lines.length - 1; i++) {
           const line = lines[i].trim();
-          if (!line || !line.startsWith('data: ')) continue;
+          if (!line || !line.startsWith('data: ')) {continue;}
 
           try {
             const data = JSON.parse(line.substring(6));

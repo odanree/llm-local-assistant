@@ -48,20 +48,21 @@ RESPOND ONLY WITH JSON. NO OTHER TEXT.
 
 VALID ACTIONS ONLY: write, read, run
 
-Example with prompts for write actions:
-{"steps": [{"stepId": 1, "action": "write", "path": "src/Hello.js", "prompt": "Create a React component that displays Hello World", "description": "Create Hello component"}, {"stepId": 2, "action": "write", "path": "src/Hello.test.js", "prompt": "Write Jest tests for the Hello component", "description": "Write tests"}], "summary": "Create component and tests"}
+Example:
+{"steps": [{"stepId": 1, "action": "write", "path": "src/Hello.js", "prompt": "Create a React component that displays Hello World", "description": "Create Hello component"}, {"stepId": 2, "action": "write", "path": "src/Hello.test.js", "prompt": "Write Jest tests for the Hello component", "description": "Write tests"}]}
 
 Rules:
-1. ONLY JSON output - no markdown, no code
-2. steps array with 3-5 objects
-3. Each step: {"stepId": 1, "action": "write", "path": "file.js", "prompt": "...", "description": "..."}
-4. Fields for write: stepId, action, path, prompt, description
-5. Fields for read: stepId, action, path, description
-6. Fields for run: stepId, action, command, description
-7. prompt field is REQUIRED for write steps - tells LLM what to generate
-8. NO "content" field, NO code examples
-9. ONLY actions: write (create file), read (analyze file), run (shell command)
-10. Output valid JSON that JSON.parse() can read`;
+1. RESPOND ONLY WITH JSON - no markdown, no explanation
+2. Return exactly this format: {"steps": [...]}
+3. Steps array: 3-5 objects maximum
+4. Each step needs: stepId (number), action (string), path (string), description (short string, max 50 chars)
+5. For write: also include prompt (max 100 chars describing what to generate)
+6. For read: path only
+7. For run: command instead of path
+8. Keep descriptions SHORT (under 50 characters)
+9. Keep prompts CONCISE (under 100 characters)
+10. NO "content" field, NO code examples, NO extra fields
+11. Valid JSON that can be parsed immediately`;
 
 export class Planner {
   private config: PlannerConfig;
@@ -103,7 +104,7 @@ export class Planner {
         let braceCount = 0;
         let endIdx = -1;
         for (let i = startIdx; i < message.length; i++) {
-          if (message[i] === '{') braceCount++;
+          if (message[i] === '{') {braceCount++;}
           if (message[i] === '}') {
             braceCount--;
             if (braceCount === 0) {
@@ -117,7 +118,8 @@ export class Planner {
           jsonStr = message.substring(startIdx, endIdx + 1);
           try {
             planData = JSON.parse(jsonStr);
-          } catch {
+          } catch (parseErr) {
+            console.warn('[Planner] Brace-matched JSON failed to parse:', (parseErr as Error).message);
             jsonStr = undefined;
           }
         }
@@ -145,7 +147,15 @@ export class Planner {
       }
       
       if (!planData) {
-        throw new Error(`Failed to parse plan JSON. Response: ${message.substring(0, 300)}`);
+        // Check if message appears truncated
+        const isTruncated = message.endsWith('fil') || message.endsWith('...') || 
+                           message.match(/[a-z]$/) && message.length > 1000;
+        
+        const errorMsg = isTruncated 
+          ? `Failed to parse plan JSON. Response appears truncated. Length: ${message.length}. Last 200 chars: ${message.substring(Math.max(0, message.length - 200))}`
+          : `Failed to parse plan JSON. Response length: ${message.length}. First 300 chars: ${message.substring(0, 300)}`;
+        
+        throw new Error(errorMsg);
       }
     }
 
@@ -234,7 +244,7 @@ Please generate a refined plan that addresses the feedback. Use the same JSON fo
     } catch (e) {
       const jsonMatch = (response.message || '').match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) ||
                         (response.message || '').match(/(\{[\s\S]*\})/);
-      if (!jsonMatch) throw new Error('No valid JSON in refined plan');
+      if (!jsonMatch) {throw new Error('No valid JSON in refined plan');}
       planData = JSON.parse(jsonMatch[1]);
     }
 
@@ -279,10 +289,10 @@ Generate a step-by-step plan in JSON format.`;
     plan.steps.forEach((step) => {
       md += `### Step ${step.stepId}: ${step.description}\n`;
       md += `**Action**: \`${step.action}\``;
-      if (step.path) md += ` | **Path**: \`${step.path}\``;
-      if (step.command) md += ` | **Command**: \`${step.command}\``;
+      if (step.path) {md += ` | **Path**: \`${step.path}\``;}
+      if (step.command) {md += ` | **Command**: \`${step.command}\``;}
       md += '\n';
-      if (step.prompt) md += `**Prompt**: "${step.prompt}"\n`;
+      if (step.prompt) {md += `**Prompt**: "${step.prompt}"\n`;}
       md += '\n';
     });
 

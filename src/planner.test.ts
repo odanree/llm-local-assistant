@@ -184,7 +184,7 @@ describe('Planner', () => {
       });
 
       await expect(planner.generatePlan('Test')).rejects.toThrow(
-        'LLM did not return valid JSON plan'
+        /Failed to parse plan JSON/
       );
     });
 

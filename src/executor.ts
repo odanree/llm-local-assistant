@@ -86,7 +86,7 @@ export class Executor {
       while (retries <= maxRetries) {
         result = await this.executeStep(plan, step.stepId);
 
-        if (result.success) break;
+        if (result.success) {break;}
 
         retries++;
         if (retries <= maxRetries) {

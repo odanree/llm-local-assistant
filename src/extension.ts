@@ -233,7 +233,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
                 // Now write the generated content to file
                 const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-                if (!wsFolder) throw new Error('No workspace folder open. Open a folder in VS Code first to use /write command.');
+                if (!wsFolder) {throw new Error('No workspace folder open. Open a folder in VS Code first to use /write command.');}
                 const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
 
                 // Create parent directories if they don't exist
@@ -272,7 +272,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             if (readMatch) {
               const relPath = readMatch[1];
               const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-              if (!wsFolder) throw new Error('No workspace folder open.');
+              if (!wsFolder) {throw new Error('No workspace folder open.');}
               const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
 
               try {
@@ -356,7 +356,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
                 if (confirm === 'Yes') {
                   const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-                  if (!wsFolder) throw new Error('No workspace folder open.');
+                  if (!wsFolder) {throw new Error('No workspace folder open.');}
                   const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
 
                   // Create parent directories if they don't exist
@@ -396,7 +396,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // AGENT MODE: /git-commit-msg - Generate commit message from staged changes
             if (gitCommitMatch) {
               const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-              if (!wsFolder) throw new Error('No workspace folder open.');
+              if (!wsFolder) {throw new Error('No workspace folder open.');}
 
               try {
                 const gitClient = new GitClient(wsFolder);
@@ -469,7 +469,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // AGENT MODE: /git-review [staged|unstaged|all] - Review code changes
             if (gitReviewMatch) {
               const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-              if (!wsFolder) throw new Error('No workspace folder open.');
+              if (!wsFolder) {throw new Error('No workspace folder open.');}
 
               try {
                 const gitClient = new GitClient(wsFolder);
