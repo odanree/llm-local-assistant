@@ -4,6 +4,24 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.1.0] - 2025-12-07
+
+### Added
+- **Phase 2: Agent Loop Foundation** - Multi-step planning and autonomous execution
+- `/plan <task>` command to generate structured action plans using LLM
+- `/approve` command to execute approved plans with automatic retry logic
+- `/reject` command to discard plans before execution
+- `Planner` module for intelligent task decomposition (breaks complex requests into 3-10 steps)
+- `Executor` module for sequential step execution with configurable retry logic
+- Automatic error recovery with up to 2 retry attempts per step
+- Progress callbacks for real-time plan execution monitoring
+- 32 comprehensive unit tests for Planner and Executor modules (>85% coverage)
+
+### Improved
+- Updated help text to display new planning commands alongside existing file operations
+- Enhanced command routing for agent mode with planning workflow
+- Better state management for active plans across chat sessions
+
 ## [1.0.1] - 2025-11-19
 
 ### Updated

@@ -2,10 +2,14 @@
 import * as vscode from 'vscode';
 import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
+import { Planner } from './planner';
+import { Executor } from './executor';
 import { getWebviewContent } from './webviewContent';
 import * as path from 'path';
 
 let llmClient: LLMClient;
+let planner: Planner;
+let executor: Executor;
 let chatPanel: vscode.WebviewPanel | undefined;
 
 /**
@@ -51,6 +55,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     chatPanel?.webview.postMessage({
       command: 'addMessage',
       text: `**Agent Mode Commands:**\n\n` +
+        `🤖 **Planning & Execution:**\n` +
+        `- /plan <task> — Create a multi-step action plan\n` +
+        `- /approve — Execute the current plan\n` +
+        `- /reject — Discard the current plan\n\n` +
         `📄 **File Operations:**\n` +
         `- /read <path> — Read a file from workspace\n` +
         `- /write <path> <prompt> — Generate and write file content\n` +
@@ -72,6 +80,112 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           case 'sendMessage': {
             const text: string = message.text || '';
             console.log('[LLM Assistant] Processing message:', text);
+
+            // Check for /plan command
+            const planMatch = text.match(/^\/plan\s+(.+)$/);
+
+            // AGENT MODE: /plan <task>
+            if (planMatch) {
+              const userRequest = planMatch[1].trim();
+              
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: `Planning task: ${userRequest}...`,
+                type: 'info',
+              });
+
+              try {
+                const { plan, markdown } = await planner.generatePlan(userRequest);
+                
+                // Store current plan for approval
+                (chatPanel as any)._currentPlan = plan;
+                
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: `📋 **Plan Created** (${plan.steps.length} steps)\n\n${markdown}\n\n_Use **/approve** to execute or **/reject** to discard_`,
+                  success: true,
+                });
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Planning error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /approve command
+            const approveMatch = text.match(/^\/approve/);
+
+            // AGENT MODE: /approve - Execute current plan
+            if (approveMatch) {
+              try {
+                const currentPlan = (chatPanel as any)._currentPlan;
+                if (!currentPlan) {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    error: 'No plan to approve. Use /plan <task> first.',
+                    success: false,
+                  });
+                  return;
+                }
+
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: 'Executing plan...',
+                  type: 'info',
+                });
+
+                const result = await executor.executePlan(currentPlan);
+                
+                // Clear current plan
+                delete (chatPanel as any)._currentPlan;
+                
+                const message = result.success 
+                  ? `✅ **Plan completed successfully**\n\nCompleted ${result.completedSteps} of ${currentPlan.steps.length} steps`
+                  : `⚠️ **Plan execution failed**\n\nError: ${result.error || 'Unknown error'}`;
+                
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: message,
+                  success: result.success,
+                });
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /reject command
+            const rejectMatch = text.match(/^\/reject/);
+
+            // AGENT MODE: /reject - Discard current plan
+            if (rejectMatch) {
+              const currentPlan = (chatPanel as any)._currentPlan;
+              if (!currentPlan) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: 'No plan to reject.',
+                  success: false,
+                });
+                return;
+              }
+
+              // Clear current plan
+              delete (chatPanel as any)._currentPlan;
+              
+              chatPanel?.webview.postMessage({
+                command: 'addMessage',
+                text: '🗑️ Plan discarded.',
+                success: true,
+              });
+              return;
+            }
 
             // Check for /write command
             const writeMatch = text.match(/\/write\s+(\S+)(?:\s+(.+))?$/);
@@ -525,6 +639,39 @@ export function activate(context: vscode.ExtensionContext) {
   // Initialize LLM client with config
   const config = getLLMConfig();
   llmClient = new LLMClient(config);
+
+  // Initialize Planner and Executor
+  planner = new Planner({
+    llmClient,
+    maxSteps: 10,
+    timeout: 30000,
+  });
+  
+  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+  const gitClient = wsFolder ? new GitClient(wsFolder) : undefined;
+  
+  executor = new Executor({
+    extension: context,
+    llmClient,
+    gitClient,
+    workspace: wsFolder || vscode.Uri.file('/'),
+    maxRetries: 2,
+    timeout: 30000,
+    onProgress: (step: number, total: number, description: string) => {
+      console.log(`[Executor] Step ${step}/${total}: ${description}`);
+    },
+    onMessage: (message: string, type: 'info' | 'error') => {
+      console.log(`[Executor ${type.toUpperCase()}]`, message);
+      if (chatPanel) {
+        chatPanel.webview.postMessage({
+          command: 'addMessage',
+          text: message,
+          type,
+          success: type === 'info',
+        });
+      }
+    },
+  });
 
   // Register commands
   const openChatCommand = vscode.commands.registerCommand('llm-local-assistant.openChat', () => {

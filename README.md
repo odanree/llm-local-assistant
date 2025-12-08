@@ -31,16 +31,24 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 
 ## 📊 Project Status
 
-**v1.0.0** - First Stable Release
+**v1.1.0** - Phase 2: Multi-Step Planning & Autonomous Execution
 
+- ✅ **Phase 2 Foundation Complete** - Planner and Executor modules with comprehensive testing
+- ✅ **32 unit tests** - Planner (17 tests) + Executor (15 tests), >85% coverage
+- ✅ **New commands** - `/plan`, `/approve`, `/reject` for autonomous task execution
+- ✅ **Error recovery** - Automatic retry logic with up to 2 attempts per step
+- ✅ **TypeScript strict mode** - 0 type errors, full type safety
+- ✅ **Backward compatible** - All v1.0.0 commands still work unchanged
+- ✅ **Integrated** - Planner and Executor fully integrated into VS Code extension UI
+
+**Previous v1.0.0 features:**
 - ✅ **23 commits** - Clean, atomic git history showing full development progression
 - ✅ **92 tests** - 100% passing (36 extension + 33 llmClient + 23 gitClient)
-- ✅ **TypeScript strict mode** - 0 type errors, full type safety
 - ✅ **4 core modules** - extension, llmClient, gitClient, webviewContent
 - ✅ **Published to VS Code Marketplace** - v1.0.0 stable release
 - ✅ **Production-Ready** - Comprehensive error handling and documentation
 
-**Features included:**
+**v1.0.0 Features:**
 - Chat interface with streaming support
 - File operations (`/read`, `/write`, `/suggestwrite`)
 - Git integration (`/git-commit-msg`, `/git-review`)
@@ -48,11 +56,18 @@ A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM
 - Monochrome UI with WCAG AA accessibility
 - Comprehensive error handling
 
+**v1.1.0 Features:**
+- Multi-step planning with LLM decomposition
+- Autonomous step execution with error recovery
+- Plan review before execution
+- Real-time progress monitoring
+- Atomic operations: read, write, run (shell), suggestwrite (deferred to 2.2)
+
 **Ready for:**
-- Portfolio showcase - professional-grade code
-- Production use - tested and optimized
-- Extension by others - clear architecture and test coverage
-- Interview discussion - full git history and talking points
+- Production use - tested and optimized with autonomous agent capabilities
+- Portfolio showcase - professional-grade code with Phase 2 architecture
+- Extension development - clear patterns for adding new agent modes
+- Interview discussion - full git history and Phase 2 implementation details
 
 ## 📋 Prerequisites
 
@@ -184,6 +199,72 @@ Simply type messages and press Enter to chat with your LLM.
   ```
   /help
   ```
+
+## 🤖 Phase 2: Multi-Step Planning & Execution
+
+**New in v1.1.0** - Autonomous planning and execution of complex tasks!
+
+### Planning Commands
+
+- **`/plan <task>`** - Generate a structured multi-step action plan
+  ```
+  /plan create a React component with TypeScript and tests
+  ```
+  The LLM analyzes your request and breaks it into 3-10 atomic steps, each ready for automated execution.
+
+- **`/approve`** - Execute the current plan step-by-step
+  ```
+  /approve
+  ```
+  Runs all steps with automatic error recovery. If a step fails, retries up to 2 times before stopping.
+
+- **`/reject`** - Discard the current plan without executing
+  ```
+  /reject
+  ```
+  Clears the pending plan from the session.
+
+### How It Works
+
+1. **Think**: You describe a complex task (e.g., "Add authentication to my API")
+2. **Plan**: `/plan` breaks it into steps (e.g., create auth module, write tests, update docs)
+3. **Review**: You see the plan and can approve or reject
+4. **Execute**: `/approve` runs each step sequentially with automatic retry
+5. **Iterate**: Failures provide detailed error messages for manual fixes
+
+### Example Workflow
+
+```
+You: /plan refactor this module to use Promises instead of callbacks
+LLM: 📋 **Plan Created** (5 steps)
+     1. Read current module
+     2. Generate Promise-based implementation
+     3. Write refactored code
+     4. Generate test file
+     5. Write tests
+     
+     Use **/approve** to execute or **/reject** to discard
+
+You: /approve
+LLM: Executing plan...
+     ✅ Step 1: Read module (245ms)
+     ✅ Step 2: Generate implementation (3.2s)
+     ✅ Step 3: Write refactored code (150ms)
+     ✅ Step 4: Generate tests (2.8s)
+     ✅ Step 5: Write tests (120ms)
+     ✅ **Plan completed successfully**
+```
+
+### Technical Details
+
+- **Planner Module**: Uses LLM prompt engineering to generate structured JSON plans
+- **Executor Module**: Sequential execution with retry logic (up to 2 attempts per failed step)
+- **Progress Tracking**: Real-time callbacks show step completion status
+- **Error Recovery**: Automatic retry for transient failures; detailed error messages for manual fixes
+- **Atomic Steps**: Each step is read, write, run (shell command), or suggestwrite
+- **32 Unit Tests**: Comprehensive coverage (>85%) for planning and execution logic
+
+See [docs/PHASE2_INTEGRATION.md](https://github.com/odanree/llm-local-assistant/blob/main/docs/PHASE2_INTEGRATION.md) for integration details.
 
 ## 🏗️ Architecture & Design Decisions
 
