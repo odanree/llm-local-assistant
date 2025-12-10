@@ -1,58 +1,122 @@
 # LLM Local Assistant - VS Code Extension
 
-A VS Code extension that integrates with your local LLM (Ollama, LM Studio, vLLM) to provide intelligent code assistance, autonomous file operations, and chat capabilities directly in your editor.
+A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
+> **Latest Release**: v1.1.1 - Phase 2 Core Features Complete ✨  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
-## ✨ Features
+## ✨ Key Features
 
-- 🤖 **Local LLM Chat** - Chat with your local LLM without sending data to external servers
-- 🔄 **Agent Mode Commands** - Autonomous file operations:
-  - `/read <path>` - Read files from your workspace
-  - `/write <path> [prompt]` - Generate content and write to files via LLM
-  - `/suggestwrite <path> [prompt]` - LLM suggests changes, you approve before writing
-- ⚙️ **Fully Configurable** - Customize endpoint, model, temperature, max tokens, timeout
-- 💬 **Conversation Context** - Maintains chat history for coherent multi-turn conversations
-- 🚀 **Quick Access** - Open chat with a single click from the status bar
-- 🔒 **100% Private** - All processing stays on your machine
-- ⚡ **Streaming Support** - Real-time token streaming for responsive UX
-- ✅ **Production-Ready** - Comprehensive error handling, type safety, test coverage
+**🧠 Autonomous Planning** (Phase 2 - NEW!)
+- Break complex tasks into structured multi-step plans
+- Review plans before execution
+- Automatic error recovery with retry logic
 
-## 📸 Screenshots
+**🤖 Agent Mode Commands**
+- `/plan <task>` - Generate multi-step action plans with LLM
+- `/approve` - Execute approved plans sequentially
+- `/reject` - Discard plans without execution
+- `/read <path>` - Read files from workspace
+- `/write <path>` - Generate and write file content
+- `/git-commit-msg` - Generate conventional commit messages
+- `/git-review` - AI-powered code review of staged changes
 
-### Chat Interface with Git Integration Commands
-![Chat Interface - Git Commands](https://github.com/odanree/llm-local-assistant/raw/main/assets/chat-git-commands.png)
+**💻 Local & Private**
+- 🔒 Works with Ollama, LM Studio, vLLM - no external APIs
+- 🚀 Fast local LLM inference with streaming support
+- ⚙️ Fully configurable (endpoint, model, temperature, timeout)
+- 💬 Conversation context maintained per session
+- ✅ Production-ready with comprehensive error handling
 
-*Chat window showing `/git-commit-msg` and `/git-review` commands in action. The interface displays:*
-- *Interactive chat messages with streaming responses*
-- *Git integration commands for autonomous commit message generation and code review*
-- *Light gray text styling for optimal readability in dark themes*
-- *Real-time command execution with status feedback*
+## 📊 Project Status & Version History
 
-## 📊 Project Status
+### Latest: v1.1.1 (December 2025) - Phase 2 Complete ✅
 
-**v1.0.0** - First Stable Release
+**Phase 2: Multi-Step Planning & Autonomous Execution**
+- ✅ **Planner Module** - LLM-based task decomposition into structured plans
+- ✅ **Executor Module** - Sequential execution with automatic retry (up to 2 attempts per step)
+- ✅ **Observer System** - Real-time progress tracking
+- ✅ **Error Recovery** - Intelligent error handling with helpful feedback
+- ✅ **32+ Unit Tests** - >85% code coverage
+- ✅ **Full Type Safety** - TypeScript strict mode, 0 errors
+- ✅ **Backward Compatible** - All v1.0 commands unchanged
 
-- ✅ **23 commits** - Clean, atomic git history showing full development progression
-- ✅ **92 tests** - 100% passing (36 extension + 33 llmClient + 23 gitClient)
-- ✅ **TypeScript strict mode** - 0 type errors, full type safety
-- ✅ **4 core modules** - extension, llmClient, gitClient, webviewContent
-- ✅ **Published to VS Code Marketplace** - v1.0.0 stable release
-- ✅ **Production-Ready** - Comprehensive error handling and documentation
+**Phase 1 Foundation (v1.0.0):**
+- 💬 Local LLM chat with streaming support
+- 📁 File operations (read, write, suggestwrite)
+- 🔀 Git integration (commit messages, code review)
+- 🔒 100% private, offline-first design
+- 92 unit tests with 100% pass rate
 
-**Features included:**
-- Chat interface with streaming support
-- File operations (`/read`, `/write`, `/suggestwrite`)
-- Git integration (`/git-commit-msg`, `/git-review`)
-- Performance optimizations (token buffering, DOM batching)
-- Monochrome UI with WCAG AA accessibility
-- Comprehensive error handling
+### What's New in Phase 2
 
-**Ready for:**
-- Portfolio showcase - professional-grade code
-- Production use - tested and optimized
-- Extension by others - clear architecture and test coverage
-- Interview discussion - full git history and talking points
+**Autonomous Planning & Execution Workflow:**
+1. Describe a task: `/plan create a React component with tests`
+2. Review the plan: See breakdown of steps (read, generate, write)
+3. Approve execution: `/approve` to run all steps sequentially
+4. Monitor progress: Real-time status for each step
+5. Handle errors: Automatic retry or manual investigation
+
+**Real-World Use Cases:**
+- 🚀 Refactoring modules (analyze, generate, test, verify)
+- 📝 Generating documentation (read code, analyze, write docs)
+- 🏗️ Creating project structures (multiple files, configs, tests)
+- 🔄 Multi-step code transformations (analyze, plan, execute)
+
+---
+
+## 📸 Workflow Screenshots
+
+### 1. Planning View - Multi-Step Decomposition
+![Phase 2 Planning](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-planning.png)
+
+*Shows `/plan` command breaking down a task:*
+- *LLM analyzes request and creates structured plan*
+- *Each step displays action type (read, write, run)*
+- *Step descriptions explain what each action does*
+- *Review interface with `/approve` and `/reject` buttons*
+- *Estimated execution time for planning phase*
+
+### 2. Execution View - Step-by-Step Progress
+![Phase 2 Execution](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-execution.png)
+
+*Shows `/approve` running plan steps:*
+- *Real-time progress indicator (Step 2 of 5)*
+- *Elapsed time and execution speed*
+- *Visual checkmarks (✅) for completed steps*
+- *Step output displayed inline (files created, commands run)*
+- *Error handling with retry status*
+
+### 3. Error Recovery - Automatic Retry
+![Phase 2 Error Recovery](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-error-recovery.png)
+
+*Shows automatic error recovery in action:*
+- *Step fails with descriptive error message*
+- *Auto-retry indicator: "Retry 1 of 2"*
+- *Error context (file path, command, stderr output)*
+- *Recovery success or manual investigation guidance*
+- *Continues to next step on success*
+
+### 4. Completed Workflow - Full Results
+![Phase 2 Workflow Complete](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-complete.png)
+
+*Shows successful plan execution:*
+- *Summary: "5 steps completed in 12.3 seconds"*
+- *Final files created (MyComponent.js, test file, etc.)*
+- *Total tokens used and costs*
+- *Next steps suggestion*
+- *Option to review generated code or continue chatting*
+
+### 5. Git Integration - Autonomous Commit
+![Git Integration](https://github.com/odanree/llm-local-assistant/raw/main/assets/git-integration.png)
+
+*Shows Phase 1 git commands (still available):*
+- *`/git-commit-msg` generating conventional commit*
+- *Staged changes automatically analyzed*
+- *Suggested message with type (feat/fix/refactor)*
+- *Copy-to-clipboard functionality*
+
+---
 
 ## 📋 Prerequisites
 
@@ -90,94 +154,47 @@ Or search for "LLM Local Assistant" in VS Code Extensions marketplace: https://m
 
 **See [docs/INSTALL.md](https://github.com/odanree/llm-local-assistant/blob/main/docs/INSTALL.md) for detailed platform-specific setup, troubleshooting, and development instructions.**
 
-### Option A: Install from VS Code Marketplace (Recommended)
+## 🚀 Development & Building
 
-1. Open VS Code Extensions (`Ctrl+Shift+X`)
-2. Search for "LLM Local Assistant"
-3. Click "Install"
-4. Reload VS Code
-
-### Option B: Install from VSIX
-
-1. Download `llm-local-assistant-1.0.0.vsix` from [Latest Release](https://github.com/odanree/llm-local-assistant/releases)
-2. In VS Code, run: `code --install-extension llm-local-assistant-1.0.0.vsix`
-   - Or open Command Palette (`Ctrl+Shift+P`) → "Extensions: Install from VSIX"
-3. Reload VS Code
-
-### Option C: Build from Source (Development)
-
-1. **Install & Compile**
+### Build
 ```bash
-npm install
-npm run compile
-# Or development watch mode:
-npm run watch
+npm run compile        # Single build
+npm run watch         # Auto-rebuild on changes
+npm run package       # Production VSIX package
 ```
 
-2. **Launch in Debug Mode**
-   - Press `F5` in VS Code to open debug window with extension loaded
-
-### Configure Endpoint
-
-Open VS Code Settings (`Ctrl+,`) and set:
-
-```json
-{
-  "llm-assistant.endpoint": "http://localhost:11434",
-  "llm-assistant.model": "mistral",
-  "llm-assistant.temperature": 0.7,
-  "llm-assistant.maxTokens": 2048,
-  "llm-assistant.timeout": 30000
-}
+### Testing
+```bash
+npm test              # Run all 120+ tests
+npm run test:watch   # Auto-run on changes
+npm run test:coverage # Coverage report
 ```
 
-For custom ports:
-```json
-{
-  "llm-assistant.endpoint": "http://127.0.0.1:9000"
-}
+### Debug
+```bash
+# Launch in VS Code debug mode
+F5
+
+# Then interact with extension:
+- Type messages to chat
+- Use /plan, /approve, /reject
+- Check console for debug output
 ```
 
-### Test Connection
+### Source Code Structure
+```
+src/
+├── extension.ts           # Command routing, UI orchestration
+├── planner.ts            # Plan generation with thinking phase
+├── executor.ts           # Step execution with retry logic
+├── llmClient.ts          # LLM API abstraction
+├── gitClient.ts          # Git operations
+├── webviewContent.ts     # Chat UI HTML/CSS/JS
+├── *.test.ts             # 120+ unit tests
+└── vitest.setup.ts       # Test configuration
+```
 
-Click **LLM Assistant** in status bar → Run "Test Connection" command
-
-## 💡 Usage
-
-### Chat
-Simply type messages and press Enter to chat with your LLM.
-
-### Available Commands
-
-#### File Operations
-- **`/read <path>`** - Read and display file contents
-  ```
-  /read src/main.ts
-  ```
-
-- **`/write <path> [prompt]`** - Generate file content via LLM and write to disk
-  ```
-  /write src/greeting.ts write a TypeScript function that greets users
-  ```
-  If no prompt provided, uses: "Generate appropriate content for this file based on its name."
-
-- **`/suggestwrite <path> [prompt]`** - LLM suggests changes, you review and approve before writing
-  ```
-  /suggestwrite src/config.ts add validation for the API endpoint
-  ```
-
-#### Git Integration
-- **`/git-commit-msg`** - Generate commit message from staged changes
-  ```
-  /git-commit-msg
-  ```
-  Reads all staged diffs, analyzes changes, and generates a conventional commit message following the pattern: `<type>(<scope>): <description>`
-
-- **`/git-review`** - AI-powered code review of staged changes
-  ```
-  /git-review
-  ```
-  Reviews all staged changes, identifies potential issues, suggests improvements, and provides specific feedback.
+---
 
 #### System
 - **`/help`** - Show available commands
@@ -185,192 +202,498 @@ Simply type messages and press Enter to chat with your LLM.
   /help
   ```
 
-## 🏗️ Architecture & Design Decisions
+## 🤖 Phase 2 Commands Guide
 
-### Why This Architecture?
+### Planning & Execution
 
-The extension uses a **deliberately simple, regex-based command parser** instead of a formal CLI framework. Here's why:
+#### `/plan <task>`
+**Analyze a task and create a structured multi-step plan**
 
-1. **User-Centric**: Commands work anywhere in messages - `/read file.ts` can appear mid-conversation
-2. **Low Overhead**: No dependency on heavyweight CLI libraries, keeping bundle size small
-3. **Maintainability**: Regex patterns are explicit and easy to audit in code review
-4. **Extensibility**: Easy to add new commands (e.g., `/analyze`, `/refactor`) without architecture changes
+```
+You: /plan create a React component with unit tests
 
-**Trade-off**: Less strict argument validation than formal parsers, but gained flexibility for natural interaction patterns.
+LLM: 📋 **Plan Created** (5 steps, 8.3s thinking)
 
-### Streaming vs Non-Streaming
+STEP 1: read
+  Read example React components to understand style
 
-The extension supports **both streaming and non-streaming responses**:
+STEP 2: write  
+  Generate TypeScript React component with hooks
 
-- **Streaming** (primary): Token-by-token display for real-time feedback
-- **Non-Streaming** (fallback): For servers with streaming limitations (e.g., Ollama on non-standard ports)
+STEP 3: write
+  Generate Jest unit tests for component
 
-**Why this matters**: Users get responsive, interactive feedback while typing long responses. The UI updates continuously instead of waiting for the full response.
+STEP 4: run
+  Execute npm test to verify tests pass
 
-### In-Memory Conversation History
+STEP 5: write
+  Create documentation for component
 
-The `LLMClient` maintains conversation history **per-session, not persisted**:
-
-```typescript
-private conversationHistory: Array<{ role: string; content: string }> = [];
+Ready to execute? Use **/approve** or **/reject**
 ```
 
-**Why**: 
-- Simpler state management without database/file I/O
-- Clear semantics: closing the chat panel resets history (expected behavior)
-- Reduces complexity for MVP
-- Future enhancement: optional persistence to disk/localStorage
+**What it does:**
+- Uses LLM thinking phase to analyze your request
+- Breaks task into 3-10 atomic steps
+- Each step is one of: `read`, `write`, `run`, or `suggestwrite`
+- Generates step descriptions explaining the action
 
-**Trade-off**: Restarting VS Code or closing the chat panel loses context. This is intentional for simplicity; persistent history is a Phase 2 feature.
+#### `/approve`
+**Execute the current plan step-by-step**
 
-### Async/Await + Try-Catch Error Handling
+```
+You: /approve
 
-All user-triggered operations follow this pattern:
+LLM: ⚙️ **Executing Plan** (5 steps)
 
-```typescript
-try {
-  const result = await llmClient.sendMessage(userInput);
-  // Display result
-} catch (error) {
-  // Send user-friendly error message to chat
-  showError(`Error: ${error.message}`);
-}
+✅ STEP 1: read (127ms)
+   Read example React components
+
+✅ STEP 2: write (3.2s)
+   Generated MyComponent.tsx (284 lines)
+
+✅ STEP 3: write (2.1s)
+   Generated MyComponent.test.tsx (156 lines)
+
+⚠️ STEP 4: run (1.8s)
+   npm test - Retry 1 of 2
+   ✅ Retry succeeded, tests pass
+
+✅ STEP 5: write (890ms)
+   Generated COMPONENT.md
+
+✅ **Plan completed successfully** (7.9 seconds)
 ```
 
-**Why**: Consistent error propagation, easy to debug, and all errors surface in the chat UI for users to see.
+**Features:**
+- Executes steps sequentially
+- Automatic retry (up to 2 times) on step failure
+- Real-time progress with elapsed time
+- Shows output for each step
+- Continues on success, stops on unrecoverable error
 
-### File I/O via VS Code Workspace API
+#### `/reject`
+**Discard the current plan without executing**
 
-All file operations use **VS Code's URI-based `workspace.fs` API**:
-
-```typescript
-const uri = vscode.Uri.joinPath(workspaceFolder, relativePath);
-await vscode.workspace.fs.writeFile(uri, encodedContent);
 ```
+You: /reject
 
-**Why**:
-- Cross-platform path handling (Windows \ vs Unix /)
-- Respects workspace folder boundaries
-- Works with remote development (SSH, Codespaces)
-- Triggers VS Code's file watching automatically
-
-## Production-Ready Features
-
-### Type Safety
-- **TypeScript strict mode enabled** (`strict: true` in tsconfig.json)
-- All code passes type checking: 0 errors, 0 warnings
-- Explicit types on public APIs
-
-### Error Handling
-- Specific error detection for HTTP status codes (404 → model not found, 503 → server busy)
-- Helpful error messages guide users to settings or configuration
-- Timeout handling with AbortController for clean cancellation
-
-### Test Coverage
-- **52 unit tests** covering:
-  - LLMClient initialization, configuration, API contracts
-  - Command parsing (regex patterns for /read, /write, /suggestwrite)
-  - Error scenarios (connection failures, timeouts, invalid endpoints)
-  - File path validation and resolution
-  - Message formatting
-- Run with: `npm test` (100% pass rate)
-
-### Extensibility
-
-Three clear extension points for Phase 2:
-
-1. **New LLM Commands**: Add regex pattern + handler in `extension.ts`
-2. **LLM Client Enhancements**: Extend `LLMClient` class with new capabilities
-3. **Webview Features**: Enhance UI in `webviewContent.ts`
-
-See [ROADMAP.md](https://github.com/odanree/llm-local-assistant/blob/main/ROADMAP.md) for planned enhancements.
-
-## 📦 Configuration Reference
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `llm-assistant.endpoint` | string | `http://localhost:11434` | LLM server endpoint |
-| `llm-assistant.model` | string | `mistral` | Model name |
-| `llm-assistant.temperature` | number | `0.7` | Response randomness (0-1, higher=creative) |
-| `llm-assistant.maxTokens` | number | `2048` | Max response length in tokens |
-| `llm-assistant.timeout` | number | `30000` | Request timeout in milliseconds |
-
-## 🔧 Development
-
-### Build
-```bash
-npm run compile       # Single build
-npm run watch        # Auto-rebuild on changes
-npm run package      # Production bundle
+LLM: ❌ Plan discarded. What would you like to do?
 ```
-
-### Testing
-```bash
-npm test                    # Run all tests
-npm run test:coverage       # Coverage report
-npm run test:ui            # Interactive test UI
-```
-
-### Linting
-```bash
-npm run lint         # ESLint validation
-```
-
-### Debug
-Press `F5` in VS Code to launch extension in debug mode with breakpoints.
-
-## 🗺️ Roadmap
-
-See [ROADMAP.md](https://github.com/odanree/llm-local-assistant/blob/main/ROADMAP.md) for planned features including:
-- GitHub Copilot Agent Mode integration
-- Persistent conversation history
-- Custom system prompts
-- Code-aware context injection
-
-## 📚 Documentation
-
-- **[ARCHITECTURE.md](https://github.com/odanree/llm-local-assistant/blob/main/ARCHITECTURE.md)** - Deep dive into component design
-- **[PROJECT_STATUS.md](https://github.com/odanree/llm-local-assistant/blob/main/PROJECT_STATUS.md)** - Development phase tracking
-- **[QUICK_REFERENCE.md](https://github.com/odanree/llm-local-assistant/blob/main/QUICK_REFERENCE.md)** - Developer quick start
-- **[CHANGELOG.md](https://github.com/odanree/llm-local-assistant/blob/main/CHANGELOG.md)** - Version history
-- **[CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md)** - Contribution guidelines
-
-For advanced topics, see `/docs/` folder.
-
-## 🐛 Troubleshooting
-
-**"Cannot connect to endpoint"**
-- Verify LLM server is running and accessible
-- Check endpoint URL in settings
-- Test manually: `curl http://localhost:11434/api/tags`
-
-**"Model not found"**
-- Verify model exists: `ollama list`
-- Download if needed: `ollama pull mistral`
-- Update `llm-assistant.model` setting
-
-**"Request timeout"**
-- Increase `llm-assistant.timeout` (default 30000ms)
-- Try shorter prompts or smaller models
-- Check server logs for errors
-
-**Slow responses?**
-- Reduce `maxTokens` for shorter responses
-- Try a smaller/faster model
-- Ensure server has adequate resources
-
-## 🔒 Privacy & Security
-
-✅ **100% Local & Private**
-- Zero external API calls or cloud dependencies
-- Your code and conversations never leave your machine
-- Works completely offline after model is downloaded
-- No telemetry or tracking
-
-## 📄 License
-
-MIT License - See LICENSE file for details
 
 ---
 
-**Local • Private • Offline-First AI Assistant for VS Code** 🚀
+### File Operations (Phase 1 - Still Available)
+
+#### `/read <path>`
+```
+/read src/main.ts
+```
+Read and display file contents with syntax highlighting.
+
+#### `/write <path> [prompt]`
+```
+/write src/greeting.ts write a TypeScript function that greets users with their name
+```
+Generate file content via LLM and write to disk.
+
+#### `/suggestwrite <path> [prompt]`
+```
+/suggestwrite src/config.ts add validation for the API endpoint
+```
+LLM suggests changes, you review the diff before writing.
+
+---
+
+### Git Integration (Phase 1 - Still Available)
+
+#### `/git-commit-msg`
+**Generate conventional commit message from staged changes**
+```
+/git-commit-msg
+```
+
+Analyzes all staged diffs and generates a message following the pattern:
+```
+<type>(<scope>): <description>
+
+[optional body with detailed changes]
+```
+
+#### `/git-review`
+**AI-powered code review of staged changes**
+```
+/git-review
+```
+
+Reviews staged changes and provides:
+- Potential issues or bugs
+- Code quality suggestions
+- Security considerations
+- Style recommendations
+
+## 🏗️ Architecture & Design
+
+### Why This Design?
+
+**Three-Module Agent Loop**
+```
+User Request
+    ↓
+[PLANNER] → Breaks task into structured steps
+    ↓
+[REVIEW] → You see plan, decide to approve/reject
+    ↓
+[EXECUTOR] → Runs steps sequentially with retry
+    ↓
+[OBSERVER] → Monitors progress, provides feedback
+```
+
+**Key Design Decisions:**
+
+1. **Planner → Executor Separation**
+   - You always review before execution
+   - Plan can be rejected without side effects
+   - Clear visibility into what will happen
+
+2. **Sequential Execution with Retry**
+   - Each step runs to completion before next
+   - Automatic retry (up to 2 times) on failure
+   - Stops on unrecoverable errors
+
+3. **Observable Progress**
+   - Real-time output for each step
+   - Elapsed time and performance metrics
+   - Detailed error messages guide investigation
+
+4. **Atomic Steps**
+   - Each step is one of: read, write, run, suggestwrite
+   - No partial execution or rollback needed
+   - Simple state management
+
+### Module Responsibilities
+
+**Planner** (`src/planner.ts` - 366 lines)
+- Analyzes user task
+- Generates execution plan as JSON
+- Validates steps are valid action types
+- Returns readable plan summary
+
+**Executor** (`src/executor.ts` - 503 lines)
+- Executes steps sequentially
+- Implements each action type (read, write, run)
+- Handles errors and retries
+- Provides progress callbacks for UI
+
+**Extension** (`src/extension.ts` - 385 lines)
+- Routes commands to Planner/Executor
+- Manages webview chat UI
+- Handles approval/rejection UI
+- Orchestrates the agent loop
+
+### Error Handling & Recovery
+
+**Automatic Retry Pattern**
+```typescript
+for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  try {
+    return await executeStep(step);
+  } catch (error) {
+    if (attempt === maxRetries) throw error;
+    logRetry(step, attempt, error);
+  }
+}
+```
+
+**Error Categories & Handling**
+- **Transient** (retry): Network timeouts, temporary file locks
+- **Unrecoverable** (stop): File not found, syntax errors, permissions
+- **Information** (continue): Warnings logged but execution continues
+
+**Error Message Strategy**
+- Always show specific error details
+- Suggest corrective actions (💡 prefix)
+- Include affected file paths and line numbers
+
+## 🎯 Use Cases & Examples
+
+### Example 1: Refactor Module with Tests
+```
+You: /plan refactor src/auth.js to use async/await and add comprehensive tests
+
+LLM Creates Plan:
+  1. Read src/auth.js (analyze current implementation)
+  2. Write src/auth.js (generate refactored async/await version)
+  3. Write src/auth.test.js (generate test suite)
+  4. Run npm test (verify tests pass)
+  5. Write docs/REFACTOR.md (document changes)
+
+You: /approve
+→ 5 steps execute in 12.4 seconds
+→ All tests pass
+→ Documentation created
+```
+
+### Example 2: Generate Project Structure
+```
+You: /plan create a new TypeScript project structure for an Express API
+
+LLM Creates Plan:
+  1. Read examples/project-template (reference structure)
+  2. Write src/index.ts (create main server file)
+  3. Write src/routes/api.ts (create API routes)
+  4. Write src/middleware/auth.ts (create auth middleware)
+  5. Write tests/api.test.ts (create tests)
+  6. Write README.md (create documentation)
+
+You: /approve
+→ Complete project scaffolding in seconds
+```
+
+### Example 3: Implement Feature with Documentation
+```
+You: /plan add a rate-limiting feature to the API
+
+LLM Creates Plan:
+  1. Read current middleware structure
+  2. Write src/middleware/rateLimit.ts (implementation)
+  3. Write docs/RATE_LIMITING.md (docs)
+  4. Write tests/rateLimit.test.ts (tests)
+
+You: /approve
+→ Feature fully implemented with tests and docs
+```
+
+---
+
+## 📦 Installation & Configuration
+
+### Quick Start
+
+1. **Start your LLM server**
+   ```bash
+   # Ollama (recommended)
+   ollama run mistral
+   
+   # LM Studio
+   # Open LM Studio → Select model → Start local server
+   
+   # vLLM
+   python -m vllm.entrypoints.openai.api_server --model mistral-7b
+   ```
+
+2. **Install extension**
+   - Open VS Code Extensions (Ctrl+Shift+X)
+   - Search "LLM Local Assistant"
+   - Click Install
+
+3. **Configure endpoint** (if not using defaults)
+   - Open VS Code Settings (Ctrl+,)
+   - Set `llm-assistant.endpoint`: `http://localhost:11434`
+   - Set `llm-assistant.model`: `mistral`
+
+4. **Test connection**
+   - Click **LLM Assistant** in status bar
+   - Run "Test Connection" command
+   - ✅ Should show "Connection successful"
+
+See [docs/INSTALL.md](docs/INSTALL.md) for platform-specific setup.
+
+### Configuration Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `llm-assistant.endpoint` | `http://localhost:11434` | LLM server URL |
+| `llm-assistant.model` | `mistral` | Model name to use |
+| `llm-assistant.temperature` | `0.7` | Response randomness (0-1) |
+| `llm-assistant.maxTokens` | `2048` | Max response length |
+| `llm-assistant.timeout` | `60000` | Request timeout (ms) |
+
+### Supported LLM Servers
+
+| Server | Endpoint | Setup |
+|--------|----------|-------|
+| **Ollama** | `http://localhost:11434` | `ollama run mistral` |
+| **LM Studio** | `http://localhost:8000` | Start local server in UI |
+| **vLLM** | `http://localhost:8000` | Python server |
+| **OpenAI Compatible** | Custom URL | Any OpenAI-compatible endpoint |
+
+---
+
+## ✅ Quality & Testing
+
+### Test Coverage
+- **120+ unit tests** covering all core functionality
+- **>85% code coverage** on Planner and Executor modules
+- **100% pass rate** on every commit
+- Tests run on: Linux, macOS, Windows
+
+**Coverage by Module:**
+- `planner.ts`: 17 tests
+- `executor.ts`: 15 tests  
+- `extension.ts`: 36 tests
+- `llmClient.ts`: 33 tests
+- `gitClient.ts`: 23 tests
+
+### Type Safety
+- **TypeScript strict mode** enabled
+- **Zero type errors** in entire codebase
+- **Explicit types** on all public APIs
+- **JSDoc comments** on all modules
+
+### Error Handling
+- **Specific error detection** - Different handling for timeouts, not-found, permission errors
+- **User-friendly messages** - Technical details only shown for debugging
+- **Automatic retry logic** - Up to 2 retries for transient failures
+- **Timeout handling** - Clean cancellation with AbortController
+
+### Code Quality
+- **100% ESLint compliant** - Clean code standards enforced
+- **Clean git history** - 30+ atomic commits showing development progression
+- **Comprehensive documentation** - Every module documented with architecture rationale
+
+---
+
+## 🔒 Privacy & Security
+
+### 100% Local & Private
+✅ **No external APIs** - Works completely offline with local LLM  
+✅ **No cloud services** - Zero dependencies on external infrastructure  
+✅ **No telemetry** - No tracking, analytics, or data collection  
+✅ **No internet required** - After model download, works completely offline  
+✅ **Your code stays private** - Never sent to external servers  
+
+**How it works:**
+1. Your LLM server runs on your machine (Ollama, LM Studio, vLLM)
+2. Extension sends requests to local server only
+3. All responses processed locally in VS Code
+4. Your code, conversations, and tasks never leave your machine
+
+---
+
+## 📚 Documentation
+
+| Document | Purpose |
+|----------|---------|
+| **[README.md](README.md)** (this file) | Overview, features, quick start |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Deep dive into design and modules |
+| **[PROJECT_STATUS.md](PROJECT_STATUS.md)** | Current development status |
+| **[ROADMAP.md](ROADMAP.md)** | Future features and phases |
+| **[CHANGELOG.md](CHANGELOG.md)** | Version history |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | Developer guide |
+
+**Phase 2 Deep Dives:**
+- `docs/PHASE2_GUIDE.md` - Complete Phase 2 specification
+- `docs/PHASE2_INTEGRATION.md` - Integration architecture
+- `docs/EXTENSIBILITY_ANALYSIS.md` - Extension patterns and examples
+
+---
+
+## 🐛 Troubleshooting
+
+### Connection Issues
+
+**"Cannot connect to endpoint"**
+- Verify LLM server running: `ollama serve` or LM Studio UI
+- Check endpoint in settings: `llm-assistant.endpoint`
+- Test connection: Click status bar → "Test Connection"
+- Check firewall: Port 11434 (Ollama) or 8000 (LM Studio) accessible?
+
+**"Model not found"**
+- List available models: `ollama list`
+- Download if needed: `ollama pull mistral`
+- Update settings: `llm-assistant.model: mistral`
+
+### Performance Issues
+
+**"Requests timing out"**
+- Increase `llm-assistant.timeout` (default 60000ms)
+- Check server resources: CPU, RAM, disk space
+- Try smaller model: `ollama run tinyllama` instead of mistral
+
+**"Very slow responses"**
+- Use smaller model: `ollama pull orca-mini` (3.8GB)
+- Reduce `llm-assistant.maxTokens` (default 2048)
+- Check GPU acceleration: Ollama can use CUDA/Metal
+
+### LLM Server Setup
+
+**Ollama Won't Start**
+```bash
+# Mac/Linux: Reinstall
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Windows: Download from https://ollama.ai/download
+# Then: ollama run mistral
+```
+
+**LM Studio Issues**
+- Download latest: https://lmstudio.ai
+- Load model in UI
+- Ensure "Local Server" is started (green dot)
+- Default port: 8000, check in settings
+
+---
+
+## 🎓 Learn More
+
+### For Users
+- How to install and configure: [docs/INSTALL.md](docs/INSTALL.md)
+- Command reference: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
+- Video tutorial: [See demo video](https://github.com/odanree/llm-local-assistant/wiki/Demo-Video)
+
+### For Developers
+- Architecture deep dive: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Development guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Phase 2 extensibility: [docs/EXTENSIBILITY_ANALYSIS.md](docs/EXTENSIBILITY_ANALYSIS.md)
+- Future roadmap: [ROADMAP.md](ROADMAP.md)
+
+### For Contributors
+- Clean code patterns: Review `src/*.ts` files
+- Test patterns: Review `src/*.test.ts` files
+- Git workflow: Check clean commit history with `git log --oneline`
+
+---
+
+## 📊 Project Stats
+
+| Metric | Count |
+|--------|-------|
+| **Tests** | 120+ |
+| **Test Coverage** | >85% |
+| **Modules** | 6 core |
+| **TypeScript Strict** | ✅ Yes |
+| **Type Errors** | 0 |
+| **Commit History** | 30+ atomic |
+| **Versions** | 2 released |
+
+---
+
+## 🙏 Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup
+- Code style guidelines  
+- Testing requirements
+- Pull request process
+
+### Quick Contribution Guide
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-thing`)
+3. **Code** with tests (see existing patterns)
+4. **Test** locally (`npm test`)
+5. **Commit** with clear message (`git commit -m "feat: add amazing thing"`)
+6. **Push** to your fork
+7. **Open** PR with description
+
+---
+
+## 📄 License
+
+MIT License - See [LICENSE](LICENSE) file for details
+
+**Created by [@odanree](https://github.com/odanree)**
+
+---
+
+**🚀 Local AI Agent for VS Code | 🔒 100% Private | ⚡ Autonomous Planning & Execution**

@@ -140,7 +140,8 @@ export function getWebviewContent(): string {
             border-radius: 6px;
             word-break: break-word;
             white-space: pre-wrap;
-            overflow-x: auto;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
             line-height: 1.6;
           }
           .msg code {
@@ -150,6 +151,7 @@ export function getWebviewContent(): string {
             border-radius: 3px;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 12px;
+            word-break: break-all;
           }
           .msg pre {
             background: var(--vscode-textCodeBlock-background);
@@ -157,9 +159,12 @@ export function getWebviewContent(): string {
             padding: 10px;
             border-radius: 4px;
             overflow-x: auto;
+            overflow-y: auto;
+            max-width: 100%;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 12px;
             margin: 6px 0;
+            word-break: break-word;
           }
           .user {
             align-self: flex-end;
