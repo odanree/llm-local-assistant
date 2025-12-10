@@ -67,7 +67,9 @@ export class GitClient {
         filesChanged,
       };
     } catch (err) {
-      throw new Error('Failed to get staged diff');
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error('[GitClient] getStagedDiff error:', errorMsg, 'cwd:', this.workspaceFolder.fsPath);
+      throw new Error(`Failed to get staged diff: ${errorMsg}`);
     }
   }
 
