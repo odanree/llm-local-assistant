@@ -6,7 +6,7 @@
 
 ---
 
-**Status**: PHASE 2 CORE COMPLETE - Agent Loop Foundation Ready (v1.1.1)
+**Status**: PHASE 2 COMPLETE - Published to VS Code Marketplace (v1.1.2)
 
 This extension now features multi-step task planning and autonomous execution with real-time progress monitoring.
 
