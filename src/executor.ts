@@ -58,6 +58,7 @@ export class Executor {
     plan.status = 'executing';
 
     // Clear LLM conversation history to avoid context pollution from planning phase
+    // This clears the LLM's internal context, NOT the chat UI history
     this.config.llmClient.clearHistory();
 
     const startTime = Date.now();
@@ -214,6 +215,7 @@ export class Executor {
 
   /**
    * Execute /read step: Read file from workspace
+   * Handles both individual files and directory structures (including globs like examples/**)
    */
   private async executeRead(step: PlanStep, startTime: number): Promise<StepResult> {
     if (!step.path) {
@@ -222,6 +224,24 @@ export class Executor {
 
     const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
     try {
+      // Check if path contains glob pattern
+      if (step.path.includes('**') || step.path.includes('*')) {
+        // Handle glob/directory pattern
+        return await this.executeReadDirectory(step, startTime);
+      }
+
+      // First, check if path is a directory
+      try {
+        const stat = await vscode.workspace.fs.stat(filePath);
+        if (stat.type === vscode.FileType.Directory) {
+          // It's a directory, read its structure
+          return await this.executeReadDirectory(step, startTime);
+        }
+      } catch (e) {
+        // stat failed, continue with file read attempt
+      }
+
+      // Try to read as file
       const content = await vscode.workspace.fs.readFile(filePath);
       // Decode bytes to string
       let text = '';
@@ -240,6 +260,66 @@ export class Executor {
       throw new Error(
         `Failed to read ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
+    }
+  }
+
+  /**
+   * Helper: Read directory structure recursively
+   */
+  private async executeReadDirectory(step: PlanStep, startTime: number): Promise<StepResult> {
+    if (!step.path) {
+      throw new Error('Read step requires path');
+    }
+
+    const basePath = step.path.replace(/\/\*\*$/, '').replace(/\/\*$/, '');
+    const baseUri = vscode.Uri.joinPath(this.config.workspace, basePath);
+
+    try {
+      const structure = await this.readDirRecursive(baseUri, basePath);
+      
+      return {
+        stepId: step.stepId,
+        success: true,
+        output: `Read directory structure from ${step.path}:\n${structure}`,
+        duration: Date.now() - startTime,
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to read directory ${step.path}: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Recursively read directory structure
+   */
+  private async readDirRecursive(uri: vscode.Uri, relativePath: string, depth: number = 0, maxDepth: number = 4): Promise<string> {
+    if (depth > maxDepth) return '';
+
+    try {
+      const entries = await vscode.workspace.fs.readDirectory(uri);
+      const lines: string[] = [];
+      const indent = '  '.repeat(depth);
+
+      for (const [name, type] of entries) {
+        if (name.startsWith('.')) continue; // Skip hidden files
+        
+        const isDir = type === vscode.FileType.Directory;
+        const icon = isDir ? '📁' : '📄';
+        lines.push(`${indent}${icon} ${name}${isDir ? '/' : ''}`);
+
+        // Recursively read subdirectories
+        if (isDir && depth < maxDepth) {
+          const subUri = vscode.Uri.joinPath(uri, name);
+          const subStructure = await this.readDirRecursive(subUri, `${relativePath}/${name}`, depth + 1, maxDepth);
+          if (subStructure) {
+            lines.push(subStructure);
+          }
+        }
+      }
+
+      return lines.join('\n');
+    } catch (error) {
+      return '';
     }
   }
 

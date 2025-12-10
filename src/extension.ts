@@ -11,6 +11,7 @@ let llmClient: LLMClient;
 let planner: Planner;
 let executor: Executor;
 let chatPanel: vscode.WebviewPanel | undefined;
+let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 
 /**
  * Get LLM configuration from VS Code settings
@@ -23,9 +24,25 @@ function getLLMConfig(): LLMConfig {
     model: config.get('model', 'mistral'),
     temperature: config.get('temperature', 0.7),
     maxTokens: config.get('maxTokens', 2048),
-    timeout: config.get('timeout', 30000),
+    timeout: config.get('timeout', 60000), // Increased from 30s to 60s for planning operations
     stream: true,
   };
+}
+
+/**
+ * Helper to post message to chat and store in history
+ */
+function postChatMessage(message: any): void {
+  chatPanel?.webview.postMessage(message);
+  
+  // Store in chat history for persistence across panel switches
+  if (message.command === 'addMessage' && message.text) {
+    chatHistory.push({
+      role: message.role || 'assistant',
+      content: message.text,
+      type: message.type || 'message',
+    });
+  }
 }
 
 /**
@@ -52,7 +69,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
   // Show agent mode command help when panel opens
   setTimeout(() => {
-    chatPanel?.webview.postMessage({
+    postChatMessage({
       command: 'addMessage',
       text: `**Agent Mode Commands:**\n\n` +
         `🤖 **Planning & Execution:**\n` +
@@ -69,6 +86,16 @@ function openLLMChat(context: vscode.ExtensionContext): void {
       type: 'info',
       success: true,
     });
+
+    // Restore chat history
+    for (const msg of chatHistory) {
+      chatPanel?.webview.postMessage({
+        command: 'addMessage',
+        text: msg.content,
+        type: msg.type || 'message',
+        role: msg.role,
+      });
+    }
   }, 500);
 
   // Handle webview messages
@@ -101,7 +128,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   { messages: llmClient.getHistory() }
                 );
 
-                chatPanel?.webview.postMessage({
+                postChatMessage({
                   command: 'addMessage',
                   text: `**My approach:**\n\n${thinking}`,
                   success: true,
@@ -122,13 +149,13 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 // Store current plan for approval
                 (chatPanel as any)._currentPlan = plan;
                 
-                chatPanel?.webview.postMessage({
+                postChatMessage({
                   command: 'addMessage',
                   text: `📋 **Plan Created** (${plan.steps.length} steps)\n\n${markdown}\n\n_Use **/approve** to execute or **/reject** to discard_`,
                   success: true,
                 });
               } catch (err) {
-                chatPanel?.webview.postMessage({
+                postChatMessage({
                   command: 'addMessage',
                   error: `Planning error: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,

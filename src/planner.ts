@@ -50,25 +50,28 @@ const PLAN_SYSTEM_PROMPT = `You generate step-by-step PLANS in JSON format. NOT 
 
 RESPOND ONLY WITH JSON. NO OTHER TEXT.
 
-VALID ACTIONS ONLY: write, read, run
+✅ VALID ACTIONS FOR PLANS: read, write, run
+
+❌ DO NOT USE: suggestwrite, delete, analyze, inspect, chooseSubfolder, etc.
 
 Example:
-{"steps": [{"stepId": 1, "action": "read", "path": "src/Hello.js", "description": "Read existing component"}, {"stepId": 2, "action": "write", "path": "src/Hello.js", "prompt": "Create an improved React component", "description": "Write improved component"}]}
+{"steps": [{"stepId": 1, "action": "read", "path": "examples", "description": "Read examples folder"}, {"stepId": 2, "action": "write", "path": "src/MyComponent.js", "prompt": "Create React component based on examples", "description": "Generate component"}]}
 
-Rules:
-1. RESPOND ONLY WITH JSON - no markdown, no explanation
-2. Return exactly this format: {"steps": [...]}
-3. Steps array: 2-4 objects maximum (keep plans simple)
-4. Each step needs: stepId (number), action (string), path (string), description (short, max 40 chars)
-5. For write: also include prompt (max 80 chars describing what to generate)
-6. For read: path only, used to read files before improving them
-7. For run: ONLY for critical shell operations like git, tests. Avoid diff/echo/cat
-8. Keep descriptions SHORT (under 40 characters)
-9. Keep prompts CONCISE (under 80 characters)
-10. NO "content" field, NO code examples, NO extra fields
-11. Most tasks: read → write (improve/create content)
-12. Valid JSON that can be parsed immediately
-13. If conversation context is provided: use it to understand multi-turn requests and maintain consistency`;
+STRICT RULES:
+1. RESPOND ONLY WITH JSON - no markdown, no explanation, no code blocks
+2. Action MUST be one of: read, write, run (NOTHING ELSE - NOT suggestwrite)
+3. Return exactly: {"steps": [...]}
+4. Steps: 2-4 maximum (keep plans simple)
+5. Each step MUST have: stepId (number), action (read|write|run), path (except run), description
+6. write steps MUST include prompt field (what to generate)
+7. read steps: path only (read files before improving them)
+8. run steps: command field instead of path (npm test, git log, etc)
+9. Descriptions: SHORT (under 40 chars)
+10. Prompts: CONCISE (under 80 chars)
+11. NO "content", NO code examples, NO extra fields
+12. Typical flow: read → write → run (or similar)
+13. Valid JSON that can be parsed immediately
+14. If multi-turn context provided: maintain consistency with previous steps`;
 
 export class Planner {
   private config: PlannerConfig;
@@ -214,11 +217,15 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
     // Valid actions that the executor supports
     const VALID_ACTIONS = ['read', 'write', 'suggestwrite', 'run'];
 
+    // Track invalid actions for better error reporting
+    const invalidSteps: any[] = [];
+
     // Construct TaskPlan - filter out invalid steps
     const steps: PlanStep[] = planData.steps
       .filter((s: any) => {
         const action = (s.action || 'write').toLowerCase();
         if (!VALID_ACTIONS.includes(action)) {
+          invalidSteps.push({ action: s.action, description: s.description });
           console.warn(`[Planner] Skipping step with invalid action: ${s.action}`);
           return false;
         }
@@ -244,7 +251,11 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
       }));
 
     if (steps.length === 0) {
-      throw new Error('No valid steps found after filtering');
+      const invalidActionsStr = invalidSteps.map(s => s.action).join(', ');
+      const errorMsg = invalidSteps.length > 0 
+        ? `No valid steps found. Invalid actions used: ${invalidActionsStr}. Valid actions are: read, write, suggestwrite, run`
+        : 'No valid steps found after filtering';
+      throw new Error(errorMsg);
     }
 
     const plan: TaskPlan = {
