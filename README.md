@@ -72,49 +72,54 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 *Shows `/plan` command breaking down a task:*
 - *LLM analyzes request and creates structured plan*
-- *Each step displays action type (read, write, run)*
-- *Step descriptions explain what each action does*
-- *Review interface with `/approve` and `/reject` buttons*
-- *Estimated execution time for planning phase*
+- *Step-by-step action breakdown (read, write operations)*
+- *Detailed descriptions for each step*
+- *Ready for approval: `/approve` to execute*
 
-### 2. Execution View - Step-by-Step Progress
+### 2. Plan Steps - Review Before Execution
+![Phase 2 Plan Steps](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-plan-steps.png)
+
+*Shows the generated plan ready for review:*
+- *Multi-step action sequence (typically 2-5 steps)*
+- *Each step shows action, path, and description*
+- *User controls: `/approve` to execute or `/reject` to cancel*
+- *Transparent decision point before running*
+
+### 3. Execution View - Real-Time Progress
 ![Phase 2 Execution](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-execution.png)
 
-*Shows `/approve` running plan steps:*
-- *Real-time progress indicator (Step 2 of 5)*
-- *Elapsed time and execution speed*
-- *Visual checkmarks (✅) for completed steps*
-- *Step output displayed inline (files created, commands run)*
-- *Error handling with retry status*
+*Shows `/approve` executing the plan:*
+- *Step-by-step execution with real-time status*
+- *Progress indicator (Step X of Y)*
+- *Step output and results displayed inline*
+- *Automatic error recovery with retry logic*
 
-### 3. Error Recovery - Automatic Retry
+### 4. Error Recovery - Automatic Retry Handling
 ![Phase 2 Error Recovery](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-error-recovery.png)
 
-*Shows automatic error recovery in action:*
-- *Step fails with descriptive error message*
-- *Auto-retry indicator: "Retry 1 of 2"*
-- *Error context (file path, command, stderr output)*
-- *Recovery success or manual investigation guidance*
-- *Continues to next step on success*
+*Shows error handling and recovery:*
+- *Step failure detection with clear error message*
+- *Automatic retry mechanism triggered (up to 2 attempts)*
+- *Detailed error information for troubleshooting*
+- *User has control to proceed or abort*
 
-### 4. Completed Workflow - Full Results
+### 5. Completed Workflow - Results Summary
 ![Phase 2 Workflow Complete](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-complete.png)
 
-*Shows successful plan execution:*
-- *Summary: "5 steps completed in 12.3 seconds"*
-- *Final files created (MyComponent.js, test file, etc.)*
-- *Total tokens used and costs*
-- *Next steps suggestion*
-- *Option to review generated code or continue chatting*
+*Shows successful plan completion:*
+- *Summary of completed steps*
+- *Files created and modifications made*
+- *Ready for next task or manual review*
+- *Full chat history maintained*
 
-### 5. Git Integration - Autonomous Commit
+### 6. Git Integration - Autonomous Commit Messages
 ![Git Integration](https://github.com/odanree/llm-local-assistant/raw/main/assets/git-integration.png)
 
-*Shows Phase 1 git commands (still available):*
-- *`/git-commit-msg` generating conventional commit*
-- *Staged changes automatically analyzed*
-- *Suggested message with type (feat/fix/refactor)*
-- *Copy-to-clipboard functionality*
+*Shows Phase 1 git integration commands:*
+- *`/git-commit-msg` analyzing staged changes*
+- *AI-generated conventional commit message*
+- *Professional message format ready to use*
+- *Can also use `/git-review` for code analysis*
 
 ---
 
