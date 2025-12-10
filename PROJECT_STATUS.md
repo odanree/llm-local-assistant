@@ -1,7 +1,7 @@
 # Project Status & Cleanup Summary
 
-**Last Updated**: November 19, 2025  
-**Status**: ✅ v1.0.0 Stable Release | Production Ready
+**Last Updated**: December 9, 2025  
+**Status**: ✅ Phase 2 Core Features Complete | v1.1.1 Ready
 
 > ⚠️ **DOCUMENTATION CONSTRAINT - STRICTLY ENFORCED**: The root directory contains EXACTLY 6 documentation files:
 > - README.md
@@ -143,31 +143,40 @@ llm-local-assistant/
 
 ---
 
-## 🚀 Next Steps
+## 🚀 Next Steps: Making Phase 2 Like GitHub Copilot/Claude
 
-### Immediate (This Week)
-- [ ] Test `/write` with various LLM models
-- [ ] Test `/suggestwrite` approval flow
-- [ ] Verify error handling for edge cases
-- [ ] Performance test with large files
+### Priority 1: Interactive Feel (v1.2.0) ⚡
+**Goal**: Make execution feel responsive and intelligent like Copilot
 
-### Short-term (Next 2 Weeks)
-- [ ] Add status bar indicator for agent mode
-- [ ] Implement `/run <command>` for shell execution
-- [ ] Add plan generation & display
-- [ ] Create unit tests for command parsing
+- [ ] **1.1 Conversation Context**: Pass chat history to planner for better understanding
+- [ ] **1.2 Stream Execution Output**: Show live step output in chat as it executes (not just status)
+- [ ] **1.3 Thinking Phase**: Display LLM reasoning before showing plan structure
+- [ ] **1.4 Smart Error Fixes**: Suggest how to fix errors, not just error text
 
-### Medium-term (November-December)
-- [ ] Implement agent loop (Think-Act-Observe-Correct)
-- [ ] Build error classification system
-- [ ] Add `/build` and `/test` commands
-- [ ] Create Mission Control UI (basic version)
+*Estimated: 3-5 days | Most Copilot-like improvements*
 
-### Long-term (2025+)
-- [ ] MCP server implementation
-- [ ] GitHub Copilot Agent Mode official integration
-- [ ] Multi-agent support
-- [ ] Enterprise features
+### Priority 2: Add Intelligence (v1.3.0) 🧠
+**Goal**: Make the agent learn and improve from failures
+
+- [ ] **2.1 Auto-Correct Failures**: Analyze errors, modify steps, retry automatically
+- [ ] **2.2 Codebase Awareness**: Scan project structure, dependencies, conventions
+- [ ] **2.3 Follow-up Suggestions**: Offer next logical steps after completion
+- [ ] **2.4 /explain Command**: Show detailed reasoning for each step
+
+*Estimated: 4-6 days | Educational and transparent*
+
+### Priority 3: Polish & UX (v1.4.0) ✨
+**Goal**: Make it production-grade with visual feedback
+
+- [ ] **3.1 Plan Visualization**: Tree view with expandable step details
+- [ ] **3.2 Progress Indicators**: Visual progress bar + step highlights during execution
+- [ ] **3.3 Rollback Support**: `/undo` command to revert changes from last N steps
+- [ ] **3.4 Plan History**: Show past plans and results, allow re-running
+
+*Estimated: 2-3 days | Visual polish and safety features*
+
+### Implementation Details
+See `docs/PHASE2_COPILOT_IMPROVEMENTS.md` for detailed specifications, architecture, and workflow for each priority.
 
 ---
 
