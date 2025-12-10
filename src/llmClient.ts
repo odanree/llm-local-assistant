@@ -165,6 +165,13 @@ export class LLMClient {
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      // Provide better error message for timeout/abort errors
+      if (errorMsg.includes('aborted') || errorMsg.includes('abort')) {
+        return {
+          success: false,
+          error: `Request timeout (120s). LLM server not responding. Check: 1) ollama serve is running 2) Model is loaded 3) Try a simpler request`,
+        };
+      }
       return {
         success: false,
         error: errorMsg,
@@ -225,6 +232,13 @@ export class LLMClient {
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      // Provide better error message for timeout/abort errors
+      if (errorMsg.includes('aborted') || errorMsg.includes('abort')) {
+        return {
+          success: false,
+          error: `Request timeout (120s). LLM server not responding. Check: 1) ollama serve is running 2) Model is loaded 3) Try a simpler request`,
+        };
+      }
       return {
         success: false,
         error: errorMsg,

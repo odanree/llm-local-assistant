@@ -12,6 +12,8 @@ let planner: Planner;
 let executor: Executor;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
+let helpShown = false; // Track if help message was shown on first open
+let messageHandlerAttached = false; // Track if message handler is already attached
 
 /**
  * Get LLM configuration from VS Code settings
@@ -24,7 +26,7 @@ function getLLMConfig(): LLMConfig {
     model: config.get('model', 'mistral'),
     temperature: config.get('temperature', 0.7),
     maxTokens: config.get('maxTokens', 2048),
-    timeout: config.get('timeout', 60000), // Increased from 30s to 60s for planning operations
+    timeout: config.get('timeout', 120000), // 120s timeout for planning operations
     stream: true,
   };
 }
@@ -51,7 +53,7 @@ function postChatMessage(message: any): void {
 function openLLMChat(context: vscode.ExtensionContext): void {
   if (chatPanel) {
     chatPanel.reveal(vscode.ViewColumn.Two);
-    return;
+    return; // Panel already exists, just reveal it - don't reset HTML or history
   }
 
   // Create webview panel
@@ -61,31 +63,35 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     vscode.ViewColumn.Two,
     {
       enableScripts: true,
+      retainContextWhenHidden: true, // Keep panel alive when hidden to preserve chat history
     }
   );
 
-  // Set the webview's initial html content
+  // Set the webview's initial html content ONLY on first creation
   chatPanel.webview.html = getWebviewContent();
 
-  // Show agent mode command help when panel opens
+  // Show agent mode command help ONLY on first open
   setTimeout(() => {
-    postChatMessage({
-      command: 'addMessage',
-      text: `**Agent Mode Commands:**\n\n` +
-        `🤖 **Planning & Execution:**\n` +
-        `- /plan <task> — Create a multi-step action plan\n` +
-        `- /approve — Execute the current plan\n` +
-        `- /reject — Discard the current plan\n\n` +
-        `📄 **File Operations:**\n` +
-        `- /read <path> — Read a file from workspace\n` +
-        `- /write <path> <prompt> — Generate and write file content\n` +
-        `- /suggestwrite <path> <prompt> — Preview before writing\n\n` +
-        `📝 **Git Integration:**\n` +
-        `- /git-commit-msg — Generate commit message from staged changes\n` +
-        `- /git-review [staged|unstaged|all] — Review code changes with AI`,
-      type: 'info',
-      success: true,
-    });
+    if (!helpShown) {
+      postChatMessage({
+        command: 'addMessage',
+        text: `**Agent Mode Commands:**\n\n` +
+          `🤖 **Planning & Execution:**\n` +
+          `- /plan <task> — Create a multi-step action plan\n` +
+          `- /approve — Execute the current plan\n` +
+          `- /reject — Discard the current plan\n\n` +
+          `📄 **File Operations:**\n` +
+          `- /read <path> — Read a file from workspace\n` +
+          `- /write <path> <prompt> — Generate and write file content\n` +
+          `- /suggestwrite <path> <prompt> — Preview before writing\n\n` +
+          `📝 **Git Integration:**\n` +
+          `- /git-commit-msg — Generate commit message from staged changes\n` +
+          `- /git-review [staged|unstaged|all] — Review code changes with AI`,
+        type: 'info',
+        success: true,
+      });
+      helpShown = true;
+    }
 
     // Restore chat history
     for (const msg of chatHistory) {
@@ -98,8 +104,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     }
   }, 500);
 
-  // Handle webview messages
-  chatPanel.webview.onDidReceiveMessage(
+  // Handle webview messages - ONLY ATTACH ONCE
+  if (!messageHandlerAttached) {
+    chatPanel.webview.onDidReceiveMessage(
     async (message) => {
       console.log('[LLM Assistant] Received message from webview:', message);
       try {
@@ -648,6 +655,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
           case 'clearChat': {
             llmClient.clearHistory();
+            chatHistory = []; // Clear persisted chat history
             chatPanel?.webview.postMessage({
               command: 'status',
               text: 'Chat history cleared',
@@ -668,11 +676,14 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     undefined,
     context.subscriptions
   );
+    messageHandlerAttached = true; // Mark handler as attached
+  }
 
   // Handle panel close
   chatPanel.onDidDispose(
     () => {
       chatPanel = undefined;
+      messageHandlerAttached = false; // Reset handler flag when panel is disposed
     },
     undefined,
     context.subscriptions
@@ -693,7 +704,7 @@ export function activate(context: vscode.ExtensionContext) {
   planner = new Planner({
     llmClient,
     maxSteps: 10,
-    timeout: 30000,
+    timeout: 120000, // Increased to 120s for longer-running planning operations
   });
   
   const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;

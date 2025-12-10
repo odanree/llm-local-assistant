@@ -107,7 +107,12 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
 
     const response = await this.config.llmClient.sendMessage(prompt);
     if (!response.success) {
-      throw new Error(`Failed to generate thinking: ${response.error}`);
+      const errorMsg = response.error || 'Unknown error';
+      // Handle timeout errors gracefully
+      if (errorMsg.includes('aborted') || errorMsg.includes('timeout')) {
+        throw new Error(`Planning timeout: The LLM took too long to respond. Try with a shorter request or check your LLM server's performance.`);
+      }
+      throw new Error(`Failed to generate thinking: ${errorMsg}`);
     }
 
     // Clean up the response (remove markdown, formatting)
