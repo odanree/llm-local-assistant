@@ -12,3 +12,16 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+docs/**
+examples/**
+.DS_Store
+assets/.DS_Store
+assets/phase2-*.png
+assets/git-integration.png
+CHANGELOG.md
+PROJECT_STATUS.md
+ROADMAP.md
+*.code-workspace
+vitest.*
+package-lock.json
+.github/**
