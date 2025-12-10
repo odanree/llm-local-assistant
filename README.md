@@ -94,7 +94,16 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - *Step output and results displayed inline*
 - *Automatic error recovery with retry logic*
 
-### 4. Completed Workflow - Results Summary
+### 4. Error Recovery - Automatic Retry Handling
+![Phase 2 Error Recovery](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-error-recovery.png)
+
+*Shows error handling and recovery:*
+- *Step failure detection with clear error message*
+- *Automatic retry mechanism triggered (up to 2 attempts)*
+- *Detailed error information for troubleshooting*
+- *User has control to proceed or abort*
+
+### 5. Completed Workflow - Results Summary
 ![Phase 2 Workflow Complete](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-complete.png)
 
 *Shows successful plan completion:*
@@ -103,7 +112,7 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - *Ready for next task or manual review*
 - *Full chat history maintained*
 
-### 5. Git Integration - Autonomous Commit Messages
+### 6. Git Integration - Autonomous Commit Messages
 ![Git Integration](https://github.com/odanree/llm-local-assistant/raw/main/assets/git-integration.png)
 
 *Shows Phase 1 git integration commands:*
