@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
-import * as util from 'util';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
 import { TaskPlan, PlanStep, StepResult } from './planner';
@@ -21,6 +20,7 @@ export interface ExecutorConfig {
   onProgress?: (step: number, total: number, description: string) => void;
   onMessage?: (message: string, type: 'info' | 'error') => void;
   onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;  // Stream step output
+  onQuestion?: (question: string, options: string[]) => Promise<string | undefined>;  // Ask clarification question (Priority 2.2)
 }
 
 export interface ExecutionResult {
@@ -80,15 +80,28 @@ export class Executor {
         };
       }
 
-      // Execute step with retry logic
+      // Execute step with retry logic and auto-correction (Priority 2.1)
       let retries = 0;
       let result: StepResult | null = null;
+      let autoFixAttempted = false;
       const maxRetries = this.config.maxRetries || 2;
 
       while (retries <= maxRetries) {
         result = await this.executeStep(plan, step.stepId);
 
         if (result.success) {break;}
+
+        // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
+        if (!autoFixAttempted && result.error) {
+          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId}...`, 'info');
+          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now());
+          if (fixedResult && fixedResult.success) {
+            result = fixedResult;
+            autoFixAttempted = true;
+            break; // Auto-fix succeeded, move to next step
+          }
+          autoFixAttempted = true; // Mark that we tried, don't try again
+        }
 
         retries++;
         if (retries <= maxRetries) {
@@ -153,6 +166,158 @@ export class Executor {
       return `'${path}' is a directory, not a file. Specify a file inside the directory instead.`;
     }
     return null;
+  }
+
+  /**
+   * Auto-correct common errors (Priority 2.1: Auto-Correction)
+   * Automatically attempts to fix failures without manual intervention
+   * Returns null if no auto-fix is possible, or a fixed StepResult if successful
+   */
+  private async attemptAutoFix(step: PlanStep, error: string, startTime: number): Promise<StepResult | null> {
+    // Pattern 1: File not found on read → Try reading parent directory (walk up until exists)
+    if (step.action === 'read' && error.includes('ENOENT') && step.path) {
+      let currentPath = step.path;
+      // Walk up the directory tree until we find an existing parent
+      while (currentPath.includes('/')) {
+        currentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
+        if (currentPath && currentPath !== step.path) {
+          this.config.onMessage?.(`Auto-fix: Reading parent directory '${currentPath}' instead...`, 'info');
+          const fixedStep: PlanStep = { ...step, path: currentPath };
+          try {
+            return await this.executeRead(fixedStep, startTime);
+          } catch (err) {
+            // This parent also doesn't exist, try the next one up
+            const errMsg = err instanceof Error ? err.message : String(err);
+            if (errMsg.includes('ENOENT')) {
+              continue; // Try next parent up
+            }
+            return null; // Different error, don't auto-fix
+          }
+        }
+      }
+    }
+
+    // Pattern 2: Directory doesn't exist for write → Create parent directories first
+    if (step.action === 'write' && step.path) {
+      const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
+      const parentDir = filePath.fsPath.substring(0, filePath.fsPath.lastIndexOf('/'));
+      
+      try {
+        // Check if parent directory exists
+        await vscode.workspace.fs.stat(vscode.Uri.file(parentDir));
+      } catch {
+        // Parent doesn't exist, create it
+        this.config.onMessage?.(`Auto-fix: Creating parent directories for '${step.path}'...`, 'info');
+        try {
+          await vscode.workspace.fs.createDirectory(vscode.Uri.file(parentDir));
+          // Retry the write with parent directory created
+          return await this.executeWrite(step, startTime);
+        } catch {
+          return null; // Auto-fix didn't work
+        }
+      }
+    }
+
+    // Pattern 3: Directory read when file expected → List files in directory instead
+    if (step.action === 'read' && error.includes('EISDIR') && step.path) {
+      this.config.onMessage?.(`Auto-fix: Reading directory structure instead of treating as file...`, 'info');
+      const fixedStep: PlanStep = { ...step };
+      try {
+        return await this.executeReadDirectory(fixedStep, startTime);
+      } catch {
+        return null; // Auto-fix didn't work
+      }
+    }
+
+    // Pattern 4: Command not found → Try with full path or common alternatives
+    if (step.action === 'run' && error.includes('not found') && step.command) {
+      // Try common alternatives (e.g., 'npm' → 'npx npm', 'python' → 'python3')
+      const alternatives: { [key: string]: string[] } = {
+        'npm': ['npx npm', 'yarn'],
+        'tsc': ['npx tsc'],
+        'jest': ['npx jest'],
+        'eslint': ['npx eslint'],
+        'python': ['python3', 'py'],
+        'node': ['node.exe'],
+        'npm test': ['npm run test', 'yarn test'],
+      };
+
+      const cmdBase = step.command.split(' ')[0];
+      const alts = alternatives[cmdBase] || [];
+
+      for (const alt of alts) {
+        this.config.onMessage?.(`Auto-fix: Trying alternative command '${alt}'...`, 'info');
+        const fixedCommand = step.command.replace(cmdBase, alt);
+        const fixedStep: PlanStep = { ...step, command: fixedCommand };
+        try {
+          return await this.executeRun(fixedStep, startTime);
+        } catch {
+          // Try next alternative
+          continue;
+        }
+      }
+    }
+
+    return null; // No auto-fix available
+  }
+
+  /**
+   * Ask clarification question during execution (Priority 2.2: Follow-up Questions)
+   * Detects ambiguous situations and asks user for guidance
+   * Returns clarified step or null if user cancels
+   */
+  private async askClarification(step: PlanStep, error: string): Promise<PlanStep | null> {
+    const action = step.action;
+
+    // Pattern 1: Ambiguous write destination
+    if (action === 'write' && step.path && step.path.includes('/')) {
+      const parentDir = step.path.substring(0, step.path.lastIndexOf('/'));
+      try {
+        const dirUri = vscode.Uri.joinPath(this.config.workspace, parentDir);
+        const entries = await vscode.workspace.fs.readDirectory(dirUri);
+        
+        // If directory has many potential files, ask which one to update
+        if (entries.length > 5) {
+          const files = entries
+            .filter(([_, type]) => type === vscode.FileType.File)
+            .map(([name]) => name)
+            .slice(0, 5);
+
+          if (files.length > 0) {
+            const answer = await this.config.onQuestion?.(
+              `Multiple files exist in ${parentDir}. Which should I modify?\n\nCurrent target: ${step.path}`,
+              [step.path, ...files, 'Skip this step']
+            );
+
+            if (answer && answer !== 'Skip this step') {
+              return { ...step, path: answer };
+            } else if (answer === 'Skip this step') {
+              return null; // User chose to skip
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist or can't be read, continue with original path
+      }
+    }
+
+    // Pattern 2: Run command ambiguity - ask if we should proceed
+    if (action === 'run' && step.command) {
+      if (step.command.includes('npm') || step.command.includes('test')) {
+        const answer = await this.config.onQuestion?.(
+          `About to run: \`${step.command}\`\n\nThis might take a while. Should I proceed?`,
+          ['Yes, proceed', 'No, skip this step', 'Cancel execution']
+        );
+
+        if (answer === 'No, skip this step') {
+          return null;
+        } else if (answer === 'Cancel execution') {
+          throw new Error('User cancelled execution');
+        }
+      }
+    }
+
+    return null; // No clarification needed or user provided clarification
   }
 
   /**
@@ -293,7 +458,9 @@ export class Executor {
    * Recursively read directory structure
    */
   private async readDirRecursive(uri: vscode.Uri, relativePath: string, depth: number = 0, maxDepth: number = 4): Promise<string> {
-    if (depth > maxDepth) return '';
+    if (depth > maxDepth) {
+      return '';
+    }
 
     try {
       const entries = await vscode.workspace.fs.readDirectory(uri);
@@ -301,7 +468,9 @@ export class Executor {
       const indent = '  '.repeat(depth);
 
       for (const [name, type] of entries) {
-        if (name.startsWith('.')) continue; // Skip hidden files
+        if (name.startsWith('.')) {
+          continue; // Skip hidden files
+        }
         
         const isDir = type === vscode.FileType.Directory;
         const icon = isDir ? '📁' : '📄';
@@ -426,32 +595,97 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
       throw new Error('Run step requires command');
     }
 
-    // Use promisified child_process.exec for command execution
-    const execAsync = util.promisify(cp.exec);
+    const command = step.command; // TypeScript type narrowing
 
-    try {
-      const { stdout, stderr } = await execAsync(step.command, {
+    return new Promise<StepResult>((resolve) => {
+      // Build environment with full PATH, explicitly including homebrew paths
+      const env: { [key: string]: string } = {};
+      for (const key in process.env) {
+        const value = process.env[key];
+        if (value !== undefined) {
+          env[key] = value;
+        }
+      }
+      
+      // Ensure PATH includes homebrew and common locations
+      // macOS homebrew is typically at /opt/homebrew/bin
+      const pathParts = [
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+        '/usr/sbin',
+        '/sbin',
+        env.PATH || '',
+      ].filter(p => p); // Remove empty strings
+      
+      env.PATH = pathParts.join(':');
+
+      // Use login shell (-l) to source shell configuration
+      const child = cp.spawn('/bin/bash', ['-l', '-c', command], {
         cwd: this.config.workspace.fsPath,
-        timeout: this.config.timeout,
-        maxBuffer: 1024 * 1024 * 10, // 10MB buffer for large outputs
+        env: env,
+        stdio: 'pipe',
       });
 
-      return {
-        stepId: step.stepId,
-        success: true,
-        output: stdout || '(no output)',
-        duration: Date.now() - startTime,
-      };
-    } catch (error: any) {
-      const errorMsg = error.stderr || error.message;
-      const suggestion = this.suggestErrorFix('run', step.command, errorMsg);
-      return {
-        stepId: step.stepId,
-        success: false,
-        error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
-        duration: Date.now() - startTime,
-      };
-    }
+      let stdout = '';
+      let stderr = '';
+
+      if (child.stdout) {
+        child.stdout.on('data', (data: any) => {
+          stdout += data.toString();
+        });
+      }
+
+      if (child.stderr) {
+        child.stderr.on('data', (data: any) => {
+          stderr += data.toString();
+        });
+      }
+
+      const timeout = setTimeout(() => {
+        (child as any).kill();
+        resolve({
+          stepId: step.stepId,
+          success: false,
+          error: `Command timed out after ${this.config.timeout}ms`,
+          duration: Date.now() - startTime,
+        });
+      }, this.config.timeout);
+
+      child.on('close', (code: any) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          resolve({
+            stepId: step.stepId,
+            success: true,
+            output: stdout || '(no output)',
+            duration: Date.now() - startTime,
+          });
+        } else {
+          const errorMsg = stderr || stdout || `Command failed with exit code ${code}`;
+          const suggestion = this.suggestErrorFix('run', command, errorMsg);
+          resolve({
+            stepId: step.stepId,
+            success: false,
+            error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
+            duration: Date.now() - startTime,
+          });
+        }
+      });
+
+      child.on('error', (error: any) => {
+        clearTimeout(timeout);
+        const errorMsg = error.message;
+        const suggestion = this.suggestErrorFix('run', command, errorMsg);
+        resolve({
+          stepId: step.stepId,
+          success: false,
+          error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
+          duration: Date.now() - startTime,
+        });
+      });
+    });
   }
 
   /**
