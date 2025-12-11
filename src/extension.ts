@@ -83,7 +83,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `📄 **File Operations:**\n` +
           `- /read <path> — Read a file from workspace\n` +
           `- /write <path> <prompt> — Generate and write file content\n` +
-          `- /suggestwrite <path> <prompt> — Preview before writing\n\n` +
+          `- /suggestwrite <path> <prompt> — Preview before writing\n` +
+          `- /explain <path> — Generate detailed code explanation\n\n` +
           `📝 **Git Integration:**\n` +
           `- /git-commit-msg — Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] — Review code changes with AI`,
@@ -600,6 +601,99 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               return;
             }
 
+            // Check for /explain command (Priority 2.2)
+            const explainMatch = text.match(/\/explain\s+(\S+)/);
+
+            // AGENT MODE: /explain <path> - Generate explanation of code
+            if (explainMatch) {
+              const relPath = explainMatch[1];
+              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+              if (!wsFolder) { throw new Error('No workspace folder open.'); }
+              const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
+
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: `📖 Analyzing ${relPath}...`,
+                type: 'info',
+              });
+
+              try {
+                const data = await vscode.workspace.fs.readFile(fileUri);
+                const fileContent = new TextDecoder('utf-8').decode(data);
+                
+                // Build explanation prompt with context
+                const contextStr = llmClient.getHistory().length > 0
+                  ? `\n\nConversation context:\n${llmClient.getHistory().slice(-4).map((m: any) => 
+                      `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
+                    ).join('\n')}\n`
+                  : '';
+
+                const prompt = `Explain the following code from ${relPath}. Cover:
+1. What this code does at a high level
+2. Key functions/classes and their purposes
+3. Important algorithms or patterns used
+4. Any notable edge cases or error handling
+5. How it fits into the larger system (if context available)
+
+Keep the explanation clear and concise, suitable for a developer reviewing the code.${contextStr}
+
+Code from ${relPath}:
+\`\`\`
+${fileContent}
+\`\`\``;
+
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: 'Generating explanation...',
+                  type: 'info',
+                });
+
+                const endpoint: string = llmClient["config"].endpoint;
+                const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
+
+                if (isOllamaNonDefaultPort) {
+                  // Use non-streaming response
+                  const response = await llmClient.sendMessage(prompt);
+                  if (response.success) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      text: `📖 **Code Explanation: ${relPath}**\n\n${response.message}`,
+                      success: true,
+                    });
+                  } else {
+                    throw new Error(response.error);
+                  }
+                } else {
+                  // Use streaming response
+                  let explanation = '';
+                  const response = await llmClient.sendMessageStream(
+                    prompt,
+                    async (token: string, complete: boolean) => {
+                      if (!complete && token) {
+                        explanation += token;
+                      }
+                    }
+                  );
+                  if (response.success) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      text: `📖 **Code Explanation: ${relPath}**\n\n${explanation}`,
+                      success: true,
+                    });
+                  } else {
+                    throw new Error(response.error);
+                  }
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error explaining code: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
             // Normal LLM chat
             chatPanel?.webview.postMessage({
               command: 'status',
@@ -700,14 +794,17 @@ export function activate(context: vscode.ExtensionContext) {
   const config = getLLMConfig();
   llmClient = new LLMClient(config);
 
+  // Get workspace folder for codebase awareness
+  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+
   // Initialize Planner and Executor
   planner = new Planner({
     llmClient,
     maxSteps: 10,
     timeout: 120000, // Increased to 120s for longer-running planning operations
+    workspace: wsFolder, // For codebase awareness (Priority 2.2)
   });
   
-  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
   const gitClient = wsFolder ? new GitClient(wsFolder) : undefined;
   
   executor = new Executor({

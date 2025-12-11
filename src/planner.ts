@@ -1,4 +1,5 @@
 import { LLMClient, LLMResponse } from './llmClient';
+import * as vscode from 'vscode';
 
 /**
  * Planning module for Phase 2: Agent Loop Foundation
@@ -37,6 +38,7 @@ export interface PlannerConfig {
   llmClient: LLMClient;
   maxSteps?: number;       // Default: 10
   timeout?: number;        // Default: 30000ms
+  workspace?: vscode.Uri;  // For codebase awareness (Priority 2.2)
 }
 
 export interface ConversationContext {
@@ -134,7 +136,10 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
     plan: TaskPlan;
     markdown: string;
   }> {
-    const prompt = this.generatePlanPrompt(userRequest, context);
+    // Analyze codebase for context awareness (Priority 2.2)
+    const codebaseContext = await this.analyzeCodebase();
+    
+    const prompt = this.generatePlanPrompt(userRequest, context, codebaseContext);
     
     const response = await this.config.llmClient.sendMessage(prompt);
     if (!response.success) {
@@ -334,8 +339,9 @@ Please generate a refined plan that addresses the feedback. Use the same JSON fo
   /**
    * Generate LLM prompt for plan generation
    * Includes conversation context if provided for multi-turn awareness
+   * Includes codebase analysis for intelligent decisions (Priority 2.2)
    */
-  private generatePlanPrompt(userRequest: string, context?: ConversationContext): string {
+  private generatePlanPrompt(userRequest: string, context?: ConversationContext, codebaseContext?: string): string {
     let contextStr = '';
     if (context && context.messages.length > 0) {
       const recentMessages = context.messages.slice(-6).map(m => 
@@ -343,7 +349,109 @@ Please generate a refined plan that addresses the feedback. Use the same JSON fo
       ).join('\n');
       contextStr = `\n\nPrevious conversation context:\n${recentMessages}\n`;
     }
-    return `${PLAN_SYSTEM_PROMPT}${contextStr}\nNew user request: "${userRequest}"\n\nGenerate a step-by-step plan in JSON format.`;
+    const codebase = codebaseContext || '';
+    return `${PLAN_SYSTEM_PROMPT}${contextStr}${codebase}\nNew user request: "${userRequest}"\n\nGenerate a step-by-step plan in JSON format.`;
+  }
+
+  /**
+   * Analyze codebase for awareness (Priority 2.2: Codebase Awareness)
+   * Detects project type, language, and conventions
+   * Returns context string to enhance plan generation
+   */
+  private async analyzeCodebase(): Promise<string> {
+    if (!this.config.workspace) {
+      return ''; // No workspace, skip analysis
+    }
+
+    try {
+      const projectRoot = this.config.workspace;
+      const analysis: string[] = [];
+
+      // Check for package.json (Node.js/JavaScript project)
+      try {
+        const pkgPath = vscode.Uri.joinPath(projectRoot, 'package.json');
+        const pkgContent = await vscode.workspace.fs.readFile(pkgPath);
+        const pkgText = new TextDecoder().decode(pkgContent);
+        const pkg = JSON.parse(pkgText);
+        
+        analysis.push(`**Project Type**: Node.js/JavaScript`);
+        if (pkg.name) {analysis.push(`**Name**: ${pkg.name}`);}
+        if (pkg.type) {analysis.push(`**Type**: ${pkg.type}`);}
+        
+        // Detect framework
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        if (deps.react) {analysis.push(`**Framework**: React`);}
+        else if (deps.vue) {analysis.push(`**Framework**: Vue`);}
+        else if (deps.express) {analysis.push(`**Framework**: Express`);}
+        else if (deps.next) {analysis.push(`**Framework**: Next.js`);}
+        
+        // Check for TypeScript
+        if (deps.typescript || pkg.type === 'module') {analysis.push(`**Language**: TypeScript`);}
+      } catch {
+        // Not a Node.js project, continue checking
+      }
+
+      // Check for tsconfig.json (TypeScript)
+      if (analysis.length === 0) {
+        try {
+          const tsconfigPath = vscode.Uri.joinPath(projectRoot, 'tsconfig.json');
+          await vscode.workspace.fs.stat(tsconfigPath);
+          analysis.push(`**Project Type**: TypeScript`);
+        } catch {
+          // Not TypeScript either
+        }
+      }
+
+      // Check for Python project
+      if (analysis.length === 0) {
+        try {
+          const pyPath = vscode.Uri.joinPath(projectRoot, 'pyproject.toml');
+          await vscode.workspace.fs.stat(pyPath);
+          analysis.push(`**Project Type**: Python`);
+        } catch {
+          // Not Python
+        }
+      }
+
+      // Check for src/ or lib/ structure
+      try {
+        const srcPath = vscode.Uri.joinPath(projectRoot, 'src');
+        await vscode.workspace.fs.stat(srcPath);
+        analysis.push(`**Structure**: src/ directory exists`);
+      } catch {
+        try {
+          const libPath = vscode.Uri.joinPath(projectRoot, 'lib');
+          await vscode.workspace.fs.stat(libPath);
+          analysis.push(`**Structure**: lib/ directory exists`);
+        } catch {
+          // Neither exists
+        }
+      }
+
+      // Check for test directory
+      try {
+        const testPath = vscode.Uri.joinPath(projectRoot, 'test');
+        await vscode.workspace.fs.stat(testPath);
+        analysis.push(`**Testing**: test/ directory exists`);
+      } catch {
+        try {
+          const specPath = vscode.Uri.joinPath(projectRoot, '__tests__');
+          await vscode.workspace.fs.stat(specPath);
+          analysis.push(`**Testing**: __tests__/ directory exists`);
+        } catch {
+          // No test directory found
+        }
+      }
+
+      if (analysis.length === 0) {
+        return ''; // Couldn't determine project type
+      }
+
+      return `\n\nCodebase context:\n${analysis.join('\n')}\n`;
+    } catch (error) {
+      // Analysis failed, continue without it
+      return '';
+    }
   }
 
   /**
