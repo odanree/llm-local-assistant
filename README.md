@@ -2,7 +2,7 @@
 
 A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
-> **Latest Release**: v1.1.2 - Phase 2 Complete + Marketplace Ready ✨  
+> **Latest Release**: v1.2.0 - Enhanced AI Planning with Auto-Correction ✨  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Key Features
@@ -20,6 +20,8 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - `/write <path>` - Generate and write file content
 - `/git-commit-msg` - Generate conventional commit messages
 - `/git-review` - AI-powered code review of staged changes
+- `/explain <path>` - Analyze and explain code (NEW in v1.2.0)
+- **Auto-Correction** - LLM suggestions for command mistakes (NEW in v1.2.0)
 
 **💻 Local & Private**
 - 🔒 Works with Ollama, LM Studio, vLLM - no external APIs
@@ -30,12 +32,14 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ## 📊 Project Status & Version History
 
-### Latest: v1.1.2 (December 2025) - Phase 2 Complete + Marketplace Ready ✅
+### Latest: v1.2.0 (December 2025) - Enhanced AI Planning with Auto-Correction & Code Understanding ✅
 
-**v1.1.2 Changes:**
-- ✅ **Marketplace Ready** - Removed secrets, optimized VSIX (31 KB)
-- ✅ **Validation Pass** - Passed marketplace security validation
-- ✅ **All Features** - Same Phase 2 functionality as v1.1.1
+**v1.2.0 Features:**
+- ✅ **Smart Auto-Correction** - Automatically fix and suggest command corrections with LLM
+- ✅ **Codebase Awareness** - Understand project structure, dependencies, and frameworks
+- ✅ **Code Explanation** - `/explain` command for detailed code analysis and documentation
+- ✅ **Shell Environment Fix** - Fixed npm/command PATH resolution on macOS
+- ✅ **Enhanced Error Handling** - Better error messages and recovery strategies
 
 **Phase 2: Multi-Step Planning & Autonomous Execution**
 - ✅ **Planner Module** - LLM-based task decomposition into structured plans
