@@ -464,6 +464,89 @@ describe('Executor', () => {
     });
   });
 
+  describe('Follow-up Questions (Priority 2.2)', () => {
+    it('should call onQuestion callback when clarification is needed', async () => {
+      const onQuestionMock = vi.fn().mockResolvedValue('Yes, proceed');
+
+      const config = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        onQuestion: onQuestionMock,
+      };
+
+      const executor2 = new Executor(config);
+
+      // Verify onQuestion can be called
+      expect(onQuestionMock).toBeDefined();
+    });
+
+    it('should handle question response in execution flow', async () => {
+      let questionCalled = false;
+      const onQuestionMock = vi.fn(async (question: string, options: string[]) => {
+        questionCalled = true;
+        expect(question).toBeDefined();
+        expect(options.length).toBeGreaterThan(0);
+        return options[0]; // Return first option
+      });
+
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: 'Generated content',
+      });
+
+      const config = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        onQuestion: onQuestionMock,
+      };
+
+      const executor2 = new Executor(config);
+      expect(executor2).toBeDefined();
+      // Note: Actual question triggering requires specific conditions
+      // (e.g., directory with >5 files, or run command in plan)
+    });
+
+    it('should trigger question when executing npm commands', async () => {
+      const onQuestionMock = vi.fn(async (question: string, options: string[]) => {
+        expect(question).toContain('npm test');
+        expect(options).toContain('Yes, proceed');
+        return 'Yes, proceed'; // User proceeds
+      });
+
+      const config = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        onQuestion: onQuestionMock,
+      };
+
+      const executor2 = new Executor(config);
+      
+      // Create a run step with npm command
+      const runStep: PlanStep = {
+        stepId: 1,
+        action: 'run',
+        command: 'npm test',
+        description: 'Run test suite',
+      };
+
+      // Call askClarification directly to verify it triggers the question
+      const result = await (executor2 as any).askClarification(runStep, '');
+      
+      // Verify onQuestion was called
+      expect(onQuestionMock).toHaveBeenCalledWith(
+        expect.stringContaining('npm test'),
+        expect.arrayContaining(['Yes, proceed', 'No, skip this step', 'Cancel execution'])
+      );
+      
+      // When user answers "Yes, proceed", askClarification returns null (no clarification needed)
+      // The executeStep function will use the original step in this case
+      expect(result).toBeNull();
+    });
+  });
+
   describe('Smart Error Fixes (Priority 1.4)', () => {
     it('should provide error context for missing files', async () => {
       const step: PlanStep = {

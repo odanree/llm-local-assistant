@@ -14,6 +14,7 @@ let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
 let messageHandlerAttached = false; // Track if message handler is already attached
+let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
 
 /**
  * Get LLM configuration from VS Code settings
@@ -747,6 +748,15 @@ ${fileContent}
             break;
           }
 
+          case 'answerQuestion': {
+            // Handle clarification question response
+            if (pendingQuestionResolve) {
+              pendingQuestionResolve(message.answer);
+              pendingQuestionResolve = null;
+            }
+            break;
+          }
+
           case 'clearChat': {
             llmClient.clearHistory();
             chatHistory = []; // Clear persisted chat history
@@ -806,7 +816,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   
   const gitClient = wsFolder ? new GitClient(wsFolder) : undefined;
-  
+
   executor = new Executor({
     extension: context,
     llmClient,
@@ -836,6 +846,19 @@ export function activate(context: vscode.ExtensionContext) {
           success: true,
         });
       }
+    },
+    onQuestion: (question: string, options: string[]) => {
+      // Display question and wait for response
+      return new Promise((resolve) => {
+        if (chatPanel) {
+          pendingQuestionResolve = resolve;
+          chatPanel.webview.postMessage({
+            command: 'question',
+            question,
+            options,
+          });
+        }
+      });
     },
   });
 

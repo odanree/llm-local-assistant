@@ -5,9 +5,6 @@ export default defineConfig({
     globals: true,
     environment: 'happy-dom',
     setupFiles: ['./src/vitest.setup.ts'],
-    alias: {
-      vscode: '/mock/vscode.ts',
-    },
   },
   resolve: {
     alias: {
