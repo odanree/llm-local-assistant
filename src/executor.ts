@@ -268,6 +268,7 @@ export class Executor {
    */
   private async askClarification(step: PlanStep, error: string): Promise<PlanStep | null> {
     const action = step.action;
+    console.log(`[Executor] askClarification called for action: ${action}, command: ${(step as any).command}`);
 
     // Pattern 1: Ambiguous write destination
     if (action === 'write' && step.path && step.path.includes('/')) {
@@ -304,10 +305,12 @@ export class Executor {
     // Pattern 2: Run command ambiguity - ask if we should proceed
     if (action === 'run' && step.command) {
       if (step.command.includes('npm') || step.command.includes('test')) {
+        console.log(`[Executor] Detected npm/test command: ${step.command}, asking for clarification`);
         const answer = await this.config.onQuestion?.(
           `About to run: \`${step.command}\`\n\nThis might take a while. Should I proceed?`,
           ['Yes, proceed', 'No, skip this step', 'Cancel execution']
         );
+        console.log(`[Executor] User answered: ${answer}`);
 
         if (answer === 'No, skip this step') {
           return null;
@@ -353,7 +356,18 @@ export class Executor {
           result = await this.executeSuggestWrite(step, startTime);
           break;
         case 'run':
-          result = await this.executeRun(step, startTime);
+          // Ask clarification before running potentially long commands
+          const clarifiedStep = await this.askClarification(step, '');
+          if (clarifiedStep === null) {
+            // User skipped this step
+            return {
+              stepId: step.stepId,
+              success: true,
+              output: `Skipped: ${step.description}`,
+              duration: Date.now() - startTime,
+            };
+          }
+          result = await this.executeRun(clarifiedStep || step, startTime);
           break;
         default:
           throw new Error(`Unknown action: ${step.action}`);

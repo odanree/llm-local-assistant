@@ -84,6 +84,38 @@ export function getWebviewContent(): string {
         em.textContent = msg.text;
         div.appendChild(em);
         chat.appendChild(div);
+      } else if (msg.command === 'question') {
+        // Display question with options
+        const div = document.createElement('div');
+        div.className = 'msg assistant question';
+        const q = document.createElement('p');
+        q.style.marginTop = '0';
+        q.textContent = msg.question;
+        div.appendChild(q);
+        
+        // Create button container for options
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'question-buttons';
+        
+        msg.options.forEach((option, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'question-btn';
+          btn.textContent = option;
+          btn.onclick = () => {
+            // Disable all buttons
+            Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
+              b.disabled = true;
+              b.style.opacity = '0.5';
+            });
+            // Send response to extension
+            vscode.postMessage({ command: 'answerQuestion', answer: option });
+          };
+          buttonContainer.appendChild(btn);
+        });
+        
+        div.appendChild(buttonContainer);
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
       }
     });
     input.focus();
@@ -195,6 +227,35 @@ export function getWebviewContent(): string {
             border-left-color: var(--vscode-textSeparator-foreground);
             color: #e0e0e0;
             font-style: italic;
+          }
+          .assistant.question {
+            border-left-color: var(--vscode-inputValidation-infoBorder);
+            background: transparent;
+            color: #e0e0e0;
+          }
+          .question-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+          }
+          .question-btn {
+            padding: 8px 14px;
+            border: 1px solid var(--vscode-button-border);
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+          }
+          .question-btn:hover {
+            background: var(--vscode-button-hoverBackground);
+          }
+          .question-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
           }
           .input-row {
             display: flex;

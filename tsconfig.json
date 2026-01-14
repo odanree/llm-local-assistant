@@ -1,5 +1,15 @@
 {
   "compilerOptions": {
-    "target": "es5"
-  }
+    "target": "es5",
+    "module": "commonjs",
+    "lib": ["es2020"],
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
 }
