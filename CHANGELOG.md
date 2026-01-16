@@ -4,6 +4,22 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.2.5] - 2026-01-16
+
+### Fixed
+- **Marketplace Documentation Sync** - Removed personal narrative from marketplace description
+  - Aligned marketplace messaging with professional README documentation
+  - Personal story moved to LinkedIn post for appropriate audience
+  - Maintains technical focus for VS Code Marketplace listing
+
+## [1.2.4] - 2026-01-16
+
+### Added
+- **v1.2.3 Release Documentation** - Updated README with AI Agent Safety features
+  - Documented write operation safety and interactive confirmation
+  - Added smart risk detection for critical files
+  - Highlighted user control and balanced automation
+
 ## [1.2.3] - 2026-01-16
 
 ### Added

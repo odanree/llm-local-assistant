@@ -2,7 +2,7 @@
 
 A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
-> **Latest Release**: v1.2.4 - Updated Documentation 📚  
+> **Latest Release**: v1.2.5 - Marketplace Documentation Sync 📚  
 > **New**: v1.2.3 AI Agent Safety & Write Protection 🔒  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
@@ -36,13 +36,20 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ## 📊 Project Status & Version History
 
-### Latest: v1.2.4 (January 2026) - Documentation Update 📚
+### Latest: v1.2.5 (January 2026) - Marketplace Documentation Sync 📚
+
+**v1.2.5 Changes:**
+- ✅ **Marketplace Sync** - Removed personal narrative from marketplace description
+- ✅ **Professional Focus** - README maintains technical focus, personal story moved to LinkedIn
+- ✅ **Clean Documentation** - Consistent messaging across all channels
+
+### Previous: v1.2.4 (January 2026) - Documentation Update 📚
 
 **v1.2.4 Changes:**
 - ✅ **Updated README** - Added v1.2.3 release information and features
 - ✅ **Feature Documentation** - Write safety capabilities highlighted
 
-### Previous: v1.2.3 (January 2026) - AI Agent Safety & Write Protection 🔒
+### Archive: v1.2.3 (January 2026) - AI Agent Safety & Write Protection 🔒
 
 **v1.2.3 Features:**
 - ✅ **Write Operation Safety** - Interactive confirmation for critical file modifications
