@@ -195,6 +195,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   type: 'info',
                 });
 
+                console.log('[Extension] About to execute plan with', currentPlan.steps.length, 'steps');
+                currentPlan.steps.forEach((step, idx) => {
+                  console.log(`[Extension] Step ${idx + 1}: action=${step.action}, description=${step.description}`);
+                });
+
                 const result = await executor.executePlan(currentPlan);
                 
                 // Clear current plan
@@ -850,13 +855,24 @@ export function activate(context: vscode.ExtensionContext) {
     onQuestion: (question: string, options: string[]) => {
       // Display question and wait for response
       return new Promise((resolve) => {
+        console.log('[Extension] onQuestion callback invoked:', question);
+        console.log('[Extension] Current chatPanel:', !!chatPanel);
+        console.log('[Extension] Options:', options);
+        
         if (chatPanel) {
+          console.log('[Extension] Posting question to webview');
           pendingQuestionResolve = resolve;
-          chatPanel.webview.postMessage({
+          const messageToSend = {
             command: 'question',
             question,
             options,
-          });
+          };
+          console.log('[Extension] Message to send:', JSON.stringify(messageToSend));
+          chatPanel.webview.postMessage(messageToSend);
+        } else {
+          // If no chat panel, auto-proceed with first option (default behavior)
+          console.log('[Extension] No chat panel for question, auto-proceeding with:', options[0]);
+          resolve(options[0]);
         }
       });
     },

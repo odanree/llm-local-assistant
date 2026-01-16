@@ -86,6 +86,7 @@ export function getWebviewContent(): string {
         chat.appendChild(div);
       } else if (msg.command === 'question') {
         // Display question with options
+        console.log('[Webview] Received question message:', msg);
         const div = document.createElement('div');
         div.className = 'msg assistant question';
         const q = document.createElement('p');
@@ -102,6 +103,7 @@ export function getWebviewContent(): string {
           btn.className = 'question-btn';
           btn.textContent = option;
           btn.onclick = () => {
+            console.log('[Webview] User clicked option:', option);
             // Disable all buttons
             Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
               b.disabled = true;

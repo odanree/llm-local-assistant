@@ -304,8 +304,10 @@ export class Executor {
 
     // Pattern 2: Run command ambiguity - ask if we should proceed
     if (action === 'run' && step.command) {
+      console.log(`[Executor] Checking if command contains npm/test: ${step.command}`);
       if (step.command.includes('npm') || step.command.includes('test')) {
         console.log(`[Executor] Detected npm/test command: ${step.command}, asking for clarification`);
+        console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
         const answer = await this.config.onQuestion?.(
           `About to run: \`${step.command}\`\n\nThis might take a while. Should I proceed?`,
           ['Yes, proceed', 'No, skip this step', 'Cancel execution']
@@ -317,10 +319,12 @@ export class Executor {
         } else if (answer === 'Cancel execution') {
           throw new Error('User cancelled execution');
         }
+        // If 'Yes, proceed' or no answer, return step to continue execution
+        return step;
       }
     }
 
-    return null; // No clarification needed or user provided clarification
+    return step; // Return step to continue with normal execution
   }
 
   /**
@@ -336,6 +340,8 @@ export class Executor {
         duration: 0,
       };
     }
+
+    console.log(`[Executor] Starting step ${stepId}: action=${step.action}, description=${step.description}`);
 
     const startTime = Date.now();
 
@@ -357,7 +363,9 @@ export class Executor {
           break;
         case 'run':
           // Ask clarification before running potentially long commands
+          console.log(`[Executor] About to ask clarification for run command: ${(step as any).command}`);
           const clarifiedStep = await this.askClarification(step, '');
+          console.log(`[Executor] askClarification returned: ${clarifiedStep ? 'step' : 'null'}`);
           if (clarifiedStep === null) {
             // User skipped this step
             return {
