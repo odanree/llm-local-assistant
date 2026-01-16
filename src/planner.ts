@@ -73,7 +73,16 @@ STRICT RULES:
 11. NO "content", NO code examples, NO extra fields
 12. Typical flow: read → write → run (or similar)
 13. Valid JSON that can be parsed immediately
-14. If multi-turn context provided: maintain consistency with previous steps`;
+14. If multi-turn context provided: maintain consistency with previous steps
+
+🚫 NEVER WRITE TO THESE FILES (READ ONLY):
+- package.json, package-lock.json, yarn.lock, pnpm-lock.yaml
+- tsconfig.json, jsconfig.json
+- .gitignore, .eslintrc, .prettierrc, webpack.config.js
+- Any config files (*.config.js, *.config.ts, .vscode/settings.json)
+
+For "just run X" requests: Use read (if needed) → run. Do NOT add write steps.`;
+
 
 export class Planner {
   private config: PlannerConfig;
@@ -226,6 +235,16 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
 
     // Valid actions that the executor supports
     const VALID_ACTIONS = ['read', 'write', 'suggestwrite', 'run'];
+    
+    // Protected files that should never be overwritten by plans
+    const PROTECTED_FILES = [
+      'package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+      'tsconfig.json', 'jsconfig.json', 
+      '.gitignore', '.eslintrc', '.eslintrc.js', '.eslintrc.json', 
+      '.prettierrc', '.prettierrc.js', '.prettierrc.json',
+      'webpack.config.js', 'vite.config.js', 'vite.config.ts',
+      'rollup.config.js', 'next.config.js',
+    ];
 
     // Track invalid actions for better error reporting
     const invalidSteps: any[] = [];
@@ -238,6 +257,35 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
           invalidSteps.push({ action: s.action, description: s.description });
           console.warn(`[Planner] Skipping step with invalid action: ${s.action}`);
           return false;
+        }
+        
+        // Check if trying to write to protected files
+        if ((action === 'write' || action === 'suggestwrite') && s.path) {
+          const fileName = s.path.split('/').pop() || '';
+          if (PROTECTED_FILES.includes(fileName)) {
+            invalidSteps.push({ 
+              action: s.action, 
+              path: s.path,
+              description: s.description,
+              reason: `Protected file: ${fileName}`
+            });
+            console.warn(`[Planner] Blocked write to protected file: ${s.path}`);
+            return false;
+          }
+          
+          // Also check for config patterns
+          if (fileName.match(/\.(config|rc)\.(js|ts|json)$/) || 
+              fileName.match(/^\..*rc$/) ||
+              s.path.includes('.vscode/settings.json')) {
+            invalidSteps.push({ 
+              action: s.action, 
+              path: s.path,
+              description: s.description,
+              reason: 'Config file'
+            });
+            console.warn(`[Planner] Blocked write to config file: ${s.path}`);
+            return false;
+          }
         }
         // Ensure step has required fields
         if (!s.path && action !== 'run') {
@@ -261,10 +309,17 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
       }));
 
     if (steps.length === 0) {
-      const invalidActionsStr = invalidSteps.map(s => s.action).join(', ');
-      const errorMsg = invalidSteps.length > 0 
-        ? `No valid steps found. Invalid actions used: ${invalidActionsStr}. Valid actions are: read, write, suggestwrite, run`
-        : 'No valid steps found after filtering';
+      const protectedFileBlocks = invalidSteps.filter(s => s.reason).map(s => s.path);
+      const invalidActionsStr = invalidSteps.filter(s => !s.reason).map(s => s.action).join(', ');
+      
+      let errorMsg = 'No valid steps found after filtering.';
+      if (protectedFileBlocks.length > 0) {
+        errorMsg += ` Blocked writes to protected files: ${protectedFileBlocks.join(', ')}.`;
+      }
+      if (invalidActionsStr) {
+        errorMsg += ` Invalid actions used: ${invalidActionsStr}. Valid actions are: read, write, suggestwrite, run`;
+      }
+      
       throw new Error(errorMsg);
     }
 
