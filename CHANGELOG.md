@@ -4,6 +4,24 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.2.3] - 2026-01-16
+
+### Added
+- **Follow-up Questions for Write Operations (Phase 2.2 Enhancement)** - Protection for critical files
+  - Questions trigger when writing to risky files: config.json, .env, Dockerfile, tsconfig.json, .eslintrc, webpack.config.js, etc.
+  - User can approve, skip, or cancel before writing to important configuration files
+  - Simple text files (.txt, .md, etc.) write directly without questions
+  - 20+ file patterns detected as risky (build configs, linters, CI/CD, containers, database files)
+  - Comprehensive logging for debugging question flow
+
+### Tests
+- Added 5 new test cases for write operation questions (140 total tests passing)
+  - Trigger question for package.json
+  - Trigger question for .env files
+  - Don't trigger question for simple text files
+  - Handle user skipping risky writes
+  - Trigger question for Dockerfile
+
 ## [1.2.2] - 2026-01-16
 
 ### Added
