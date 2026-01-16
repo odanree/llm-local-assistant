@@ -40,7 +40,6 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 **v1.2.4 Changes:**
 - ✅ **Updated README** - Added v1.2.3 release information and features
-- ✅ **Release Story** - Highlighted shipping during downtime narrative
 - ✅ **Feature Documentation** - Write safety capabilities highlighted
 
 ### Previous: v1.2.3 (January 2026) - AI Agent Safety & Write Protection 🔒
@@ -51,9 +50,6 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - ✅ **Skip Risky Steps** - Continue plan execution while bypassing unsafe operations
 - ✅ **User Control** - Full authority over agent-generated modifications
 - ✅ **Balanced Automation** - Maintains speed while protecting your codebase
-
-**Release Notes:**
-> After unexpected downtime following a layoff, shipped v1.2.3 with intelligent safeguards for AI-generated modifications. Balances powerful automation with essential safety guardrails. Those hours of downtime turned into tangible improvements—sometimes the best time to ship is when you're just having fun building. 🔧
 
 ### Previous: v1.2.0 (December 2025) - Enhanced AI Planning with Auto-Correction & Code Understanding ✅
 
