@@ -622,6 +622,256 @@ describe('Executor', () => {
     });
   });
 
+  describe('Write Operation Questions (Phase 2.2)', () => {
+    it('should trigger question for critical config files', async () => {
+      const onQuestionMock = vi.fn().mockResolvedValue('Yes, write the file');
+
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: {
+          sendMessage: vi.fn().mockResolvedValue({
+            success: true,
+            message: 'test content',
+          }),
+          clearHistory: vi.fn(),
+          config: {},
+          conversationHistory: [],
+          isServerHealthy: vi.fn(),
+          sendMessageStream: vi.fn(),
+          getHistory: vi.fn(),
+        } as any,
+        workspace: { fsPath: '/workspace' },
+        onQuestion: onQuestionMock,
+        onStepOutput: vi.fn(),
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      
+      const plan: TaskPlan = {
+        taskId: 'task_1',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'package.json',
+            prompt: 'Update package.json',
+            description: 'Write package.json',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      await executor2.executeStep(plan, 1);
+
+      // Question should be triggered for package.json
+      expect(onQuestionMock).toHaveBeenCalledWith(
+        expect.stringContaining('package.json'),
+        expect.arrayContaining(['Yes, write the file', 'No, skip this step', 'Cancel execution'])
+      );
+    });
+
+    it('should trigger question for environment config files', async () => {
+      const onQuestionMock = vi.fn().mockResolvedValue('Yes, write the file');
+
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: {
+          sendMessage: vi.fn().mockResolvedValue({
+            success: true,
+            message: 'test content',
+          }),
+          clearHistory: vi.fn(),
+          config: {},
+          conversationHistory: [],
+          isServerHealthy: vi.fn(),
+          sendMessageStream: vi.fn(),
+          getHistory: vi.fn(),
+        } as any,
+        workspace: { fsPath: '/workspace' },
+        onQuestion: onQuestionMock,
+        onStepOutput: vi.fn(),
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      
+      const plan: TaskPlan = {
+        taskId: 'task_2',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: '.env',
+            prompt: 'Update .env',
+            description: 'Write .env file',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      await executor2.executeStep(plan, 1);
+
+      expect(onQuestionMock).toHaveBeenCalledWith(
+        expect.stringContaining('.env'),
+        expect.any(Array)
+      );
+    });
+
+    it('should NOT trigger question for simple text files', async () => {
+      const onQuestionMock = vi.fn().mockResolvedValue('Yes, write the file');
+
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: {
+          sendMessage: vi.fn().mockResolvedValue({
+            success: true,
+            message: 'test content',
+          }),
+          clearHistory: vi.fn(),
+          config: {},
+          conversationHistory: [],
+          isServerHealthy: vi.fn(),
+          sendMessageStream: vi.fn(),
+          getHistory: vi.fn(),
+        } as any,
+        workspace: { fsPath: '/workspace' },
+        onQuestion: onQuestionMock,
+        onStepOutput: vi.fn(),
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      
+      const plan: TaskPlan = {
+        taskId: 'task_3',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'output.txt',
+            prompt: 'Write output',
+            description: 'Write output.txt',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      await executor2.executeStep(plan, 1);
+
+      // Question should NOT be triggered for simple text files
+      expect(onQuestionMock).not.toHaveBeenCalled();
+    });
+
+    it('should handle user skipping a risky write operation', async () => {
+      const onQuestionMock = vi.fn().mockResolvedValue('No, skip this step');
+
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: {
+          sendMessage: vi.fn().mockResolvedValue({
+            success: true,
+            message: 'test content',
+          }),
+          clearHistory: vi.fn(),
+          config: {},
+          conversationHistory: [],
+          isServerHealthy: vi.fn(),
+          sendMessageStream: vi.fn(),
+          getHistory: vi.fn(),
+        } as any,
+        workspace: { fsPath: '/workspace' },
+        onQuestion: onQuestionMock,
+        onStepOutput: vi.fn(),
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      
+      const plan: TaskPlan = {
+        taskId: 'task_4',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'tsconfig.json',
+            prompt: 'Update tsconfig',
+            description: 'Write tsconfig.json',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor2.executeStep(plan, 1);
+
+      // Should succeed but skip the write
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('Skipped');
+    });
+
+    it('should trigger question for Dockerfile and compose files', async () => {
+      const onQuestionMock = vi.fn().mockResolvedValue('Yes, write the file');
+
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: {
+          sendMessage: vi.fn().mockResolvedValue({
+            success: true,
+            message: 'test content',
+          }),
+          clearHistory: vi.fn(),
+          config: {},
+          conversationHistory: [],
+          isServerHealthy: vi.fn(),
+          sendMessageStream: vi.fn(),
+          getHistory: vi.fn(),
+        } as any,
+        workspace: { fsPath: '/workspace' },
+        onQuestion: onQuestionMock,
+        onStepOutput: vi.fn(),
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      
+      const plan: TaskPlan = {
+        taskId: 'task_5',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'Dockerfile',
+            prompt: 'Create Dockerfile',
+            description: 'Write Dockerfile',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      await executor2.executeStep(plan, 1);
+
+      expect(onQuestionMock).toHaveBeenCalledWith(
+        expect.stringContaining('Dockerfile'),
+        expect.any(Array)
+      );
+    });
+  });
+
   describe('Smart Error Fixes (Priority 1.4)', () => {
     it('should provide error context for missing files', async () => {
       const step: PlanStep = {

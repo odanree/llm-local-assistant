@@ -547,12 +547,99 @@ export class Executor {
   }
 
   /**
+   * Detect if a write operation should trigger a user question
+   * Returns true for risky operations like config files, large files, or critical data files
+   */
+  private shouldAskForWrite(filePath: string): boolean {
+    const fileName = filePath.split('/').pop() || '';
+    
+    // Files that warrant confirmation
+    const riskPatterns = [
+      // Core config files
+      /package\.json$/,
+      /package-lock\.json$/,
+      /yarn\.lock$/,
+      /pnpm-lock\.yaml$/,
+      /tsconfig\.json$/,
+      /jsconfig\.json$/,
+      
+      // Build configs
+      /webpack\.config/,
+      /vite\.config/,
+      /rollup\.config/,
+      /next\.config/,
+      /nuxt\.config/,
+      /gatsby\.config/,
+      
+      // Linter/Formatter configs
+      /\.eslintrc/,
+      /\.prettierrc/,
+      /\.stylelintrc/,
+      /\.editorconfig/,
+      
+      // CI/CD configs
+      /\.github\/workflows\//,
+      /\.gitlab-ci\.yml/,
+      /\.travis\.yml/,
+      /Jenkinsfile/,
+      
+      // Environment and secrets
+      /\.env/,
+      /\.secrets/,
+      /credentials/,
+      
+      // Critical data files
+      /database\.json/,
+      /config\.json/,
+      /settings\.json/,
+      /\.gitignore$/,
+      /\.dockerignore$/,
+      /Dockerfile$/,
+      /docker-compose\.ya?ml$/,
+      
+      // Root-level files that are typically important
+      /^README\.md$/,
+      /^LICENSE$/,
+      /^Makefile$/,
+    ];
+    
+    // Check if file matches any risk pattern
+    const isRisky = riskPatterns.some(pattern => pattern.test(fileName));
+    
+    return isRisky;
+  }
+
+  /**
    * Execute /write step: Generate content and write to file
    * Streams generated content back to callback
    */
   private async executeWrite(step: PlanStep, startTime: number): Promise<StepResult> {
     if (!step.path) {
       throw new Error('Write step requires path');
+    }
+
+    // Check if this is a risky write operation that warrants confirmation
+    if (this.shouldAskForWrite(step.path)) {
+      console.log(`[Executor] Detected risky write to: ${step.path}`);
+      console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
+      
+      const answer = await this.config.onQuestion?.(
+        `About to write to important file: \`${step.path}\`\n\nThis is a critical configuration or data file. Should I proceed with writing?`,
+        ['Yes, write the file', 'No, skip this step', 'Cancel execution']
+      );
+      console.log(`[Executor] User answered for write: ${answer}`);
+
+      if (answer === 'No, skip this step') {
+        return {
+          stepId: step.stepId,
+          success: true,
+          output: `Skipped: ${step.description}`,
+          duration: Date.now() - startTime,
+        };
+      } else if (answer === 'Cancel execution') {
+        throw new Error('User cancelled execution');
+      }
+      // If 'Yes, write the file' or no answer, continue with write
     }
 
     // Build a detailed prompt that asks for code-only output
