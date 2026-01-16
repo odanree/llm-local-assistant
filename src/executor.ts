@@ -302,12 +302,44 @@ export class Executor {
       }
     }
 
-    // Pattern 2: Run command ambiguity - ask if we should proceed
+    // Pattern 2: Run command ambiguity - ask for confirmation on various command types
     if (action === 'run' && step.command) {
-      console.log(`[Executor] Checking if command contains npm/test: ${step.command}`);
-      if (step.command.includes('npm') || step.command.includes('test')) {
-        console.log(`[Executor] Detected npm/test command: ${step.command}, asking for clarification`);
+      const command = step.command.toLowerCase();
+      
+      // Patterns that warrant user confirmation (potentially long-running or risky)
+      const confirmationPatterns = [
+        // Package managers & testing
+        /npm\s+(test|run|install|build)/,
+        /yarn\s+(test|run|install|build)/,
+        /pnpm\s+(test|run|install|build)/,
+        /bun\s+(test|run|install|build)/,
+        
+        // Testing frameworks
+        /jest|mocha|vitest|pytest|pytest-|cargo\s+test|go\s+test|mix\s+test/,
+        
+        // Build tools
+        /webpack|rollup|vite|tsc|typescript|babel/,
+        /gradle|maven|make|cmake/,
+        
+        // Database/backend operations
+        /migrate|seed|dump|restore|backup/,
+        /docker\s+(build|run|compose)|docker-compose/,
+        
+        // Deployment & git operations (risky)
+        /deploy|push|merge|rebase|reset|force/,
+        /git\s+(push|merge|rebase|reset|force)/,
+        
+        // Long-running operations
+        /npm\s+start|yarn\s+start|pnpm\s+start|bun\s+start/,
+        /server|dev|watch|watch-mode/,
+      ];
+      
+      const shouldAsk = confirmationPatterns.some(pattern => pattern.test(command));
+      
+      if (shouldAsk) {
+        console.log(`[Executor] Detected command needing confirmation: ${step.command}`);
         console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
+        
         const answer = await this.config.onQuestion?.(
           `About to run: \`${step.command}\`\n\nThis might take a while. Should I proceed?`,
           ['Yes, proceed', 'No, skip this step', 'Cancel execution']
