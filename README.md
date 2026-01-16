@@ -2,7 +2,8 @@
 
 A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
-> **Latest Release**: v1.2.2 - Follow-up Questions & Plan Protection ✨  
+> **Latest Release**: v1.2.4 - Updated Documentation 📚  
+> **New**: v1.2.3 AI Agent Safety & Write Protection 🔒  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Key Features
@@ -13,6 +14,7 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - Automatic error recovery with retry logic
 - Interactive confirmation for risky operations (v1.2.2)
 - Protection against overwriting critical config files (v1.2.2)
+- AI-powered write safety with user approval (v1.2.3)
 
 **🤖 Agent Mode Commands**
 - `/plan <task>` - Generate multi-step action plans with LLM
@@ -34,7 +36,26 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ## 📊 Project Status & Version History
 
-### Latest: v1.2.0 (December 2025) - Enhanced AI Planning with Auto-Correction & Code Understanding ✅
+### Latest: v1.2.4 (January 2026) - Documentation Update 📚
+
+**v1.2.4 Changes:**
+- ✅ **Updated README** - Added v1.2.3 release information and features
+- ✅ **Release Story** - Highlighted shipping during downtime narrative
+- ✅ **Feature Documentation** - Write safety capabilities highlighted
+
+### Previous: v1.2.3 (January 2026) - AI Agent Safety & Write Protection 🔒
+
+**v1.2.3 Features:**
+- ✅ **Write Operation Safety** - Interactive confirmation for critical file modifications
+- ✅ **Smart Risk Detection** - Identifies config files, environment files, and critical system files
+- ✅ **Skip Risky Steps** - Continue plan execution while bypassing unsafe operations
+- ✅ **User Control** - Full authority over agent-generated modifications
+- ✅ **Balanced Automation** - Maintains speed while protecting your codebase
+
+**Release Notes:**
+> After unexpected downtime following a layoff, shipped v1.2.3 with intelligent safeguards for AI-generated modifications. Balances powerful automation with essential safety guardrails. Those hours of downtime turned into tangible improvements—sometimes the best time to ship is when you're just having fun building. 🔧
+
+### Previous: v1.2.0 (December 2025) - Enhanced AI Planning with Auto-Correction & Code Understanding ✅
 
 **v1.2.0 Features:**
 - ✅ **Smart Auto-Correction** - Automatically fix and suggest command corrections with LLM
