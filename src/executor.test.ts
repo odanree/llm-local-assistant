@@ -541,9 +541,8 @@ describe('Executor', () => {
         expect.arrayContaining(['Yes, proceed', 'No, skip this step', 'Cancel execution'])
       );
       
-      // When user answers "Yes, proceed", askClarification returns null (no clarification needed)
-      // The executeStep function will use the original step in this case
-      expect(result).toBeNull();
+      // When user answers "Yes, proceed", askClarification returns the step to continue execution
+      expect(result).toEqual(runStep);
     });
   });
 
