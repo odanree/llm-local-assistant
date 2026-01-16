@@ -544,6 +544,82 @@ describe('Executor', () => {
       // When user answers "Yes, proceed", askClarification returns the step to continue execution
       expect(result).toEqual(runStep);
     });
+
+    it('should trigger question for various package manager and testing commands', async () => {
+      const onQuestionMock = vi.fn(async () => 'Yes, proceed');
+
+      const config = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        onQuestion: onQuestionMock,
+      };
+
+      const executor2 = new Executor(config);
+      
+      // Test various commands that should trigger questions
+      const testCases = [
+        { cmd: 'yarn build', description: 'Yarn build' },
+        { cmd: 'pnpm install', description: 'PNPM install' },
+        { cmd: 'pytest tests/', description: 'Python pytest' },
+        { cmd: 'docker compose up', description: 'Docker compose' },
+        { cmd: 'git push origin main', description: 'Git push' },
+        { cmd: 'npm run dev', description: 'NPM dev server' },
+      ];
+
+      for (const { cmd, description } of testCases) {
+        onQuestionMock.mockClear();
+        
+        const runStep: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: cmd,
+          description,
+        };
+
+        await (executor2 as any).askClarification(runStep, '');
+        
+        // Each command should trigger a question
+        expect(onQuestionMock).toHaveBeenCalled();
+      }
+    });
+
+    it('should not trigger question for simple utility commands', async () => {
+      const onQuestionMock = vi.fn(async () => 'Yes, proceed');
+
+      const config = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        onQuestion: onQuestionMock,
+      };
+
+      const executor2 = new Executor(config);
+      
+      // Simple commands that shouldn't trigger questions
+      const simpleCommands = [
+        { cmd: 'ls -la', description: 'List files' },
+        { cmd: 'pwd', description: 'Print working directory' },
+        { cmd: 'echo hello', description: 'Echo text' },
+        { cmd: 'cat file.txt', description: 'Cat file' },
+      ];
+
+      for (const { cmd, description } of simpleCommands) {
+        onQuestionMock.mockClear();
+        
+        const runStep: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: cmd,
+          description,
+        };
+
+        await (executor2 as any).askClarification(runStep, '');
+        
+        // Simple commands should not trigger questions
+        expect(onQuestionMock).not.toHaveBeenCalled();
+      }
+    });
   });
 
   describe('Smart Error Fixes (Priority 1.4)', () => {
