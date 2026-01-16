@@ -4,6 +4,26 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.2.2] - 2026-01-16
+
+### Added
+- **Follow-up Questions (Phase 2.2)** - Interactive clarification before risky operations
+  - Questions appear in chat UI with interactive buttons when running npm/test commands
+  - User can choose: "Yes, proceed", "No, skip this step", or "Cancel execution"
+  - Executor waits for user response before continuing
+  - Prevents accidental execution of long-running or destructive commands
+
+### Fixed
+- **Plan Protection** - Safeguards against destructive plan generation
+  - Blocks LLM from generating write steps for critical files (package.json, tsconfig.json, config files, lock files)
+  - Enhanced system prompt with explicit rules against modifying configuration
+  - Validation rejects plans trying to overwrite protected files
+  - Prevents 'just run X' requests from generating unnecessary destructive write steps
+
+- **Executor Flow** - Fixed question callback to properly continue execution
+  - Corrected return value when user approves question (was skipping, now proceeds)
+  - Added comprehensive logging for debugging question feature flow
+
 ## [1.2.1] - 2025-12-10
 
 ### Updated
