@@ -2,7 +2,7 @@
 
 A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
-> **Latest Release**: v1.2.0 - Enhanced AI Planning with Auto-Correction ✨  
+> **Latest Release**: v1.2.2 - Follow-up Questions & Plan Protection ✨  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Key Features
@@ -11,6 +11,8 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - Break complex tasks into structured multi-step plans
 - Review plans before execution
 - Automatic error recovery with retry logic
+- Interactive confirmation for risky operations (v1.2.2)
+- Protection against overwriting critical config files (v1.2.2)
 
 **🤖 Agent Mode Commands**
 - `/plan <task>` - Generate multi-step action plans with LLM
@@ -118,6 +120,15 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 *Shows successful plan completion:*
 - *Summary of completed steps*
 - *Files created and modifications made*
+
+### 6. Follow-up Questions - Interactive Confirmation (v1.2.2)
+![Follow-up Questions](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2.2-follow-up-questions.png)
+
+*Shows interactive confirmation before risky operations:*
+- *Question appears with clear context about the command*
+- *Three interactive buttons: "Yes, proceed", "No, skip this step", "Cancel execution"*
+- *Prevents accidental execution of long-running or destructive commands*
+- *Currently triggers for npm/test commands*
 - *Ready for next task or manual review*
 - *Full chat history maintained*
 
