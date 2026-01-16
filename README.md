@@ -121,13 +121,23 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - *Summary of completed steps*
 - *Files created and modifications made*
 
-### 6. Follow-up Questions - Interactive Confirmation (v1.2.2)
+### 6. Follow-up Questions - Interactive Confirmation (v1.2.2+)
 ![Follow-up Questions](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2.2-follow-up-questions.png)
 
 *Shows interactive confirmation before risky operations:*
 - *Question appears with clear context about the command*
 - *Three interactive buttons: "Yes, proceed", "No, skip this step", "Cancel execution"*
 - *Prevents accidental execution of long-running or destructive commands*
+
+### 7. Write Operation Protection - Critical File Safeguards (v1.2.3)
+![Write Operation Question](https://github.com/odanree/llm-local-assistant/raw/main/assets/write-operation-question.png)
+
+*Shows protection for writing to critical configuration files:*
+- *Question appears when planning to write to: config.json, .env, Dockerfile, tsconfig.json, etc.*
+- *Three interactive buttons: "Yes, write the file", "No, skip this step", "Cancel execution"*
+- *Simple text files (.txt, .md) write directly without questions*
+- *20+ file patterns detected as risky (build configs, linters, CI/CD, containers)*
+- *User maintains full control over file modifications*
 - *Currently triggers for npm/test commands*
 - *Ready for next task or manual review*
 - *Full chat history maintained*
