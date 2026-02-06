@@ -17,6 +17,42 @@ let messageHandlerAttached = false; // Track if message handler is already attac
 let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
 
 /**
+ * Load architecture rules from workspace root
+ * Checks in priority order: .lla-rules (primary) → .cursorrules (migration/fallback)
+ * @returns Rules content if file exists, undefined otherwise
+ */
+async function loadArchitectureRules(): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+
+  const workspace = folders[0];
+
+  // Priority order:
+  // 1. .lla-rules (LLM Local Assistant - primary)
+  // 2. .cursorrules (Cursor IDE - fallback/migration support)
+  const filenames = ['.lla-rules', '.cursorrules'];
+
+  for (const filename of filenames) {
+    try {
+      const rulesUri = vscode.Uri.joinPath(workspace.uri, filename);
+      const content = await vscode.workspace.fs.readFile(rulesUri);
+      const text = new TextDecoder().decode(content);
+
+      console.log(`✓ Loaded ${filename} from workspace`);
+      return text;
+    } catch (error) {
+      // File doesn't exist, try next
+      continue;
+    }
+  }
+
+  // No rules file found
+  return undefined;
+}
+
+/**
  * Get LLM configuration from VS Code settings
  */
 function getLLMConfig(): LLMConfig {
@@ -271,9 +307,40 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
                 let generatedContent = '';
 
+                // GATEKEEPER: Build strict prompt for code generation
+                const fileExtension = relPath.split('.').pop()?.toLowerCase();
+                const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
+                
+                let finalPrompt = prompt;
+                if (isCodeFile) {
+                  finalPrompt = `You are generating code for a SINGLE file: ${relPath}
+
+${prompt}
+
+STRICT REQUIREMENTS:
+1. Output ONLY valid, executable code for this file
+2. NO markdown backticks, NO code blocks, NO explanations
+3. NO documentation, NO comments about what you're doing
+4. NO instructions for other files
+5. Start with the first line of code immediately
+6. End with the last line of code
+7. Every line must be syntactically valid for a ${fileExtension} file
+8. This code will be parsed as pure code - nothing else matters
+
+Example format (raw code, nothing else):
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({...});
+export function MyComponent() {...}
+
+Do NOT include: backticks, markdown, explanations, other files, instructions`;
+                }
+
                 if (isOllamaNonDefaultPort) {
                   // Use non-streaming response
-                  const response = await llmClient.sendMessage(prompt);
+                  const response = await llmClient.sendMessage(finalPrompt);
                   if (response.success) {
                     generatedContent = response.message || '';
                   } else {
@@ -282,7 +349,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 } else {
                   // Use streaming response - collect all tokens
                   const response = await llmClient.sendMessageStream(
-                    prompt,
+                    finalPrompt,
                     async (token: string, complete: boolean) => {
                       if (!complete && token) {
                         generatedContent += token;
@@ -294,7 +361,345 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   }
                 }
 
-                // Now write the generated content to file
+                // ============================================================================
+                // GATEKEEPER: VALIDATE CODE BEFORE WRITING TO DISK
+                // This is critical - LLM output is a PROPOSAL, not final
+                // ============================================================================
+                
+                let finalContent = generatedContent;
+                console.log(`[LLM Assistant] /write validation starting - isCodeFile=${isCodeFile}, fileExtension=${fileExtension}`);
+                
+                if (isCodeFile) {
+                  console.log(`[LLM Assistant] Running validation for code file: ${relPath}`);
+                  
+                  // DETECTION: Check if LLM ignored instructions
+                  const hasMarkdownBackticks = generatedContent.includes('```');
+                  const hasExcessiveComments = (generatedContent.match(/^\/\//gm) || []).length > 5;
+                  const hasMultipleFileInstructions = (generatedContent.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
+                  const hasYAMLOrConfigMarkers = generatedContent.includes('---') || generatedContent.includes('package.json') || generatedContent.includes('tsconfig');
+                  
+                  console.log(`[LLM Assistant] Detection: markdown=${hasMarkdownBackticks}, excessiveComments=${hasExcessiveComments}, multiFile=${hasMultipleFileInstructions}, yaml=${hasYAMLOrConfigMarkers}`);
+                  
+                  if (hasMarkdownBackticks) {
+                    // Extract code from markdown
+                    const codeBlockMatch = generatedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                    if (codeBlockMatch) {
+                      finalContent = codeBlockMatch[1];
+                    }
+                  }
+                  
+                  // Remove documentation patterns
+                  if (!hasMarkdownBackticks) {
+                    finalContent = finalContent
+                      .replace(/^[\s\S]*?(?=^import|^export|^const|^function|^class|^interface|^type|^\/\/)/m, '')
+                      .replace(/\n\n\n[#\-\*\s]*Installation[\s\S]*?(?=\n\n|$)/i, '')
+                      .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '')
+                      .trim();
+                  }
+                  
+                  // VALIDATION CHECKS
+                  const validationErrors: string[] = [];
+                  
+                  // Check 1: Markdown wrapped code
+                  if (generatedContent.includes('```') || generatedContent.match(/^```/m)) {
+                    validationErrors.push(`❌ Code wrapped in markdown backticks - not valid ${fileExtension}`);
+                  }
+                  
+                  // Check 2: Documentation instead of code
+                  if (generatedContent.includes('# Setup') || generatedContent.includes('## Installation') || generatedContent.includes('### Step')) {
+                    validationErrors.push(`❌ Content is documentation/tutorial instead of executable code`);
+                  }
+                  
+                  // Check 3: Multiple file references
+                  const fileRefs = (generatedContent.match(/\/\/(.*\.(ts|tsx|js|json|yaml))/gi) || []).length;
+                  if (fileRefs > 1) {
+                    validationErrors.push(`❌ Multiple file references - should only generate ${relPath}`);
+                  }
+                  
+                  // Check 4: any type
+                  if (generatedContent.includes(': any') || generatedContent.includes('as any')) {
+                    validationErrors.push(`❌ Found 'any' type - use specific types or 'unknown'`);
+                  }
+                  
+                  // Check 5: Missing imports (generic namespace detection)
+                  // Extract all imported items and namespaces
+                  const importedItems = new Set<string>();
+                  const importedNamespaces = new Set<string>();
+                  
+                  generatedContent.replace(/import\s+{([^}]+)}/g, (_, items) => {
+                    items.split(',').forEach((item: string) => {
+                      importedItems.add(item.trim());
+                    });
+                    return '';
+                  });
+                  
+                  // Capture namespace imports (import * as X)
+                  generatedContent.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
+                    importedNamespaces.add(namespace.trim());
+                    return '';
+                  });
+                  
+                  // And default imports
+                  generatedContent.replace(/import\s+(\w+)\s+from/g, (_, name) => {
+                    importedNamespaces.add(name.trim());
+                    return '';
+                  });
+                  
+                  // Find all namespace.method() patterns
+                  const namespaceUsages = new Set<string>();
+                  generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+                    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
+                    if (!globalKeywords.includes(namespace)) {
+                      namespaceUsages.add(namespace);
+                    }
+                    return '';
+                  });
+                  
+                  // Check if all used namespaces are imported
+                  Array.from(namespaceUsages).forEach((namespace) => {
+                    if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
+                      validationErrors.push(
+                        `❌ Missing import: '${namespace}' is used but never imported. ` +
+                        `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
+                      );
+                    }
+                  });
+                  
+                  // Check for unused imports
+                  const unusedImports: string[] = [];
+                  importedItems.forEach((item) => {
+                    if (['React', 'Component'].includes(item)) return;
+                    const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+                    const usageMatches = generatedContent.match(usagePattern) || [];
+                    if (usageMatches.length === 0) {
+                      unusedImports.push(item);
+                    }
+                  });
+                  
+                  if (unusedImports.length > 0) {
+                    unusedImports.forEach((unused) => {
+                      validationErrors.push(
+                        `⚠️ Unused import: '${unused}' is imported but never used. Remove it.`
+                      );
+                    });
+                  }
+                  
+                  // Check for return type issues
+                  if (generatedContent.includes('JSON.stringify') && generatedContent.includes(': string | null')) {
+                    validationErrors.push(
+                      `⚠️ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
+                      `Fix: Change return type to just 'string'`
+                    );
+                  }
+                  
+                  if (generatedContent.includes('JSON.parse') && generatedContent.includes(': any')) {
+                    validationErrors.push(
+                      `⚠️ Type issue: JSON.parse() result should not be 'any'. Use a specific type.`
+                    );
+                  }
+                  
+                  // Specific React Hook Form + Zod pattern check
+                  if ((generatedContent.includes('useState') || generatedContent.includes('useEffect')) && !importedItems.has('useState')) {
+                    if (!generatedContent.includes("import { useState")) {
+                      validationErrors.push(
+                        `❌ Missing React import: useState is used but not imported. ` +
+                        `Add: import { useState } from 'react'`
+                      );
+                    }
+                  }
+                  
+                  if (generatedContent.includes('useQuery') || generatedContent.includes('useMutation')) {
+                    if (!generatedContent.includes('@tanstack/react-query')) {
+                      validationErrors.push(
+                        `❌ TanStack Query used but not imported correctly. ` +
+                        `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
+                      );
+                    }
+                  }
+                  
+                  // Check 6: Architecture rules validation (if .lla-rules loaded)
+                  const architectureRules = llmClient["config"]?.architectureRules || '';
+                  console.log(`[LLM Assistant] Architecture rules loaded: ${architectureRules.length > 0 ? 'YES' : 'NO'}`);
+                  
+                  if (architectureRules) {
+                    console.log(`[LLM Assistant] Checking architecture rules...`);
+                    
+                    // Rule: No direct fetch() when TanStack Query is rule
+                    if (architectureRules.includes('TanStack Query')) {
+                      // Check for various fetch patterns
+                      const hasFetch = /fetch\s*\(|await\s+fetch|fetch\s*\{/.test(generatedContent);
+                      if (hasFetch) {
+                        validationErrors.push(
+                          `❌ Architecture rule violation: Using direct fetch() instead of TanStack Query. ` +
+                          `Use: const { data } = useQuery(...) or useMutation(...)`
+                        );
+                        console.log(`[LLM Assistant] Fetch usage detected - rule violation`);
+                      }
+                    }
+                    
+                    // Rule: No Redux when Zustand is rule
+                    if (architectureRules.includes('Zustand') && generatedContent.includes('useSelector')) {
+                      validationErrors.push(
+                        `❌ Architecture rule violation: Using Redux (useSelector) instead of Zustand. ` +
+                        `Use: const store = useStore() from your Zustand store`
+                      );
+                      console.log(`[LLM Assistant] Redux usage detected - rule violation`);
+                    }
+                    
+                    // Rule: No class components
+                    if (architectureRules.includes('functional components') && generatedContent.includes('extends React.Component')) {
+                      validationErrors.push(
+                        `❌ Architecture rule violation: Using class component instead of functional component. ` +
+                        `Convert to: export function ComponentName() { ... }`
+                      );
+                      console.log(`[LLM Assistant] Class component detected - rule violation`);
+                    }
+                    
+                    // Rule: TypeScript strict mode - return types required
+                    if (architectureRules.includes('strict TypeScript') || architectureRules.includes('Never use implicit types')) {
+                      // Check for arrow functions without return type annotation
+                      const arrowFunctionsWithoutReturnType = generatedContent.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
+                      if (arrowFunctionsWithoutReturnType) {
+                        validationErrors.push(
+                          `⚠️ Architecture rule: TypeScript strict mode requires return type annotations. ` +
+                          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
+                        );
+                        console.log(`[LLM Assistant] Arrow functions missing return types`);
+                      }
+
+                      // Check for function declarations without return type
+                      const functionsWithoutReturnType = generatedContent.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
+                      if (functionsWithoutReturnType) {
+                        validationErrors.push(
+                          `⚠️ Architecture rule: Function declarations need return type annotations. ` +
+                          `Use: function funcName(...): ReturnType { ... }`
+                        );
+                        console.log(`[LLM Assistant] Functions missing return types`);
+                      }
+                    }
+
+                    // Rule: Runtime validation with Zod for utility functions
+                    if (architectureRules.includes('Zod for all runtime validation')) {
+                      // Check for object parameters without validation
+                      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(generatedContent);
+                      const hasZodValidation = generatedContent.includes('z.parse') || generatedContent.includes('z.parseAsync');
+                      
+                      if (hasObjectParams && !hasZodValidation && !generatedContent.includes('z.object')) {
+                        validationErrors.push(
+                          `⚠️ Architecture rule: Functions accepting objects should validate input with Zod. ` +
+                          `Define schema: const schema = z.object({ ... }); ` +
+                          `Then validate: const validated = schema.parse(input);`
+                        );
+                        console.log(`[LLM Assistant] Object parameters without Zod validation`);
+                      }
+                    }
+
+                    // Rule: Zod validation
+                    if (architectureRules.includes('Zod') && generatedContent.includes('type ') && !generatedContent.includes('z.')) {
+                      validationErrors.push(
+                        `⚠️ Architecture rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+                        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+                      );
+                      console.log(`[LLM Assistant] Zod rule suggestion`);
+                    }
+                  }
+                  
+                  // Check 7: React Hook Form resolver pattern
+                  if ((generatedContent.includes('useForm') || generatedContent.includes('react-hook-form')) && generatedContent.includes('z.')) {
+                    if (generatedContent.includes('async') && generatedContent.includes('validate')) {
+                      validationErrors.push(`❌ Incorrect resolver: using manual async instead of zodResolver`);
+                    }
+                  }
+                  
+                  // Check 8: Typo @hookform/resolve
+                  if (generatedContent.includes('@hookform/resolve') && !generatedContent.includes('@hookform/resolvers')) {
+                    validationErrors.push(`❌ Typo: '@hookform/resolve' should be '@hookform/resolvers'`);
+                  }
+                  
+                  // Check 9: Unmatched braces
+                  const openBraces = (generatedContent.match(/{/g) || []).length;
+                  const closeBraces = (generatedContent.match(/}/g) || []).length;
+                  if (openBraces > closeBraces) {
+                    validationErrors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+                  }
+                  
+                  console.log(`[LLM Assistant] Validation complete - errors found: ${validationErrors.length}`);
+                  
+                  if (validationErrors.length > 0) {
+                    // VALIDATION FAILED
+                    console.log(`[LLM Assistant] VALIDATION FAILED:\n${validationErrors.join('\n')}`);
+                    
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      error: `❌ VALIDATION FAILED - Code cannot be written:\n${validationErrors.join('\n')}\n\nAttempting auto-correction...`,
+                      success: false,
+                    });
+                    
+                    // Attempt auto-correction
+                    const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${validationErrors.join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${relPath}. No explanations, no markdown. Start with code immediately.`;
+                    
+                    let correctedContent = '';
+                    if (isOllamaNonDefaultPort) {
+                      const fixResponse = await llmClient.sendMessage(fixPrompt);
+                      if (fixResponse.success) {
+                        correctedContent = fixResponse.message || '';
+                      }
+                    } else {
+                      const fixResponse = await llmClient.sendMessageStream(
+                        fixPrompt,
+                        async (token: string) => {
+                          correctedContent += token;
+                        }
+                      );
+                      if (!fixResponse.success) {
+                        throw new Error('Auto-correction failed');
+                      }
+                    }
+                    
+                    // Extract code from markdown if present
+                    const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                    if (codeBlockMatch) {
+                      correctedContent = codeBlockMatch[1];
+                    }
+                    
+                    // Re-validate corrected code (simplified check)
+                    const revalidationErrors: string[] = [];
+                    if (correctedContent.includes('```')) {
+                      revalidationErrors.push('Still has markdown backticks');
+                    }
+                    if ((correctedContent.match(/{/g) || []).length > (correctedContent.match(/}/g) || []).length) {
+                      revalidationErrors.push('Still has unmatched braces');
+                    }
+                    
+                    if (revalidationErrors.length > 0) {
+                      console.log(`[LLM Assistant] Auto-correction failed: ${revalidationErrors.join(', ')}`);
+                      
+                      chatPanel?.webview.postMessage({
+                        command: 'addMessage',
+                        error: `❌ Auto-correction incomplete:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
+                        success: false,
+                      });
+                      return;
+                    }
+                    
+                    // Auto-correction succeeded
+                    console.log(`[LLM Assistant] Auto-correction succeeded`);
+                    
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `✅ Auto-correction successful! Code now passes validation.`,
+                      success: true,
+                    });
+                    
+                    finalContent = correctedContent;
+                  } else {
+                    console.log(`[LLM Assistant] Validation PASSED - code is valid`);
+                  }
+                } else {
+                  console.log(`[LLM Assistant] Skipping validation - not a code file (${fileExtension})`);
+                }
+
+                // NOW safe to write (only reached if validation passed or non-code file)
                 const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
                 if (!wsFolder) {throw new Error('No workspace folder open. Open a folder in VS Code first to use /write command.');}
                 const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
@@ -307,10 +712,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   // Directory might already exist, that's ok
                 }
 
-                await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(generatedContent));
+                await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(finalContent));
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
-                  text: `✅ Successfully generated and wrote file: ${relPath}\n\n\`\`\`\n${generatedContent}\n\`\`\``,
+                  text: `✅ Successfully generated and wrote file: ${relPath}`,
                   success: true,
                 });
               } catch (err) {
@@ -802,11 +1207,18 @@ ${fileContent}
 /**
  * Extension activation
  */
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   console.log('LLM Local Assistant is now active!');
 
   // Initialize LLM client with config
   const config = getLLMConfig();
+
+  // Load architecture rules from .cursorrules if available
+  const rules = await loadArchitectureRules();
+  if (rules) {
+    config.architectureRules = rules;
+  }
+
   llmClient = new LLMClient(config);
 
   // Get workspace folder for codebase awareness

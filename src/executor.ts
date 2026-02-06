@@ -146,6 +146,368 @@ export class Executor {
    * Suggest fixes for common errors (Priority 1.4: Smart Error Fixes)
    * Provides helpful hints based on error type and context
    */
+  /**
+   * Validate generated TypeScript/JavaScript code
+   * Checks for:
+   * 1. TypeScript compilation errors (tsc --noEmit)
+   * 2. Architecture rule violations (pattern matching)
+   * 3. Missing imports or typos
+   *
+   * Returns validation result with errors found
+   */
+  private async validateGeneratedCode(
+    filePath: string,
+    content: string,
+    step: PlanStep
+  ): Promise<{ valid: boolean; errors?: string[] }> {
+    const errors: string[] = [];
+
+    // Check 1: Type validation (if TypeScript)
+    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
+      const typeErrors = this.validateTypes(content, filePath);
+      if (typeErrors.length > 0) {
+        errors.push(...typeErrors);
+      }
+    }
+
+    // Check 2: Architecture rule violations
+    const ruleErrors = await this.validateArchitectureRules(content);
+    if (ruleErrors.length > 0) {
+      errors.push(...ruleErrors);
+    }
+
+    // Check 3: Common patterns (imports, syntax)
+    const patternErrors = this.validateCommonPatterns(content, filePath);
+    if (patternErrors.length > 0) {
+      errors.push(...patternErrors);
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+
+  /**
+   * Validate TypeScript types (simple check, not full compilation)
+   */
+  private validateTypes(content: string, filePath: string): string[] {
+    const errors: string[] = [];
+
+    // CRITICAL: Check if content is documentation or markdown instead of code
+    if (content.includes('```') || content.match(/^```/m)) {
+      errors.push(
+        `❌ Code wrapped in markdown backticks. This is not valid TypeScript. ` +
+        `LLM provided markdown instead of raw code.`
+      );
+      return errors; // Stop validation, this is a critical error
+    }
+
+    if (content.includes('# Setup') || content.includes('## Installation') || content.includes('### Step')) {
+      errors.push(
+        `❌ Content appears to be documentation/tutorial instead of executable code. ` +
+        `No markdown, setup instructions, or step-by-step guides allowed.`
+      );
+      return errors;
+    }
+
+    // Check for multiple file references
+    const fileRefs = (content.match(/\/\/(.*\.(ts|tsx|js|json|yaml))/gi) || []).length;
+    if (fileRefs > 1) {
+      errors.push(
+        `❌ Multiple file references detected in single-file output. ` +
+        `This file should contain code for ${filePath.split('/').pop()} only, not instructions for other files.`
+      );
+      return errors;
+    }
+
+    // Check for common type issues
+    if (content.includes('export type LoginFormValues') || content.match(/export type \w+ = {/)) {
+      // Types might need validation, but let's check the content is valid TypeScript
+      if (!content.includes('export function') && !content.includes('export const')) {
+        errors.push(
+          `⚠️ This file only exports types but no components/hooks. ` +
+          `Make sure you're exporting the actual hook/component, not just types.`
+        );
+      }
+    }
+
+    // Pattern: any type usage (forbidden in strict projects)
+    if (content.includes(': any') || content.includes('as any')) {
+      errors.push(
+        `❌ Found 'any' type. Use specific types or 'unknown' with type guards instead. ` +
+        `Example: function process(data: unknown) { if (typeof data === 'string') { ... } }`
+      );
+    }
+
+    return errors;
+  }
+
+  /**
+   * Check generated code against architecture rules
+   */
+  private async validateArchitectureRules(content: string): Promise<string[]> {
+    const errors: string[] = [];
+
+    // Get architecture rules if available
+    const rules = this.config.llmClient && (this.config.llmClient as any).config?.architectureRules;
+    if (!rules) {
+      return errors; // No rules to validate against
+    }
+
+    // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
+    if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
+      errors.push(
+        `❌ Rule violation: Using direct fetch() instead of TanStack Query. ` +
+        `Use: const { data } = useQuery(...) or useMutation(...)`
+      );
+    }
+
+    // Check Rule: No Redux (should use Zustand)
+    if (rules.includes('Zustand') && content.includes('useSelector')) {
+      errors.push(
+        `❌ Rule violation: Using Redux (useSelector) instead of Zustand. ` +
+        `Use: const store = useStore() from your Zustand store`
+      );
+    }
+
+    // Check Rule: No class components
+    if (rules.includes('functional components') && content.includes('extends React.Component')) {
+      errors.push(
+        `❌ Rule violation: Using class component instead of functional component. ` +
+        `Convert to: export function ComponentName() { ... }`
+      );
+    }
+
+    // Check Rule: TypeScript strict mode - return types required
+    if (rules.includes('strict TypeScript') || rules.includes('Never use implicit types')) {
+      // Check for arrow functions without return type annotation
+      // Pattern: const funcName = (...) => { ... } without : Type
+      const arrowFunctionsWithoutReturnType = content.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
+      if (arrowFunctionsWithoutReturnType) {
+        errors.push(
+          `⚠️ Rule: TypeScript strict mode requires return type annotations. ` +
+          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
+        );
+      }
+
+      // Check for function declarations without return type
+      const functionsWithoutReturnType = content.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
+      if (functionsWithoutReturnType) {
+        functionsWithoutReturnType.forEach((func) => {
+          // Check if this specific function has a return type annotation
+          const funcName = func.match(/function\s+(\w+)/)?.[1];
+          if (funcName) {
+            const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*:\\s*\\w+`);
+            if (!funcRegex.test(content)) {
+              errors.push(
+                `⚠️ Function '${funcName}' missing return type annotation. ` +
+                `Use: function ${funcName}(...): ReturnType { ... }`
+              );
+            }
+          }
+        });
+      }
+    }
+
+    // Check Rule: Runtime validation with Zod for utility functions
+    if (rules.includes('Zod for all runtime validation')) {
+      // If file has function parameters that accept objects but no Zod validation
+      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(content);
+      const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
+      
+      if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
+        errors.push(
+          `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
+          `Example: const schema = z.object({ ... }); ` +
+          `Then: const validated = schema.parse(input);`
+        );
+      }
+    }
+
+    // Check Rule: Validation with Zod
+    if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
+      errors.push(
+        `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+      );
+    }
+
+    // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
+    if ((content.includes('useForm') || content.includes('react-hook-form')) && content.includes('z.')) {
+      if (content.includes('async') && content.includes('validate')) {
+        errors.push(
+          `❌ Incorrect resolver pattern: Using manual async validation instead of zodResolver. ` +
+          `Correct: import { zodResolver } from '@hookform/resolvers/zod'` +
+          `Then: useForm({ resolver: zodResolver(schema) })`
+        );
+      }
+    }
+
+    // PATTERN: Check for mixed resolver libraries
+    if ((content.includes('yupResolver') && content.includes('z.object')) || 
+        (content.includes('yupResolver') && content.includes('zod'))) {
+      errors.push(
+        `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
+        `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
+      );
+    }
+
+    return errors;
+  }
+
+  /**
+   * Validate common code patterns and syntax issues
+   */
+  private validateCommonPatterns(content: string, filePath: string): string[] {
+    const errors: string[] = [];
+
+    // Extract all imported items and namespaces
+    const importedItems = new Set<string>();
+    const importedNamespaces = new Set<string>();
+    
+    content.replace(/import\s+{([^}]+)}/g, (_, items) => {
+      items.split(',').forEach((item: string) => {
+        importedItems.add(item.trim());
+      });
+      return '';
+    });
+    
+    // Also capture namespace imports (import * as X)
+    content.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
+      importedNamespaces.add(namespace.trim());
+      return '';
+    });
+    
+    // And default imports
+    content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
+      importedNamespaces.add(name.trim());
+      return '';
+    });
+
+    // GENERIC NAMESPACE PATTERN DETECTOR
+    // Find all namespace.method() patterns and verify namespaces are imported
+    const namespaceUsages = new Set<string>();
+    content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+      // Skip common JavaScript globals
+      const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
+      if (!globalKeywords.includes(namespace)) {
+        namespaceUsages.add(namespace);
+      }
+      return '';
+    });
+    
+    // Check if all used namespaces are imported
+    Array.from(namespaceUsages).forEach((namespace) => {
+      if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
+        // This namespace is used but not imported
+        errors.push(
+          `❌ Missing import: '${namespace}' is used (${namespace}.something) but never imported. ` +
+          `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
+        );
+      }
+    });
+
+    // Pattern: React/useState without import
+    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState')) {
+      if (!content.includes("import { useState")) {
+        errors.push(
+          `❌ Missing import: useState is used but not imported. ` +
+          `Add: import { useState } from 'react'`
+        );
+      }
+    }
+
+    // Pattern: Missing closing tags/braces
+    const openBraces = (content.match(/{/g) || []).length;
+    const closeBraces = (content.match(/}/g) || []).length;
+    if (openBraces > closeBraces) {
+      errors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+    }
+
+    // Pattern: JSX without React import
+    if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && content.includes('<')) {
+      if (!importedItems.has('React') && !content.includes("import React")) {
+        // In newer React versions, this is optional, so just warn
+        errors.push(
+          `⚠️ Possible issue: JSX detected but no React import. ` +
+          `Modern React (17+) doesn't require this, but check your tsconfig.json`
+        );
+      }
+    }
+
+    // TYPO CHECK: @hookform/resolve vs @hookform/resolvers (common mistake)
+    if (content.includes('@hookform/resolve') && !content.includes('@hookform/resolvers')) {
+      errors.push(
+        `❌ Typo detected: '@hookform/resolve' is not a valid package. ` +
+        `Did you mean '@hookform/resolvers'? ` +
+        `Correct usage: import { zodResolver } from '@hookform/resolvers/zod'`
+      );
+    }
+
+    // IMPORT PATTERN: TanStack Query imports
+    if (content.includes('useQuery') || content.includes('useMutation')) {
+      if (!content.includes('@tanstack/react-query')) {
+        errors.push(
+          `❌ TanStack Query used but not imported correctly. ` +
+          `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
+        );
+      }
+    }
+
+    // IMPORT PATTERN: Zod imports
+    if (content.includes('z.') && !content.includes("import { z }") && !content.includes("import * as z")) {
+      errors.push(
+        `❌ Zod used (z.object, z.string, etc) but not imported. ` +
+        `Add: import { z } from 'zod'`
+      );
+    }
+
+    // UNUSED IMPORTS: Check for imported items that are never used
+    const unusedImports: string[] = [];
+    importedItems.forEach((item) => {
+      // Skip common React hooks that might be used indirectly
+      if (['React', 'Component'].includes(item)) return;
+      
+      // Check if this import is actually used in the code
+      // Pattern: used as identifier (standalone), not just in strings/comments
+      const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+      const usageMatches = content.match(usagePattern) || [];
+      
+      if (usageMatches.length === 0) {
+        unusedImports.push(item);
+      }
+    });
+    
+    if (unusedImports.length > 0) {
+      unusedImports.forEach((unused) => {
+        errors.push(
+          `⚠️ Unused import: '${unused}' is imported but never used. ` +
+          `Remove: import { ${unused} } from '...'`
+        );
+      });
+    }
+
+    // RETURN TYPE CHECK: Detect common functions with wrong return types
+    // JSON.stringify() always returns string, never null
+    if (content.includes('JSON.stringify') && content.includes(': string | null')) {
+      errors.push(
+        `⚠️ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
+        `Fix: Change return type to just 'string'`
+      );
+    }
+
+    // JSON.parse() can throw, but return type should reflect actual object type
+    if (content.includes('JSON.parse') && content.includes(': any')) {
+      errors.push(
+        `⚠️ Type issue: JSON.parse() result should not be 'any'. ` +
+        `Use a Zod schema or specific type instead of 'any'`
+      );
+    }
+
+    return errors;
+  }
+
   private suggestErrorFix(action: string, path: string, error: string): string | null {
     if (action === 'read' && error.includes('ENOENT')) {
       // File not found - suggest creating it or checking path
@@ -651,9 +1013,29 @@ export class Executor {
     const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
     
     if (isCodeFile) {
-      prompt = `${prompt}
+      prompt = `You are generating code for a SINGLE file: ${step.path}
 
-IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO comments, NO text outside the code. Start immediately with the code.`;
+${prompt}
+
+STRICT REQUIREMENTS:
+1. Output ONLY valid, executable code for this file
+2. NO markdown backticks, NO code blocks, NO explanations
+3. NO documentation, NO comments about what you're doing
+4. NO instructions for other files
+5. Start with the first line of code immediately
+6. End with the last line of code
+7. Every line must be syntactically valid for a ${fileExtension} file
+8. This code will be parsed as pure code - nothing else matters
+
+Example format (raw code, nothing else):
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({...});
+export function MyComponent() {...}
+
+Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
 
     // Emit that we're generating content
@@ -670,32 +1052,122 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
       // Extract content and clean up if it's code
       let content = response.message || '';
       
-      // If response contains markdown code blocks, extract the code
-      const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-      if (codeBlockMatch) {
-        content = codeBlockMatch[1];
-      } else if (isCodeFile) {
-        // For code files, try to extract just the code portion
-        // Remove common explanation patterns
+      // DETECTION: Check if LLM ignored instructions and provided markdown/documentation
+      const hasMarkdownBackticks = content.includes('```');
+      const hasExcessiveComments = (content.match(/^\/\//gm) || []).length > 5; // More than 5 comment lines at start
+      const hasMultipleFileInstructions = (content.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
+      const hasYAMLOrConfigMarkers = content.includes('---') || content.includes('package.json') || content.includes('tsconfig');
+      
+      if (hasMarkdownBackticks) {
+        // LLM wrapped code in markdown - extract it
+        const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+        if (codeBlockMatch) {
+          content = codeBlockMatch[1];
+        }
+      }
+      
+      if (isCodeFile && (hasExcessiveComments || hasMultipleFileInstructions || hasYAMLOrConfigMarkers)) {
+        // LLM provided documentation/setup instructions instead of just code
+        // This will be caught by validation as unparseable, triggering auto-fix
+        this.config.onMessage?.(
+          `⚠️ Warning: LLM provided documentation/setup instructions instead of executable code. Validation will catch this.`,
+          'info'
+        );
+      }
+      
+      // For code files, try to extract just the code portion
+      if (isCodeFile && !hasMarkdownBackticks) {
+        // Remove common explanation patterns (but preserve code)
         content = content
-          .replace(/^[\s\S]*?(?=^[/\*{<]|^[\w\-])/m, '') // Remove text before code starts
-          .replace(/\n\n[\s\S]*$/, '') // Remove trailing explanation
+          .replace(/^[\s\S]*?(?=^import|^export|^const|^function|^class|^interface|^type|^\/\/)/m, '') // Remove text before first code line
+          .replace(/\n\n\n[#\-\*\s]*Installation[\s\S]*?(?=\n\n|$)/i, '') // Remove Installation sections
+          .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '') // Remove Setup sections
           .trim();
       }
       
-      // Stream the generated content to callback
-      if (this.config.onStepOutput && content.length > 0) {
-        // Show first 200 chars as preview, or full content if shorter
-        const preview = content.length > 200 
-          ? `\`\`\`${fileExtension || ''}\n${content.substring(0, 200)}...\n\`\`\``
-          : `\`\`\`${fileExtension || ''}\n${content}\n\`\`\``;
+      // ============================================================================
+      // GATEKEEPER: Validate code BEFORE writing to disk
+      // LLM output is a PROPOSAL, not final. Must pass validation gates before committing.
+      // ============================================================================
+      
+      let finalContent = content;
+      
+      if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
+        this.config.onMessage?.(
+          `🔍 Validating ${step.path}...`,
+          'info'
+        );
+        
+        const validationResult = await this.validateGeneratedCode(step.path, content, step);
+        
+        if (!validationResult.valid && validationResult.errors) {
+          // ❌ VALIDATION FAILED - Cannot write
+          const errorList = validationResult.errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+          this.config.onMessage?.(
+            `❌ Validation failed for ${step.path}:\n${errorList}`,
+            'error'
+          );
+          
+          // Attempt auto-correction: send specific errors back to LLM
+          this.config.onMessage?.(
+            `🔧 Attempting auto-correction (sending errors to LLM for context-aware fix)...`,
+            'info'
+          );
+          
+          const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${validationResult.errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+          
+          const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+          
+          if (fixResponse.success) {
+            let correctedContent = fixResponse.message || '';
+            const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+            if (codeBlockMatch) {
+              correctedContent = codeBlockMatch[1];
+            }
+            
+            // Re-validate the corrected code
+            const secondValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            
+            if (secondValidation.valid) {
+              // ✅ Auto-correction succeeded - Use corrected content
+              this.config.onMessage?.(
+                `✅ Auto-correction successful! Code now passes all validation checks.`,
+                'info'
+              );
+              finalContent = correctedContent;
+            } else {
+              // ❌ Auto-correction failed - Show remaining issues
+              const remainingErrors = secondValidation.errors?.map((e, i) => `  ${i + 1}. ${e}`).join('\n') || 'Unknown errors';
+              this.config.onMessage?.(
+                `❌ Auto-correction incomplete. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
+                'error'
+              );
+              throw new Error(`Validation failed even after auto-correction.\n${remainingErrors}`);
+            }
+          } else {
+            throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+          }
+        } else {
+          // ✅ Validation passed
+          this.config.onMessage?.(
+            `✅ Validation passed for ${step.path}`,
+            'info'
+          );
+        }
+      }
+      
+      // Show preview of final (validated) content
+      if (this.config.onStepOutput && finalContent.length > 0) {
+        const preview = finalContent.length > 200 
+          ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
+          : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
         this.config.onStepOutput(step.stepId, preview, false);
       }
       
-      // Encode string to bytes
-      const bytes = new Uint8Array(content.length);
-      for (let i = 0; i < content.length; i++) {
-        bytes[i] = content.charCodeAt(i);
+      // NOW safe to write (only reached if validation passed or non-code file)
+      const bytes = new Uint8Array(finalContent.length);
+      for (let i = 0; i < finalContent.length; i++) {
+        bytes[i] = finalContent.charCodeAt(i);
       }
       
       await vscode.workspace.fs.writeFile(filePath, bytes);
