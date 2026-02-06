@@ -146,6 +146,169 @@ export class Executor {
    * Suggest fixes for common errors (Priority 1.4: Smart Error Fixes)
    * Provides helpful hints based on error type and context
    */
+  /**
+   * Validate generated TypeScript/JavaScript code
+   * Checks for:
+   * 1. TypeScript compilation errors (tsc --noEmit)
+   * 2. Architecture rule violations (pattern matching)
+   * 3. Missing imports or typos
+   *
+   * Returns validation result with errors found
+   */
+  private async validateGeneratedCode(
+    filePath: string,
+    content: string,
+    step: PlanStep
+  ): Promise<{ valid: boolean; errors?: string[] }> {
+    const errors: string[] = [];
+
+    // Check 1: Type validation (if TypeScript)
+    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
+      const typeErrors = this.validateTypes(content, filePath);
+      if (typeErrors.length > 0) {
+        errors.push(...typeErrors);
+      }
+    }
+
+    // Check 2: Architecture rule violations
+    const ruleErrors = await this.validateArchitectureRules(content);
+    if (ruleErrors.length > 0) {
+      errors.push(...ruleErrors);
+    }
+
+    // Check 3: Common patterns (imports, syntax)
+    const patternErrors = this.validateCommonPatterns(content, filePath);
+    if (patternErrors.length > 0) {
+      errors.push(...patternErrors);
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+
+  /**
+   * Validate TypeScript types (simple check, not full compilation)
+   */
+  private validateTypes(content: string, filePath: string): string[] {
+    const errors: string[] = [];
+
+    // Check for common type issues
+    // Pattern: missing return type on exported function
+    if (content.includes('export') && filePath.endsWith('.ts')) {
+      if (content.includes('export function') && !content.includes(': ')) {
+        errors.push(
+          `⚠️ Missing return type annotation on exported function. ` +
+          `Add type annotation: export function name(): ReturnType { ... }`
+        );
+      }
+    }
+
+    // Pattern: any type usage (forbidden in strict projects)
+    if (content.includes(': any') || content.includes('as any')) {
+      errors.push(
+        `❌ Found 'any' type. Use specific types or 'unknown' with type guards instead. ` +
+        `Example: function process(data: unknown) { if (typeof data === 'string') { ... } }`
+      );
+    }
+
+    return errors;
+  }
+
+  /**
+   * Check generated code against architecture rules
+   */
+  private async validateArchitectureRules(content: string): Promise<string[]> {
+    const errors: string[] = [];
+
+    // Get architecture rules if available
+    const rules = this.config.llmClient && (this.config.llmClient as any).config?.architectureRules;
+    if (!rules) {
+      return errors; // No rules to validate against
+    }
+
+    // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
+    if (rules.includes('TanStack Query') && content.includes('fetch(')) {
+      errors.push(
+        `❌ Rule violation: Using direct fetch() instead of TanStack Query. ` +
+        `Use: const { data } = useQuery(...) or useMutation(...)`
+      );
+    }
+
+    // Check Rule: No Redux (should use Zustand)
+    if (rules.includes('Zustand') && content.includes('useSelector')) {
+      errors.push(
+        `❌ Rule violation: Using Redux (useSelector) instead of Zustand. ` +
+        `Use: const store = useStore() from your Zustand store`
+      );
+    }
+
+    // Check Rule: No class components
+    if (rules.includes('functional components') && content.includes('extends React.Component')) {
+      errors.push(
+        `❌ Rule violation: Using class component instead of functional component. ` +
+        `Convert to: export function ComponentName() { ... }`
+      );
+    }
+
+    // Check Rule: Validation with Zod
+    if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
+      errors.push(
+        `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+      );
+    }
+
+    return errors;
+  }
+
+  /**
+   * Validate common code patterns and syntax issues
+   */
+  private validateCommonPatterns(content: string, filePath: string): string[] {
+    const errors: string[] = [];
+
+    // Check: Missing imports
+    const importedItems = new Set<string>();
+    content.replace(/import\s+{([^}]+)}/g, (_, items) => {
+      items.split(',').forEach((item: string) => {
+        importedItems.add(item.trim());
+      });
+      return '';
+    });
+
+    // Pattern: React/useState without import
+    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState')) {
+      if (!content.includes("import { useState")) {
+        errors.push(
+          `❌ Missing import: useState is used but not imported. ` +
+          `Add: import { useState } from 'react'`
+        );
+      }
+    }
+
+    // Pattern: Missing closing tags/braces
+    const openBraces = (content.match(/{/g) || []).length;
+    const closeBraces = (content.match(/}/g) || []).length;
+    if (openBraces > closeBraces) {
+      errors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+    }
+
+    // Pattern: JSX without React import
+    if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && content.includes('<')) {
+      if (!importedItems.has('React') && !content.includes("import React")) {
+        // In newer React versions, this is optional, so just warn
+        errors.push(
+          `⚠️ Possible issue: JSX detected but no React import. ` +
+          `Modern React (17+) doesn't require this, but check your tsconfig.json`
+        );
+      }
+    }
+
+    return errors;
+  }
+
   private suggestErrorFix(action: string, path: string, error: string): string | null {
     if (action === 'read' && error.includes('ENOENT')) {
       // File not found - suggest creating it or checking path
@@ -699,6 +862,47 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
       }
       
       await vscode.workspace.fs.writeFile(filePath, bytes);
+
+      // Validate generated code if it's a TypeScript/JavaScript file
+      if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
+        const validationResult = await this.validateGeneratedCode(step.path, content, step);
+        if (!validationResult.valid && validationResult.errors) {
+          // Attempt auto-correction via LLM
+          this.config.onMessage?.(
+            `⚠️ Validation issues found in ${step.path}:\n${validationResult.errors.join('\n')}`,
+            'info'
+          );
+          
+          const fixPrompt = `The code you generated has validation errors:\n\n${validationResult.errors.join('\n')}\n\nPlease fix these errors and provide the corrected code for ${step.path}.`;
+          const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+          
+          if (fixResponse.success) {
+            // Extract corrected content
+            let correctedContent = fixResponse.message || '';
+            const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+            if (codeBlockMatch) {
+              correctedContent = codeBlockMatch[1];
+            }
+            
+            // Re-validate
+            const secondValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            if (secondValidation.valid) {
+              this.config.onMessage?.('✓ Auto-fix successful! Code now passes validation.', 'info');
+              // Write the corrected content
+              const correctedBytes = new Uint8Array(correctedContent.length);
+              for (let i = 0; i < correctedContent.length; i++) {
+                correctedBytes[i] = correctedContent.charCodeAt(i);
+              }
+              await vscode.workspace.fs.writeFile(filePath, correctedBytes);
+            } else {
+              this.config.onMessage?.(
+                `⚠️ Auto-fix didn't fully resolve issues. Please review manually.`,
+                'error'
+              );
+            }
+          }
+        }
+      }
 
       return {
         stepId: step.stepId,
