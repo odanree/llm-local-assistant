@@ -2,13 +2,13 @@
 
 > ⚠️ **DOCUMENTATION CONSTRAINT**: The root directory contains a fixed set of documentation files: README.md, ROADMAP.md, ARCHITECTURE.md, PROJECT_STATUS.md, QUICK_REFERENCE.md, and CHANGELOG.md. No additional .md or .txt files should be created in root. Updates should be made to existing files or placed in `/docs/` if necessary.
 
-## Phase 3: Architecture Alignment - `.cursorrules` Injection
+## Phase 3: Architecture Alignment - `.lla-rules` Injection
 
-**NEW** (v1.3.0): The extension now supports project-specific architecture rules via `.cursorrules` files.
+**NEW** (v1.3.0): The extension now supports project-specific architecture rules via `.lla-rules` files.
 
 ### How It Works
 
-1. **Create `.cursorrules` in your project root** with team patterns:
+1. **Create `.lla-rules` in your project root** with team patterns:
 ```yaml
 - Use functional components only
 - Validate with Zod
@@ -22,19 +22,26 @@
 
 ### Example
 
-**Without `.cursorrules`** (LLM guesses):
+**Without `.lla-rules`** (LLM guesses):
 ```
 User: /write src/LoginForm.tsx
 LLM: Generates class component with useState + fetch
 Result: ❌ Doesn't match team patterns
 ```
 
-**With `.cursorrules`** (LLM follows rules):
+**With `.lla-rules`** (LLM follows rules):
 ```
 User: /write src/LoginForm.tsx
 LLM: Generates functional component with TanStack Query + Zod
 Result: ✅ Matches team patterns automatically
 ```
+
+### Migration Support
+
+If you have existing `.cursorrules` files, they'll still work as fallback:
+1. Extension checks for `.lla-rules` first (recommended)
+2. Falls back to `.cursorrules` if `.lla-rules` doesn't exist
+3. Smooth transition and multi-tool support
 
 ### Setup
 
