@@ -465,6 +465,39 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                   });
                   
+                  // Check for unused imports
+                  const unusedImports: string[] = [];
+                  importedItems.forEach((item) => {
+                    if (['React', 'Component'].includes(item)) return;
+                    const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+                    const usageMatches = generatedContent.match(usagePattern) || [];
+                    if (usageMatches.length === 0) {
+                      unusedImports.push(item);
+                    }
+                  });
+                  
+                  if (unusedImports.length > 0) {
+                    unusedImports.forEach((unused) => {
+                      validationErrors.push(
+                        `⚠️ Unused import: '${unused}' is imported but never used. Remove it.`
+                      );
+                    });
+                  }
+                  
+                  // Check for return type issues
+                  if (generatedContent.includes('JSON.stringify') && generatedContent.includes(': string | null')) {
+                    validationErrors.push(
+                      `⚠️ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
+                      `Fix: Change return type to just 'string'`
+                    );
+                  }
+                  
+                  if (generatedContent.includes('JSON.parse') && generatedContent.includes(': any')) {
+                    validationErrors.push(
+                      `⚠️ Type issue: JSON.parse() result should not be 'any'. Use a specific type.`
+                    );
+                  }
+                  
                   // Specific React Hook Form + Zod pattern check
                   if ((generatedContent.includes('useState') || generatedContent.includes('useEffect')) && !importedItems.has('useState')) {
                     if (!generatedContent.includes("import { useState")) {
