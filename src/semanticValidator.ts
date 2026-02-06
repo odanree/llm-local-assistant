@@ -101,6 +101,16 @@ export class SemanticValidator {
         if (path.isImportSpecifier() || path.isImportDeclaration()) {
           return;
         }
+        
+        // Skip variable/function/class declarations (they're not usages)
+        if (path.parent && (
+          t.isVariableDeclarator(path.parent) && path.parent.id === path.node ||
+          t.isFunctionDeclaration(path.parent) && path.parent.id === path.node ||
+          t.isClassDeclaration(path.parent) && path.parent.id === path.node
+        )) {
+          return;
+        }
+        
         if (path.node.name.startsWith('_')) {
           return; // Skip private/unused vars
         }
@@ -260,6 +270,7 @@ export class SemanticValidator {
 
   /**
    * Extract locally defined identifiers (const, let, var, function, class)
+   * Now includes function-scoped variables
    */
   private extractLocalDefinitions(ast: t.File): Set<string> {
     const definitions = new Set<string>();
@@ -274,6 +285,12 @@ export class SemanticValidator {
         if (path.node.id) {
           definitions.add(path.node.id.name);
         }
+        // Also collect parameters
+        path.node.params.forEach((param) => {
+          if (t.isIdentifier(param)) {
+            definitions.add(param.name);
+          }
+        });
       },
       ClassDeclaration(path) {
         if (path.node.id) {
@@ -281,10 +298,34 @@ export class SemanticValidator {
         }
       },
       ArrowFunctionExpression(path) {
+        // Collect parameters from arrow functions
+        path.node.params.forEach((param) => {
+          if (t.isIdentifier(param)) {
+            definitions.add(param.name);
+          }
+        });
         // Only if assigned: const foo = () => {}
         if (t.isVariableDeclarator(path.parent) && t.isIdentifier(path.parent.id)) {
           definitions.add(path.parent.id.name);
         }
+      },
+      FunctionExpression(path) {
+        // Collect parameters
+        path.node.params.forEach((param) => {
+          if (t.isIdentifier(param)) {
+            definitions.add(param.name);
+          }
+        });
+      },
+      ObjectProperty(path) {
+        // Object shorthand: { name } where name is a local binding
+        if (path.node.shorthand && t.isIdentifier(path.node.key)) {
+          definitions.add(path.node.key.name);
+        }
+      },
+      ImportSpecifier(path) {
+        // imported items are also "locally defined" in the module scope
+        definitions.add(path.node.local.name);
       }
     });
 
