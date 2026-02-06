@@ -316,13 +316,50 @@ export class Executor {
   private validateCommonPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
 
-    // Check: Missing imports
+    // Extract all imported items and namespaces
     const importedItems = new Set<string>();
+    const importedNamespaces = new Set<string>();
+    
     content.replace(/import\s+{([^}]+)}/g, (_, items) => {
       items.split(',').forEach((item: string) => {
         importedItems.add(item.trim());
       });
       return '';
+    });
+    
+    // Also capture namespace imports (import * as X)
+    content.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
+      importedNamespaces.add(namespace.trim());
+      return '';
+    });
+    
+    // And default imports
+    content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
+      importedNamespaces.add(name.trim());
+      return '';
+    });
+
+    // GENERIC NAMESPACE PATTERN DETECTOR
+    // Find all namespace.method() patterns and verify namespaces are imported
+    const namespaceUsages = new Set<string>();
+    content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+      // Skip common JavaScript globals
+      const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
+      if (!globalKeywords.includes(namespace)) {
+        namespaceUsages.add(namespace);
+      }
+      return '';
+    });
+    
+    // Check if all used namespaces are imported
+    Array.from(namespaceUsages).forEach((namespace) => {
+      if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
+        // This namespace is used but not imported
+        errors.push(
+          `❌ Missing import: '${namespace}' is used (${namespace}.something) but never imported. ` +
+          `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
+        );
+      }
     });
 
     // Pattern: React/useState without import
