@@ -484,19 +484,67 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                   }
                   
-                  // Check 6: React Hook Form resolver pattern
+                  // Check 6: Architecture rules validation (if .lla-rules loaded)
+                  const architectureRules = llmClient["config"]?.architectureRules || '';
+                  console.log(`[LLM Assistant] Architecture rules loaded: ${architectureRules.length > 0 ? 'YES' : 'NO'}`);
+                  
+                  if (architectureRules) {
+                    console.log(`[LLM Assistant] Checking architecture rules...`);
+                    
+                    // Rule: No direct fetch() when TanStack Query is rule
+                    if (architectureRules.includes('TanStack Query')) {
+                      // Check for various fetch patterns
+                      const hasFetch = /fetch\s*\(|await\s+fetch|fetch\s*\{/.test(generatedContent);
+                      if (hasFetch) {
+                        validationErrors.push(
+                          `❌ Architecture rule violation: Using direct fetch() instead of TanStack Query. ` +
+                          `Use: const { data } = useQuery(...) or useMutation(...)`
+                        );
+                        console.log(`[LLM Assistant] Fetch usage detected - rule violation`);
+                      }
+                    }
+                    
+                    // Rule: No Redux when Zustand is rule
+                    if (architectureRules.includes('Zustand') && generatedContent.includes('useSelector')) {
+                      validationErrors.push(
+                        `❌ Architecture rule violation: Using Redux (useSelector) instead of Zustand. ` +
+                        `Use: const store = useStore() from your Zustand store`
+                      );
+                      console.log(`[LLM Assistant] Redux usage detected - rule violation`);
+                    }
+                    
+                    // Rule: No class components
+                    if (architectureRules.includes('functional components') && generatedContent.includes('extends React.Component')) {
+                      validationErrors.push(
+                        `❌ Architecture rule violation: Using class component instead of functional component. ` +
+                        `Convert to: export function ComponentName() { ... }`
+                      );
+                      console.log(`[LLM Assistant] Class component detected - rule violation`);
+                    }
+                    
+                    // Rule: Zod validation
+                    if (architectureRules.includes('Zod') && generatedContent.includes('type ') && !generatedContent.includes('z.')) {
+                      validationErrors.push(
+                        `⚠️ Architecture rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+                        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+                      );
+                      console.log(`[LLM Assistant] Zod rule suggestion`);
+                    }
+                  }
+                  
+                  // Check 7: React Hook Form resolver pattern
                   if ((generatedContent.includes('useForm') || generatedContent.includes('react-hook-form')) && generatedContent.includes('z.')) {
                     if (generatedContent.includes('async') && generatedContent.includes('validate')) {
                       validationErrors.push(`❌ Incorrect resolver: using manual async instead of zodResolver`);
                     }
                   }
                   
-                  // Check 7: Typo @hookform/resolve
+                  // Check 8: Typo @hookform/resolve
                   if (generatedContent.includes('@hookform/resolve') && !generatedContent.includes('@hookform/resolvers')) {
                     validationErrors.push(`❌ Typo: '@hookform/resolve' should be '@hookform/resolvers'`);
                   }
                   
-                  // Check 8: Unmatched braces
+                  // Check 9: Unmatched braces
                   const openBraces = (generatedContent.match(/{/g) || []).length;
                   const closeBraces = (generatedContent.match(/}/g) || []).length;
                   if (openBraces > closeBraces) {
