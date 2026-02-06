@@ -522,6 +522,45 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       console.log(`[LLM Assistant] Class component detected - rule violation`);
                     }
                     
+                    // Rule: TypeScript strict mode - return types required
+                    if (architectureRules.includes('strict TypeScript') || architectureRules.includes('Never use implicit types')) {
+                      // Check for arrow functions without return type annotation
+                      const arrowFunctionsWithoutReturnType = generatedContent.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
+                      if (arrowFunctionsWithoutReturnType) {
+                        validationErrors.push(
+                          `⚠️ Architecture rule: TypeScript strict mode requires return type annotations. ` +
+                          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
+                        );
+                        console.log(`[LLM Assistant] Arrow functions missing return types`);
+                      }
+
+                      // Check for function declarations without return type
+                      const functionsWithoutReturnType = generatedContent.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
+                      if (functionsWithoutReturnType) {
+                        validationErrors.push(
+                          `⚠️ Architecture rule: Function declarations need return type annotations. ` +
+                          `Use: function funcName(...): ReturnType { ... }`
+                        );
+                        console.log(`[LLM Assistant] Functions missing return types`);
+                      }
+                    }
+
+                    // Rule: Runtime validation with Zod for utility functions
+                    if (architectureRules.includes('Zod for all runtime validation')) {
+                      // Check for object parameters without validation
+                      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(generatedContent);
+                      const hasZodValidation = generatedContent.includes('z.parse') || generatedContent.includes('z.parseAsync');
+                      
+                      if (hasObjectParams && !hasZodValidation && !generatedContent.includes('z.object')) {
+                        validationErrors.push(
+                          `⚠️ Architecture rule: Functions accepting objects should validate input with Zod. ` +
+                          `Define schema: const schema = z.object({ ... }); ` +
+                          `Then validate: const validated = schema.parse(input);`
+                        );
+                        console.log(`[LLM Assistant] Object parameters without Zod validation`);
+                      }
+                    }
+
                     // Rule: Zod validation
                     if (architectureRules.includes('Zod') && generatedContent.includes('type ') && !generatedContent.includes('z.')) {
                       validationErrors.push(
