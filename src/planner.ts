@@ -1,4 +1,5 @@
 import { LLMClient, LLMResponse } from './llmClient';
+import CodebaseIndex from './codebaseIndex';
 import * as vscode from 'vscode';
 
 /**
@@ -13,7 +14,8 @@ export interface PlanStep {
   command?: string;         // For /run operations
   prompt?: string;          // Optional prompt for write/suggestwrite
   description: string;      // Human-readable description
-  dependsOn?: number[];     // Step IDs this depends on (future)
+  dependsOn?: number[];     // Step IDs this depends on
+  codebaseContext?: string; // Context from /context for this step (Phase 3.3.2)
 }
 
 export interface TaskPlan {
@@ -36,9 +38,10 @@ export interface StepResult {
 
 export interface PlannerConfig {
   llmClient: LLMClient;
-  maxSteps?: number;       // Default: 10
-  timeout?: number;        // Default: 30000ms
-  workspace?: vscode.Uri;  // For codebase awareness (Priority 2.2)
+  maxSteps?: number;           // Default: 10
+  timeout?: number;            // Default: 30000ms
+  workspace?: vscode.Uri;      // For codebase awareness
+  codebaseIndex?: CodebaseIndex; // Phase 3.3.2: For dependency detection
 }
 
 export interface ConversationContext {
@@ -327,7 +330,7 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
       taskId: `task_${Date.now()}`,
       userRequest,
       generatedAt: new Date(),
-      steps,
+      steps: this.addContextToSteps(this.orderStepsByDependencies(steps)), // Phase 3.3.2: Add context & order by dependencies
       status: 'pending',
       currentStep: 0,
       results: new Map(),
@@ -507,6 +510,163 @@ Please generate a refined plan that addresses the feedback. Use the same JSON fo
       // Analysis failed, continue without it
       return '';
     }
+  }
+
+  /**
+   * Phase 3.3.2: Detect dependencies between plan steps
+   * Analyzes what files each step creates/uses to determine order
+   */
+  private detectStepDependencies(steps: PlanStep[]): PlanStep[] {
+    if (!this.config.codebaseIndex) {
+      return steps; // No codebase index, return as-is
+    }
+
+    const stepsWithDeps = steps.map(step => ({ ...step, dependsOn: [] as number[] }));
+
+    // For each step, check if it depends on files created by earlier steps
+    for (let i = 0; i < stepsWithDeps.length; i++) {
+      const currentStep = stepsWithDeps[i];
+      
+      // If this is a write step, check what it might import
+      if (currentStep.action === 'write' && currentStep.path) {
+        // Get similar files to understand the pattern
+        const dir = currentStep.path.split('/')[0];
+        const pattern = currentStep.path.split('/').pop()?.split('.')[0] || '';
+
+        // Find files this might depend on (e.g., hooks depend on schemas)
+        const schemaDependencies = stepsWithDeps.filter((s, idx) => 
+          idx < i && 
+          s.action === 'write' && 
+          s.path?.includes('schema')
+        );
+
+        const serviceDependencies = stepsWithDeps.filter((s, idx) =>
+          idx < i &&
+          s.action === 'write' &&
+          s.path?.includes('service')
+        );
+
+        // Hooks typically depend on schemas and services
+        if (dir.includes('hook')) {
+          currentStep.dependsOn = [
+            ...schemaDependencies.map(s => s.stepId),
+            ...serviceDependencies.map(s => s.stepId),
+          ];
+        }
+
+        // Services might depend on schemas
+        if (dir.includes('service')) {
+          currentStep.dependsOn = schemaDependencies.map(s => s.stepId);
+        }
+
+        // Components depend on hooks
+        if (dir.includes('component')) {
+          const hookDependencies = stepsWithDeps.filter((s, idx) =>
+            idx < i &&
+            s.action === 'write' &&
+            s.path?.includes('hook')
+          );
+          currentStep.dependsOn = hookDependencies.map(s => s.stepId);
+        }
+      }
+    }
+
+    return stepsWithDeps;
+  }
+
+  /**
+   * Phase 3.3.2: Order steps by dependencies (topological sort)
+   * Ensures files are created in dependency order
+   */
+  private orderStepsByDependencies(steps: PlanStep[]): PlanStep[] {
+    const stepsWithDeps = this.detectStepDependencies(steps);
+    const sorted: PlanStep[] = [];
+    const visited = new Set<number>();
+
+    const visit = (stepId: number) => {
+      if (visited.has(stepId)) return;
+      visited.add(stepId);
+
+      const step = stepsWithDeps.find(s => s.stepId === stepId);
+      if (!step) return;
+
+      // Visit dependencies first
+      step.dependsOn?.forEach(depId => visit(depId));
+
+      // Then add this step
+      sorted.push(step);
+    };
+
+    // Visit all steps
+    stepsWithDeps.forEach(step => visit(step.stepId));
+
+    // Renumber steps 1-N in new order
+    return sorted.map((step, idx) => ({
+      ...step,
+      stepId: idx + 1,
+    }));
+  }
+
+  /**
+   * Phase 3.3.2: Generate codebase context for a specific step
+   * Shows similar files and patterns to help LLM generate consistent code
+   */
+  private generateStepContext(step: PlanStep, allSteps: PlanStep[]): string {
+    if (!this.config.codebaseIndex) {
+      return '';
+    }
+
+    const context: string[] = [];
+
+    if (step.action === 'write' && step.path) {
+      const pathParts = step.path.split('/');
+      const filename = pathParts[pathParts.length - 1];
+      const purpose = pathParts[0]; // src/schemas/user.ts → schemas
+
+      // Find similar files
+      const similarFiles = this.config.codebaseIndex
+        .getFilesByPurpose(purpose.replace('s', '')) // schemas → schema
+        .slice(0, 2);
+
+      if (similarFiles.length > 0) {
+        context.push(`**Similar existing files:**`);
+        similarFiles.forEach(f => {
+          context.push(`- ${f.path} (patterns: ${f.patterns.join(', ')})`);
+        });
+      }
+
+      // Show dependency info
+      const deps = allSteps.filter(s => s.stepId !== step.stepId && s.action === 'write');
+      if (deps.length > 0) {
+        context.push(`\n**Files created in this plan before this step:**`);
+        deps.forEach(d => {
+          context.push(`- ${d.path}`);
+        });
+      }
+
+      // Show patterns used in project
+      const patterns = this.config.codebaseIndex.getPatterns();
+      const usedPatterns = Object.entries(patterns)
+        .filter(([_, info]) => info.count > 0)
+        .map(([pattern, _]) => pattern);
+
+      if (usedPatterns.length > 0) {
+        context.push(`\n**Patterns used in this project:**`);
+        context.push(usedPatterns.join(', '));
+      }
+    }
+
+    return context.length > 0 ? `\n\n${context.join('\n')}` : '';
+  }
+
+  /**
+   * Phase 3.3.2: Enhance plan steps with codebase context
+   */
+  private addContextToSteps(steps: PlanStep[]): PlanStep[] {
+    return steps.map(step => ({
+      ...step,
+      codebaseContext: this.generateStepContext(step, steps),
+    }));
   }
 
   /**

@@ -1384,6 +1384,7 @@ export async function activate(context: vscode.ExtensionContext) {
     maxSteps: 10,
     timeout: 120000, // Increased to 120s for longer-running planning operations
     workspace: wsFolder, // For codebase awareness (Priority 2.2)
+    codebaseIndex, // Phase 3.3.2: For dependency detection and context
   });
   
   const gitClient = wsFolder ? new GitClient(wsFolder) : undefined;
