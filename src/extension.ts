@@ -4,12 +4,14 @@ import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
 import { Planner } from './planner';
 import { Executor } from './executor';
+import CodebaseIndex from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
 import * as path from 'path';
 
 let llmClient: LLMClient;
 let planner: Planner;
 let executor: Executor;
+let codebaseIndex: CodebaseIndex;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -117,6 +119,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /plan <task> — Create a multi-step action plan\n` +
           `- /approve — Execute the current plan\n` +
           `- /reject — Discard the current plan\n\n` +
+          `📚 **Codebase Context:**\n` +
+          `- /context show structure — Show project file organization\n` +
+          `- /context show patterns — Show detected code patterns\n` +
+          `- /context show dependencies — Show file dependencies\n` +
+          `- /context find similar <file> — Find similar files\n\n` +
           `📄 **File Operations:**\n` +
           `- /read <path> — Read a file from workspace\n` +
           `- /write <path> <prompt> — Generate and write file content\n` +
@@ -727,6 +734,153 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
                   error: `Error writing file: ${relPath}\nReason: ${errorDetail}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /context command (Phase 3.3: Context Awareness)
+            const contextMatch = text.match(/^\/context\s+(.+)$/);
+
+            // AGENT MODE: /context <subcommand>
+            if (contextMatch) {
+              const subcommand = contextMatch[1].trim().toLowerCase();
+
+              try {
+                // Initialize codebase index if not already done
+                if (!codebaseIndex) {
+                  codebaseIndex = new CodebaseIndex(
+                    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+                  );
+                  
+                  chatPanel?.webview.postMessage({
+                    command: 'status',
+                    text: `📚 Scanning codebase...`,
+                    type: 'info',
+                  });
+
+                  await codebaseIndex.scan();
+
+                  chatPanel?.webview.postMessage({
+                    command: 'status',
+                    text: `✅ Codebase indexed`,
+                    type: 'info',
+                  });
+                }
+
+                let response = '';
+
+                if (subcommand.startsWith('show structure')) {
+                  // Show project file organization
+                  const files = codebaseIndex.getFilesByPurpose('schema')
+                    .concat(codebaseIndex.getFilesByPurpose('hook'))
+                    .concat(codebaseIndex.getFilesByPurpose('service'))
+                    .concat(codebaseIndex.getFilesByPurpose('component'));
+
+                  response = `# Project Structure\n\n`;
+                  
+                  const byPurpose = new Map<string, typeof files>();
+                  files.forEach(f => {
+                    if (!byPurpose.has(f.purpose)) {
+                      byPurpose.set(f.purpose, []);
+                    }
+                    byPurpose.get(f.purpose)!.push(f);
+                  });
+
+                  byPurpose.forEach((fileList, purpose) => {
+                    response += `## ${purpose.charAt(0).toUpperCase() + purpose.slice(1)}s (${fileList.length})\n`;
+                    fileList.forEach(f => {
+                      response += `- \`${f.path}\`\n`;
+                    });
+                    response += '\n';
+                  });
+
+                } else if (subcommand.startsWith('show patterns')) {
+                  // Show detected patterns
+                  const patterns = codebaseIndex.getPatterns();
+                  response = `# Detected Patterns\n\n`;
+
+                  Object.entries(patterns).forEach(([pattern, info]) => {
+                    if (info.count > 0) {
+                      response += `- **${pattern}** (${info.count} files)\n`;
+                    }
+                  });
+
+                } else if (subcommand.startsWith('show dependencies')) {
+                  // Show file dependencies
+                  response = `# File Dependencies\n\n`;
+                  const files = Array.from(
+                    new Set([
+                      ...codebaseIndex.getFilesByPurpose('hook'),
+                      ...codebaseIndex.getFilesByPurpose('service'),
+                      ...codebaseIndex.getFilesByPurpose('component'),
+                    ])
+                  );
+
+                  files.forEach(f => {
+                    const deps = codebaseIndex.getDependencies(f.path);
+                    if (deps.length > 0) {
+                      response += `**${f.path}**\n`;
+                      deps.forEach(dep => {
+                        response += `→ ${dep}\n`;
+                      });
+                      response += '\n';
+                    }
+                  });
+
+                  if (response === `# File Dependencies\n\n`) {
+                    response = `# File Dependencies\n\nNo explicit file dependencies detected.`;
+                  }
+
+                } else if (subcommand.startsWith('find similar')) {
+                  // Find similar files to a given pattern
+                  const parts = subcommand.split(/\s+/);
+                  const pattern = parts.slice(2).join(' ');
+
+                  if (!pattern) {
+                    response = `Usage: /context find similar <search-term>`;
+                  } else {
+                    // Search for files matching the pattern
+                    const allFiles = codebaseIndex.getFilesByPurpose('hook')
+                      .concat(codebaseIndex.getFilesByPurpose('service'));
+
+                    const matches = allFiles.filter(f =>
+                      f.path.toLowerCase().includes(pattern.toLowerCase()) ||
+                      f.patterns.some(p => p.toLowerCase().includes(pattern.toLowerCase()))
+                    );
+
+                    if (matches.length > 0) {
+                      response = `# Files Similar to "${pattern}"\n\n`;
+                      matches.slice(0, 5).forEach(f => {
+                        response += `- **${f.path}**\n`;
+                        response += `  Purpose: ${f.purpose}\n`;
+                        response += `  Patterns: ${f.patterns.join(', ')}\n\n`;
+                      });
+                    } else {
+                      response = `No files found matching "${pattern}"`;
+                    }
+                  }
+
+                } else {
+                  response = `Unknown /context subcommand: ${subcommand}\n\n` +
+                    `Available commands:\n` +
+                    `- /context show structure\n` +
+                    `- /context show patterns\n` +
+                    `- /context show dependencies\n` +
+                    `- /context find similar <term>`;
+                }
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: response,
+                  success: true,
+                });
+
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `/context error: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }
