@@ -307,9 +307,40 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
                 let generatedContent = '';
 
+                // GATEKEEPER: Build strict prompt for code generation
+                const fileExtension = relPath.split('.').pop()?.toLowerCase();
+                const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
+                
+                let finalPrompt = prompt;
+                if (isCodeFile) {
+                  finalPrompt = `You are generating code for a SINGLE file: ${relPath}
+
+${prompt}
+
+STRICT REQUIREMENTS:
+1. Output ONLY valid, executable code for this file
+2. NO markdown backticks, NO code blocks, NO explanations
+3. NO documentation, NO comments about what you're doing
+4. NO instructions for other files
+5. Start with the first line of code immediately
+6. End with the last line of code
+7. Every line must be syntactically valid for a ${fileExtension} file
+8. This code will be parsed as pure code - nothing else matters
+
+Example format (raw code, nothing else):
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({...});
+export function MyComponent() {...}
+
+Do NOT include: backticks, markdown, explanations, other files, instructions`;
+                }
+
                 if (isOllamaNonDefaultPort) {
                   // Use non-streaming response
-                  const response = await llmClient.sendMessage(prompt);
+                  const response = await llmClient.sendMessage(finalPrompt);
                   if (response.success) {
                     generatedContent = response.message || '';
                   } else {
@@ -318,7 +349,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 } else {
                   // Use streaming response - collect all tokens
                   const response = await llmClient.sendMessageStream(
-                    prompt,
+                    finalPrompt,
                     async (token: string, complete: boolean) => {
                       if (!complete && token) {
                         generatedContent += token;
@@ -330,7 +361,160 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   }
                 }
 
-                // Now write the generated content to file
+                // ============================================================================
+                // GATEKEEPER: VALIDATE CODE BEFORE WRITING TO DISK
+                // This is critical - LLM output is a PROPOSAL, not final
+                // ============================================================================
+                
+                let finalContent = generatedContent;
+                
+                if (isCodeFile) {
+                  // DETECTION: Check if LLM ignored instructions
+                  const hasMarkdownBackticks = generatedContent.includes('```');
+                  const hasExcessiveComments = (generatedContent.match(/^\/\//gm) || []).length > 5;
+                  const hasMultipleFileInstructions = (generatedContent.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
+                  const hasYAMLOrConfigMarkers = generatedContent.includes('---') || generatedContent.includes('package.json') || generatedContent.includes('tsconfig');
+                  
+                  if (hasMarkdownBackticks) {
+                    // Extract code from markdown
+                    const codeBlockMatch = generatedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                    if (codeBlockMatch) {
+                      finalContent = codeBlockMatch[1];
+                    }
+                  }
+                  
+                  // Remove documentation patterns
+                  if (!hasMarkdownBackticks) {
+                    finalContent = finalContent
+                      .replace(/^[\s\S]*?(?=^import|^export|^const|^function|^class|^interface|^type|^\/\/)/m, '')
+                      .replace(/\n\n\n[#\-\*\s]*Installation[\s\S]*?(?=\n\n|$)/i, '')
+                      .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '')
+                      .trim();
+                  }
+                  
+                  // VALIDATION CHECKS
+                  const validationErrors: string[] = [];
+                  
+                  // Check 1: Markdown wrapped code
+                  if (generatedContent.includes('```') || generatedContent.match(/^```/m)) {
+                    validationErrors.push(`❌ Code wrapped in markdown backticks - not valid ${fileExtension}`);
+                  }
+                  
+                  // Check 2: Documentation instead of code
+                  if (generatedContent.includes('# Setup') || generatedContent.includes('## Installation') || generatedContent.includes('### Step')) {
+                    validationErrors.push(`❌ Content is documentation/tutorial instead of executable code`);
+                  }
+                  
+                  // Check 3: Multiple file references
+                  const fileRefs = (generatedContent.match(/\/\/(.*\.(ts|tsx|js|json|yaml))/gi) || []).length;
+                  if (fileRefs > 1) {
+                    validationErrors.push(`❌ Multiple file references - should only generate ${relPath}`);
+                  }
+                  
+                  // Check 4: any type
+                  if (generatedContent.includes(': any') || generatedContent.includes('as any')) {
+                    validationErrors.push(`❌ Found 'any' type - use specific types or 'unknown'`);
+                  }
+                  
+                  // Check 5: Missing imports
+                  if ((generatedContent.includes('useState') || generatedContent.includes('useEffect')) && !generatedContent.includes("import { useState")) {
+                    validationErrors.push(`❌ Missing React import: useState is used but not imported`);
+                  }
+                  
+                  if (generatedContent.includes('useQuery') || generatedContent.includes('useMutation')) {
+                    if (!generatedContent.includes('@tanstack/react-query')) {
+                      validationErrors.push(`❌ TanStack Query used but not imported from @tanstack/react-query`);
+                    }
+                  }
+                  
+                  if (generatedContent.includes('z.') && !generatedContent.includes("import { z }") && !generatedContent.includes("import * as z")) {
+                    validationErrors.push(`❌ Zod used (z.object, z.string) but not imported`);
+                  }
+                  
+                  // Check 6: React Hook Form resolver pattern
+                  if ((generatedContent.includes('useForm') || generatedContent.includes('react-hook-form')) && generatedContent.includes('z.')) {
+                    if (generatedContent.includes('async') && generatedContent.includes('validate')) {
+                      validationErrors.push(`❌ Incorrect resolver: using manual async instead of zodResolver`);
+                    }
+                  }
+                  
+                  // Check 7: Typo @hookform/resolve
+                  if (generatedContent.includes('@hookform/resolve') && !generatedContent.includes('@hookform/resolvers')) {
+                    validationErrors.push(`❌ Typo: '@hookform/resolve' should be '@hookform/resolvers'`);
+                  }
+                  
+                  // Check 8: Unmatched braces
+                  const openBraces = (generatedContent.match(/{/g) || []).length;
+                  const closeBraces = (generatedContent.match(/}/g) || []).length;
+                  if (openBraces > closeBraces) {
+                    validationErrors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+                  }
+                  
+                  if (validationErrors.length > 0) {
+                    // VALIDATION FAILED
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      error: `❌ VALIDATION FAILED - Code cannot be written:\n${validationErrors.join('\n')}\n\nAttempting auto-correction...`,
+                      success: false,
+                    });
+                    
+                    // Attempt auto-correction
+                    const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${validationErrors.join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${relPath}. No explanations, no markdown. Start with code immediately.`;
+                    
+                    let correctedContent = '';
+                    if (isOllamaNonDefaultPort) {
+                      const fixResponse = await llmClient.sendMessage(fixPrompt);
+                      if (fixResponse.success) {
+                        correctedContent = fixResponse.message || '';
+                      }
+                    } else {
+                      const fixResponse = await llmClient.sendMessageStream(
+                        fixPrompt,
+                        async (token: string) => {
+                          correctedContent += token;
+                        }
+                      );
+                      if (!fixResponse.success) {
+                        throw new Error('Auto-correction failed');
+                      }
+                    }
+                    
+                    // Extract code from markdown if present
+                    const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                    if (codeBlockMatch) {
+                      correctedContent = codeBlockMatch[1];
+                    }
+                    
+                    // Re-validate corrected code (simplified check)
+                    const revalidationErrors: string[] = [];
+                    if (correctedContent.includes('```')) {
+                      revalidationErrors.push('Still has markdown backticks');
+                    }
+                    if ((correctedContent.match(/{/g) || []).length > (correctedContent.match(/}/g) || []).length) {
+                      revalidationErrors.push('Still has unmatched braces');
+                    }
+                    
+                    if (revalidationErrors.length > 0) {
+                      chatPanel?.webview.postMessage({
+                        command: 'addMessage',
+                        error: `❌ Auto-correction incomplete:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
+                        success: false,
+                      });
+                      return;
+                    }
+                    
+                    // Auto-correction succeeded
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `✅ Auto-correction successful! Code now passes validation.`,
+                      success: true,
+                    });
+                    
+                    finalContent = correctedContent;
+                  }
+                }
+
+                // NOW safe to write (only reached if validation passed or non-code file)
                 const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
                 if (!wsFolder) {throw new Error('No workspace folder open. Open a folder in VS Code first to use /write command.');}
                 const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
@@ -343,10 +527,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   // Directory might already exist, that's ok
                 }
 
-                await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(generatedContent));
+                await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(finalContent));
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
-                  text: `✅ Successfully generated and wrote file: ${relPath}\n\n\`\`\`\n${generatedContent}\n\`\`\``,
+                  text: `✅ Successfully generated and wrote file: ${relPath}`,
                   success: true,
                 });
               } catch (err) {
