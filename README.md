@@ -2,19 +2,27 @@
 
 A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
-> **Latest Release**: v1.2.5 - Marketplace Documentation Sync 📚  
-> **New**: v1.2.3 AI Agent Safety & Write Protection 🔒  
+> **Latest Release**: v1.3.0 - Architecture Alignment & .cursorrules Support 🏗️  
+> **Previous**: v1.2.5 - Marketplace Documentation Sync 📚  
+> **NEW**: v1.2.3 AI Agent Safety & Write Protection 🔒  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Key Features
 
-**🧠 Autonomous Planning** (Phase 2 - NEW!)
+**🏗️ Architecture Rules** (Phase 3 - NEW in v1.3.0!)
+- Define project patterns in `.cursorrules` file
+- Automatically injected into LLM system prompt
+- All generated code follows your team's patterns
+- No manual guidance needed per request
+- See `docs/CURSORRULES_EXAMPLE.md` for setup
+
+**🧠 Autonomous Planning** (Phase 2)
 - Break complex tasks into structured multi-step plans
 - Review plans before execution
 - Automatic error recovery with retry logic
-- Interactive confirmation for risky operations (v1.2.2)
-- Protection against overwriting critical config files (v1.2.2)
-- AI-powered write safety with user approval (v1.2.3)
+- Interactive confirmation for risky operations
+- Protection against overwriting critical config files
+- AI-powered write safety with user approval
 
 **🤖 Agent Mode Commands**
 - `/plan <task>` - Generate multi-step action plans with LLM
@@ -24,8 +32,8 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - `/write <path>` - Generate and write file content
 - `/git-commit-msg` - Generate conventional commit messages
 - `/git-review` - AI-powered code review of staged changes
-- `/explain <path>` - Analyze and explain code (NEW in v1.2.0)
-- **Auto-Correction** - LLM suggestions for command mistakes (NEW in v1.2.0)
+- `/explain <path>` - Analyze and explain code
+- **Auto-Correction** - LLM suggestions for command mistakes
 
 **💻 Local & Private**
 - 🔒 Works with Ollama, LM Studio, vLLM - no external APIs
@@ -36,18 +44,22 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ## 📊 Project Status & Version History
 
-### Latest: v1.2.5 (January 2026) - Marketplace Documentation Sync 📚
+### Latest: v1.3.0 (February 2026) - Architecture Alignment & .cursorrules Support 🏗️
+
+**v1.3.0 Changes:**
+- ✅ **Architecture Rules** - Support for `.cursorrules` files with automatic injection
+- ✅ **Project Patterns** - LLM learns and follows team-specific code patterns
+- ✅ **Reduced Guidance** - Generated code matches patterns without per-request prompting
+- ✅ **Example Rules** - `docs/CURSORRULES_EXAMPLE.md` with React/Node.js patterns
+
+### Previous: v1.2.5 (January 2026) - Marketplace Documentation Sync 📚
 
 **v1.2.5 Changes:**
 - ✅ **Marketplace Sync** - Removed personal narrative from marketplace description
-- ✅ **Professional Focus** - README maintains technical focus, personal story moved to LinkedIn
-- ✅ **Clean Documentation** - Consistent messaging across all channels
+- ✅ **Professional Focus** - README maintains technical focus
+- ✅ **Clean Documentation** - Consistent messaging across channels
 
-### Previous: v1.2.4 (January 2026) - Documentation Update 📚
-
-**v1.2.4 Changes:**
-- ✅ **Updated README** - Added v1.2.3 release information and features
-- ✅ **Feature Documentation** - Write safety capabilities highlighted
+[Rest of existing content...]
 
 ### Archive: v1.2.3 (January 2026) - AI Agent Safety & Write Protection 🔒
 

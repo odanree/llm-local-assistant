@@ -17,6 +17,37 @@ let messageHandlerAttached = false; // Track if message handler is already attac
 let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
 
 /**
+ * Load architecture rules from .cursorrules file in workspace root
+ * @returns Rules content if file exists, undefined otherwise
+ */
+async function loadArchitectureRules(): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+
+  const workspace = folders[0];
+
+  // Try common rule file names
+  for (const filename of ['.cursorrules', '.llmrules', '.codeassistntrules']) {
+    try {
+      const rulesUri = vscode.Uri.joinPath(workspace.uri, filename);
+      const content = await vscode.workspace.fs.readFile(rulesUri);
+      const text = new TextDecoder().decode(content);
+
+      console.log(`✓ Loaded ${filename} from workspace`);
+      return text;
+    } catch (error) {
+      // File doesn't exist, try next
+      continue;
+    }
+  }
+
+  // No rules file found
+  return undefined;
+}
+
+/**
  * Get LLM configuration from VS Code settings
  */
 function getLLMConfig(): LLMConfig {
@@ -802,11 +833,18 @@ ${fileContent}
 /**
  * Extension activation
  */
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   console.log('LLM Local Assistant is now active!');
 
   // Initialize LLM client with config
   const config = getLLMConfig();
+
+  // Load architecture rules from .cursorrules if available
+  const rules = await loadArchitectureRules();
+  if (rules) {
+    config.architectureRules = rules;
+  }
+
   llmClient = new LLMClient(config);
 
   // Get workspace folder for codebase awareness

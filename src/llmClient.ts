@@ -34,6 +34,7 @@ export interface LLMConfig {
   maxTokens: number;
   timeout: number;
   stream?: boolean;
+  architectureRules?: string; // Project-specific rules (.cursorrules content)
 }
 
 export interface LLMResponse {
@@ -51,6 +52,31 @@ export class LLMClient {
 
   constructor(config: LLMConfig) {
     this.config = config;
+  }
+
+  /**
+   * Build messages array with system prompt injection (architecture rules)
+   * @param userMessage The user's current message
+   * @returns Messages array with optional system message if rules exist
+   */
+  private buildMessagesWithSystemPrompt(userMessage: string): Array<{ role: string; content: string }> {
+    const messages: Array<{ role: string; content: string }> = [];
+
+    // Inject system prompt with architecture rules if available
+    if (this.config.architectureRules) {
+      messages.push({
+        role: 'system',
+        content: `You are a VS Code AI assistant for code generation and planning. Follow the project's architecture rules and patterns.\n\n## PROJECT ARCHITECTURE RULES\n${this.config.architectureRules}`,
+      });
+    }
+
+    // Add conversation history (user/assistant pairs)
+    messages.push(...this.conversationHistory);
+
+    // Add current user message
+    messages.push({ role: 'user', content: userMessage });
+
+    return messages;
   }
 
   /**
@@ -85,11 +111,11 @@ export class LLMClient {
       // Add user message to history
       this.conversationHistory.push({ role: 'user', content: userMessage });
 
-      // Prepare request
+      // Prepare request with system prompt injection
       const endpoint = `${this.config.endpoint}/v1/chat/completions`;
       const payload = {
         model: this.config.model,
-        messages: this.conversationHistory,
+        messages: this.buildMessagesWithSystemPrompt(userMessage),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         stream: true,
@@ -187,11 +213,11 @@ export class LLMClient {
       // Add user message to history
       this.conversationHistory.push({ role: 'user', content: userMessage });
 
-      // Prepare request
+      // Prepare request with system prompt injection
       const endpoint = `${this.config.endpoint}/v1/chat/completions`;
       const payload = {
         model: this.config.model,
-        messages: this.conversationHistory,
+        messages: this.buildMessagesWithSystemPrompt(userMessage),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         stream: false,

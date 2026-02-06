@@ -303,4 +303,35 @@ describe('LLMClient', () => {
       expect(custom).toBeDefined();
     });
   });
+
+  describe('Architecture Rules (.cursorrules)', () => {
+    it('should accept architectureRules in config', () => {
+      const rulesConfig: LLMConfig = {
+        ...mockConfig,
+        architectureRules: 'Use functional components only',
+      };
+      const rulesClient = new LLMClient(rulesConfig);
+      expect(rulesClient).toBeDefined();
+    });
+
+    it('should handle empty architecture rules', () => {
+      const emptyRulesConfig: LLMConfig = {
+        ...mockConfig,
+        architectureRules: '',
+      };
+      const emptyClient = new LLMClient(emptyRulesConfig);
+      expect(emptyClient).toBeDefined();
+    });
+
+    it('should work with or without architecture rules', () => {
+      const withRules = new LLMClient({
+        ...mockConfig,
+        architectureRules: 'Test rule',
+      });
+      const withoutRules = new LLMClient(mockConfig);
+
+      expect(withRules).toBeDefined();
+      expect(withoutRules).toBeDefined();
+    });
+  });
 });
