@@ -194,13 +194,40 @@ export class Executor {
   private validateTypes(content: string, filePath: string): string[] {
     const errors: string[] = [];
 
+    // CRITICAL: Check if content is documentation or markdown instead of code
+    if (content.includes('```') || content.match(/^```/m)) {
+      errors.push(
+        `❌ Code wrapped in markdown backticks. This is not valid TypeScript. ` +
+        `LLM provided markdown instead of raw code.`
+      );
+      return errors; // Stop validation, this is a critical error
+    }
+
+    if (content.includes('# Setup') || content.includes('## Installation') || content.includes('### Step')) {
+      errors.push(
+        `❌ Content appears to be documentation/tutorial instead of executable code. ` +
+        `No markdown, setup instructions, or step-by-step guides allowed.`
+      );
+      return errors;
+    }
+
+    // Check for multiple file references
+    const fileRefs = (content.match(/\/\/(.*\.(ts|tsx|js|json|yaml))/gi) || []).length;
+    if (fileRefs > 1) {
+      errors.push(
+        `❌ Multiple file references detected in single-file output. ` +
+        `This file should contain code for ${filePath.split('/').pop()} only, not instructions for other files.`
+      );
+      return errors;
+    }
+
     // Check for common type issues
-    // Pattern: missing return type on exported function
-    if (content.includes('export') && filePath.endsWith('.ts')) {
-      if (content.includes('export function') && !content.includes(': ')) {
+    if (content.includes('export type LoginFormValues') || content.match(/export type \w+ = {/)) {
+      // Types might need validation, but let's check the content is valid TypeScript
+      if (!content.includes('export function') && !content.includes('export const')) {
         errors.push(
-          `⚠️ Missing return type annotation on exported function. ` +
-          `Add type annotation: export function name(): ReturnType { ... }`
+          `⚠️ This file only exports types but no components/hooks. ` +
+          `Make sure you're exporting the actual hook/component, not just types.`
         );
       }
     }
@@ -257,6 +284,26 @@ export class Executor {
       errors.push(
         `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
         `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+      );
+    }
+
+    // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
+    if ((content.includes('useForm') || content.includes('react-hook-form')) && content.includes('z.')) {
+      if (content.includes('async') && content.includes('validate')) {
+        errors.push(
+          `❌ Incorrect resolver pattern: Using manual async validation instead of zodResolver. ` +
+          `Correct: import { zodResolver } from '@hookform/resolvers/zod'` +
+          `Then: useForm({ resolver: zodResolver(schema) })`
+        );
+      }
+    }
+
+    // PATTERN: Check for mixed resolver libraries
+    if ((content.includes('yupResolver') && content.includes('z.object')) || 
+        (content.includes('yupResolver') && content.includes('zod'))) {
+      errors.push(
+        `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
+        `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
       );
     }
 
@@ -841,9 +888,29 @@ export class Executor {
     const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
     
     if (isCodeFile) {
-      prompt = `${prompt}
+      prompt = `You are generating code for a SINGLE file: ${step.path}
 
-IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO comments, NO text outside the code. Start immediately with the code.`;
+${prompt}
+
+STRICT REQUIREMENTS:
+1. Output ONLY valid, executable code for this file
+2. NO markdown backticks, NO code blocks, NO explanations
+3. NO documentation, NO comments about what you're doing
+4. NO instructions for other files
+5. Start with the first line of code immediately
+6. End with the last line of code
+7. Every line must be syntactically valid for a ${fileExtension} file
+8. This code will be parsed as pure code - nothing else matters
+
+Example format (raw code, nothing else):
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const schema = z.object({...});
+export function MyComponent() {...}
+
+Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
 
     // Emit that we're generating content
@@ -860,16 +927,36 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
       // Extract content and clean up if it's code
       let content = response.message || '';
       
-      // If response contains markdown code blocks, extract the code
-      const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-      if (codeBlockMatch) {
-        content = codeBlockMatch[1];
-      } else if (isCodeFile) {
-        // For code files, try to extract just the code portion
-        // Remove common explanation patterns
+      // DETECTION: Check if LLM ignored instructions and provided markdown/documentation
+      const hasMarkdownBackticks = content.includes('```');
+      const hasExcessiveComments = (content.match(/^\/\//gm) || []).length > 5; // More than 5 comment lines at start
+      const hasMultipleFileInstructions = (content.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
+      const hasYAMLOrConfigMarkers = content.includes('---') || content.includes('package.json') || content.includes('tsconfig');
+      
+      if (hasMarkdownBackticks) {
+        // LLM wrapped code in markdown - extract it
+        const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+        if (codeBlockMatch) {
+          content = codeBlockMatch[1];
+        }
+      }
+      
+      if (isCodeFile && (hasExcessiveComments || hasMultipleFileInstructions || hasYAMLOrConfigMarkers)) {
+        // LLM provided documentation/setup instructions instead of just code
+        // This will be caught by validation as unparseable, triggering auto-fix
+        this.config.onMessage?.(
+          `⚠️ Warning: LLM provided documentation/setup instructions instead of executable code. Validation will catch this.`,
+          'info'
+        );
+      }
+      
+      // For code files, try to extract just the code portion
+      if (isCodeFile && !hasMarkdownBackticks) {
+        // Remove common explanation patterns (but preserve code)
         content = content
-          .replace(/^[\s\S]*?(?=^[/\*{<]|^[\w\-])/m, '') // Remove text before code starts
-          .replace(/\n\n[\s\S]*$/, '') // Remove trailing explanation
+          .replace(/^[\s\S]*?(?=^import|^export|^const|^function|^class|^interface|^type|^\/\/)/m, '') // Remove text before first code line
+          .replace(/\n\n\n[#\-\*\s]*Installation[\s\S]*?(?=\n\n|$)/i, '') // Remove Installation sections
+          .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '') // Remove Setup sections
           .trim();
       }
       
