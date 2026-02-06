@@ -10,10 +10,11 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 ## ✨ Key Features
 
 **🏗️ Architecture Rules** (Phase 3 - NEW in v1.3.0!)
-- Define project patterns in `.cursorrules` file
+- Define project patterns in `.lla-rules` file
 - Automatically injected into LLM system prompt
 - All generated code follows your team's patterns
 - No manual guidance needed per request
+- Supports `.cursorrules` as fallback (Cursor IDE compatibility)
 - See `docs/CURSORRULES_EXAMPLE.md` for setup
 
 **🧠 Autonomous Planning** (Phase 2)
@@ -44,10 +45,12 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ## 📊 Project Status & Version History
 
-### Latest: v1.3.0 (February 2026) - Architecture Alignment & .cursorrules Support 🏗️
+### Latest: v1.3.0 (February 2026) - Architecture Alignment & .lla-rules Support 🏗️
 
 **v1.3.0 Changes:**
-- ✅ **Architecture Rules** - Support for `.cursorrules` files with automatic injection
+- ✅ **Architecture Rules** - Support for `.lla-rules` files with automatic injection
+- ✅ **Primary Naming** - Uses `.lla-rules` (LLM Local Assistant) to avoid tool clashes
+- ✅ **Migration Support** - Falls back to `.cursorrules` for Cursor IDE compatibility
 - ✅ **Project Patterns** - LLM learns and follows team-specific code patterns
 - ✅ **Reduced Guidance** - Generated code matches patterns without per-request prompting
 - ✅ **Example Rules** - `docs/CURSORRULES_EXAMPLE.md` with React/Node.js patterns

@@ -17,7 +17,8 @@ let messageHandlerAttached = false; // Track if message handler is already attac
 let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
 
 /**
- * Load architecture rules from .cursorrules file in workspace root
+ * Load architecture rules from workspace root
+ * Checks in priority order: .lla-rules (primary) → .cursorrules (migration/fallback)
  * @returns Rules content if file exists, undefined otherwise
  */
 async function loadArchitectureRules(): Promise<string | undefined> {
@@ -28,8 +29,12 @@ async function loadArchitectureRules(): Promise<string | undefined> {
 
   const workspace = folders[0];
 
-  // Try common rule file names
-  for (const filename of ['.cursorrules', '.llmrules', '.codeassistntrules']) {
+  // Priority order:
+  // 1. .lla-rules (LLM Local Assistant - primary)
+  // 2. .cursorrules (Cursor IDE - fallback/migration support)
+  const filenames = ['.lla-rules', '.cursorrules'];
+
+  for (const filename of filenames) {
     try {
       const rulesUri = vscode.Uri.joinPath(workspace.uri, filename);
       const content = await vscode.workspace.fs.readFile(rulesUri);
