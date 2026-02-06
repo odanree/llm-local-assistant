@@ -9,13 +9,21 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ## ✨ Key Features
 
-**🏗️ Architecture Rules** (Phase 3 - NEW in v1.3.0!)
+**🏗️ Architecture Rules** (Phase 3.1 - v1.3.0)
 - Define project patterns in `.lla-rules` file
 - Automatically injected into LLM system prompt
 - All generated code follows your team's patterns
 - No manual guidance needed per request
 - Supports `.cursorrules` as fallback (Cursor IDE compatibility)
 - See `docs/CURSORRULES_EXAMPLE.md` for setup
+
+**🔍 Semantic Code Search** (Phase 3.2 - NEW in v1.3.1!)
+- Index workspace with one command
+- Search code semantically: "Where's auth logic?" "API endpoints?"
+- Offline-first: no cloud APIs, 100% local
+- <10ms queries, HNSW vector indexing
+- Auto-integrate with `/plan` and `/write` commands
+- Find where to write code, not just how to write it
 
 **🧠 Autonomous Planning** (Phase 2)
 - Break complex tasks into structured multi-step plans

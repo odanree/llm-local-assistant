@@ -4,6 +4,7 @@ import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
 import { Planner } from './planner';
 import { Executor } from './executor';
+import { getVectorDB } from './vectorDB';
 import { getWebviewContent } from './webviewContent';
 import * as path from 'path';
 
@@ -941,7 +942,109 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  context.subscriptions.push(openChatCommand, testConnectionCommand);
+  const indexWorkspaceCommand = vscode.commands.registerCommand('llm-local-assistant.indexWorkspace', async () => {
+    const vectorDB = getVectorDB();
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Indexing workspace for semantic search...',
+          cancellable: false,
+        },
+        async (progress) => {
+          await vectorDB.indexWorkspace();
+          const stats = vectorDB.getStats();
+          vscode.window.showInformationMessage(
+            `✓ Indexed ${stats.embeddingsCount} code embeddings from ${stats.filesIndexed} files`
+          );
+        }
+      );
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to index workspace: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  const contextSearchCommand = vscode.commands.registerCommand('llm-local-assistant.context', async () => {
+    const vectorDB = getVectorDB();
+
+    // Check if indexed
+    if (!vectorDB.isReady()) {
+      const response = await vscode.window.showInformationMessage(
+        'Workspace not yet indexed for semantic search. Index now?',
+        'Yes',
+        'Cancel'
+      );
+
+      if (response === 'Yes') {
+        await vscode.commands.executeCommand('llm-local-assistant.indexWorkspace');
+      } else {
+        return;
+      }
+    }
+
+    // Get search query from user
+    const query = await vscode.window.showInputBox({
+      placeHolder: 'What code are you looking for? (e.g., "authentication logic", "API routes")',
+      title: 'Semantic Code Search',
+    });
+
+    if (!query || query.trim().length === 0) {
+      return;
+    }
+
+    try {
+      // Search vector DB
+      const results = await vectorDB.search(query.trim(), 5);
+
+      if (results.length === 0) {
+        vscode.window.showInformationMessage('No matching code found. Try a different search.');
+        return;
+      }
+
+      // Format results for display
+      const items = results.map((result) => ({
+        label: `${result.file} (${(result.score! * 100).toFixed(0)}%)`,
+        description: result.excerpt.split('\n')[0].substring(0, 60) + '...',
+        result,
+      }));
+
+      // Show quickpick
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a result to open',
+        title: `Search results for "${query}"`,
+      });
+
+      if (selected) {
+        // Open file at first line
+        const doc = await vscode.workspace.openTextDocument(selected.result.filePath);
+        await vscode.window.showTextDocument(doc);
+
+        // Optionally show the excerpt in chat
+        if (chatPanel) {
+          chatPanel.webview.postMessage({
+            command: 'addMessage',
+            text: `Found in: ${selected.result.file}\n\n\`\`\`\n${selected.result.excerpt}\n\`\`\`\n\nRelevance: ${(selected.result.score! * 100).toFixed(0)}%`,
+            success: true,
+          });
+        }
+      }
+    } catch (error) {
+      vscode.window.showErrorMessage(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  context.subscriptions.push(openChatCommand, testConnectionCommand, indexWorkspaceCommand, contextSearchCommand);
+
+  // Initialize vector DB in background
+  const vectorDB = getVectorDB();
+  vectorDB.initialize().catch((error) => {
+    console.warn('[Extension] Vector DB initialization failed (optional feature):', error);
+    // Continue - vector search is optional, extension still works
+  });
+
+  // Optionally auto-index workspace on activation
+  // Commented out for now - user can trigger manually via command
+  // vectorDB.indexWorkspace().catch(err => console.warn('Auto-indexing failed:', err));
 
   // Create status bar item to open chat
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

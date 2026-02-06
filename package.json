@@ -31,6 +31,16 @@
         "command": "llm-local-assistant.testConnection",
         "title": "Test LLM Connection",
         "category": "LLM Assistant"
+      },
+      {
+        "command": "llm-local-assistant.indexWorkspace",
+        "title": "Index Workspace for Semantic Search",
+        "category": "LLM Assistant"
+      },
+      {
+        "command": "llm-local-assistant.context",
+        "title": "Search Code (Semantic Search)",
+        "category": "LLM Assistant"
       }
     ],
     "configuration": [
@@ -81,6 +91,8 @@
     "test": "vitest",
     "test:coverage": "vitest --coverage",
     "test:ui": "vitest --ui"
+  },
+  "dependencies": {
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

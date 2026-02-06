@@ -2,11 +2,12 @@
 
 > ⚠️ **DOCUMENTATION CONSTRAINT**: The root directory contains a fixed set of documentation files: README.md, ROADMAP.md, ARCHITECTURE.md, PROJECT_STATUS.md, QUICK_REFERENCE.md, and CHANGELOG.md. No additional .md or .txt files should be created in root. Updates should be made to existing files or placed in `/docs/` if necessary.
 
-## Phase 3: Architecture Alignment - `.lla-rules` Injection
+## Phase 3: Architecture Alignment - `.lla-rules` Injection + Vector RAG
 
-**NEW** (v1.3.0): The extension now supports project-specific architecture rules via `.lla-rules` files.
+**Phase 3.1 (v1.3.0):** Project-specific architecture rules via `.lla-rules` files.  
+**Phase 3.2 (v1.3.1):** Local Vector RAG for semantic code search.
 
-### How It Works
+### Phase 3.1: Architecture Rules (`.lla-rules`)
 
 1. **Create `.lla-rules` in your project root** with team patterns:
 ```yaml
@@ -20,32 +21,52 @@
 3. **Rules injected into LLM system prompt** before every `/plan` or `/write`
 4. **Generated code matches project patterns** without manual guidance
 
-### Example
+**Example:**
+- Without `.lla-rules`: LLM generates `class Component extends React.Component`
+- With `.lla-rules`: LLM generates `export function Component() { ... }`
 
-**Without `.lla-rules`** (LLM guesses):
+**Setup:** See `docs/CURSORRULES_EXAMPLE.md`
+
+### Phase 3.2: Vector RAG (Semantic Code Search)
+
+**NEW** (v1.3.1): Semantic code search with `/context` command.
+
+**How it works:**
+1. **Index workspace** — Run "Index Workspace for Semantic Search" command
+   - Scans all code files
+   - Extracts function/class definitions
+   - Generates embeddings (offline, local)
+   - Builds HNSW vector index
+   - Takes ~10-30 seconds first time
+
+2. **Search code** — Run "Search Code" command
+   - Type query: "authentication logic", "API routes", "validation"
+   - Returns top 5 matching code files + excerpts
+   - Shows relevance score
+   - Click to open file
+
+3. **Auto-integration** — When you ask `/plan` or `/write`, relevant code is automatically found and injected into context
+
+**Example:**
 ```
-User: /write src/LoginForm.tsx
-LLM: Generates class component with useState + fetch
-Result: ❌ Doesn't match team patterns
+Senior: /context Show me authentication
+RAG: Returns src/auth/handler.ts, src/auth/middleware.ts, etc.
+
+Senior: /write Extend login with 2FA
+LLM sees actual auth patterns → generates perfect integration
 ```
 
-**With `.lla-rules`** (LLM follows rules):
-```
-User: /write src/LoginForm.tsx
-LLM: Generates functional component with TanStack Query + Zod
-Result: ✅ Matches team patterns automatically
-```
+**Technology:**
+- **Embeddings:** `Xenova/all-MiniLM-L6-v2` (384-dim, offline)
+- **Index:** HNSW (Hierarchical Navigable Small World)
+- **Performance:** <10ms per query, ~50MB memory for typical codebase
+- **Privacy:** 100% local, no cloud, no API calls
 
 ### Migration Support
 
-If you have existing `.cursorrules` files, they'll still work as fallback:
+If you have existing `.cursorrules` files, they still work:
 1. Extension checks for `.lla-rules` first (recommended)
 2. Falls back to `.cursorrules` if `.lla-rules` doesn't exist
-3. Smooth transition and multi-tool support
-
-### Setup
-
-See `docs/CURSORRULES_EXAMPLE.md` for a complete example file to copy and customize.
 
 ---
 
