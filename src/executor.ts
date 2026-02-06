@@ -279,6 +279,52 @@ export class Executor {
       );
     }
 
+    // Check Rule: TypeScript strict mode - return types required
+    if (rules.includes('strict TypeScript') || rules.includes('Never use implicit types')) {
+      // Check for arrow functions without return type annotation
+      // Pattern: const funcName = (...) => { ... } without : Type
+      const arrowFunctionsWithoutReturnType = content.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
+      if (arrowFunctionsWithoutReturnType) {
+        errors.push(
+          `⚠️ Rule: TypeScript strict mode requires return type annotations. ` +
+          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
+        );
+      }
+
+      // Check for function declarations without return type
+      const functionsWithoutReturnType = content.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
+      if (functionsWithoutReturnType) {
+        functionsWithoutReturnType.forEach((func) => {
+          // Check if this specific function has a return type annotation
+          const funcName = func.match(/function\s+(\w+)/)?.[1];
+          if (funcName) {
+            const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*:\\s*\\w+`);
+            if (!funcRegex.test(content)) {
+              errors.push(
+                `⚠️ Function '${funcName}' missing return type annotation. ` +
+                `Use: function ${funcName}(...): ReturnType { ... }`
+              );
+            }
+          }
+        });
+      }
+    }
+
+    // Check Rule: Runtime validation with Zod for utility functions
+    if (rules.includes('Zod for all runtime validation')) {
+      // If file has function parameters that accept objects but no Zod validation
+      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(content);
+      const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
+      
+      if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
+        errors.push(
+          `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
+          `Example: const schema = z.object({ ... }); ` +
+          `Then: const validated = schema.parse(input);`
+        );
+      }
+    }
+
     // Check Rule: Validation with Zod
     if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
       errors.push(
