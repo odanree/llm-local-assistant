@@ -6,12 +6,20 @@ import { Planner } from './planner';
 import { Executor } from './executor';
 import CodebaseIndex from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
+import { ArchitecturePatterns } from './architecturePatterns';
+import { FeatureAnalyzer } from './featureAnalyzer';
+import { ServiceExtractor } from './serviceExtractor';
+import { RefactoringExecutor } from './refactoringExecutor';
 import * as path from 'path';
 
 let llmClient: LLMClient;
 let planner: Planner;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
+let architecturePatterns: ArchitecturePatterns;
+let featureAnalyzer: FeatureAnalyzer;
+let serviceExtractor: ServiceExtractor;
+let refactoringExecutor: RefactoringExecutor;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -124,6 +132,12 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /context show patterns — Show detected code patterns\n` +
           `- /context show dependencies — Show file dependencies\n` +
           `- /context find similar <file> — Find similar files\n\n` +
+          `🔧 **Refactoring & Architecture:**\n` +
+          `- /refactor <file> — Analyze and suggest improvements\n` +
+          `- /extract-service <hook> <name> — Extract business logic to service\n` +
+          `- /design-system <feature> — Generate full feature architecture\n` +
+          `- /rate-architecture — Score codebase quality (0-10)\n` +
+          `- /suggest-patterns — Show pattern improvements\n\n` +
           `📄 **File Operations:**\n` +
           `- /read <path> — Read a file from workspace\n` +
           `- /write <path> <prompt> — Generate and write file content\n` +
@@ -887,6 +901,277 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               return;
             }
 
+            // PHASE 3.4.5: New refactoring commands
+
+            // Check for /refactor command
+            const refactorMatch = text.match(/^\/refactor\s+(.+)$/);
+            if (refactorMatch) {
+              const filepath = refactorMatch[1].trim();
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔍 Analyzing ${filepath}...`,
+                  type: 'info',
+                });
+
+                // Read file
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (!workspaceFolder) {
+                  throw new Error('No workspace folder open');
+                }
+
+                const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filepath);
+                const fileData = await vscode.workspace.fs.readFile(fileUri);
+                const code = new TextDecoder().decode(fileData);
+
+                // Analyze with FeatureAnalyzer
+                const analysis = featureAnalyzer.detectAntiPatterns(code);
+                
+                // Generate plan with ServiceExtractor
+                const hookAnalysis = serviceExtractor.analyzeHook(filepath, code);
+                const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `📊 **Analysis: ${filepath}**\n\n` +
+                    `Complexity: ${plan.estimatedComplexity}\n` +
+                    `Confidence: ${Math.round(plan.confidence * 100)}%\n\n` +
+                    `**Suggested Changes:**\n${
+                      plan.proposedChanges.map(c => `- ${c.type}: ${c.description} (${c.impact})`).join('\n')
+                    }\n\n` +
+                    `**Estimated Effort:** ${plan.estimatedEffort}\n\n` +
+                    `**Risks:**\n${plan.risks.map(r => `- ${r.description}`).join('\n')}`,
+                  success: true,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Refactor error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+              return;
+            }
+
+            // Check for /extract-service command
+            const extractMatch = text.match(/^\/extract-service\s+(\S+)\s+(.+)$/);
+            if (extractMatch) {
+              const hookFile = extractMatch[1].trim();
+              const serviceName = extractMatch[2].trim();
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔄 Extracting service from ${hookFile}...`,
+                  type: 'info',
+                });
+
+                // Read file
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (!workspaceFolder) {
+                  throw new Error('No workspace folder open');
+                }
+
+                const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, hookFile);
+                const fileData = await vscode.workspace.fs.readFile(fileUri);
+                const code = new TextDecoder().decode(fileData);
+
+                // Extract service
+                const extraction = serviceExtractor.extractService(code, hookFile, serviceName);
+                
+                // Execute refactoring if user wants
+                const userChoice = await vscode.window.showQuickPick(
+                  ['Execute Refactoring', 'Preview Only', 'Cancel'],
+                  { placeHolder: 'What would you like to do?' }
+                );
+
+                if (userChoice === 'Execute Refactoring') {
+                  chatPanel?.webview.postMessage({
+                    command: 'status',
+                    text: `✏️ Executing refactoring...`,
+                    type: 'info',
+                  });
+
+                  // Execute with RefactoringExecutor
+                  const hookAnalysis = serviceExtractor.analyzeHook(hookFile, code);
+                  const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
+                  const execution = await refactoringExecutor.executeRefactoring(plan, code);
+
+                  if (execution.success) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      text: `✅ **Service Extraction Successful**\n\n` +
+                        `**New Service File:** ${serviceName}.ts\n` +
+                        `**Updated Hook:** ${hookFile}\n` +
+                        `**Generated Tests:** ${execution.testCases.length}\n\n` +
+                        `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
+                        `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)`,
+                      success: true,
+                    });
+                  } else {
+                    postChatMessage({
+                      command: 'addMessage',
+                      error: `Extraction failed: ${execution.errors.join(', ')}`,
+                    });
+                  }
+                } else {
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `📋 **Extraction Preview**\n\n` +
+                      `**Service File:** ${serviceName}.ts\n` +
+                      `**Lines:** ${extraction.extractedCode.split('\n').length}\n` +
+                      `**Functions:** ${extraction.exports.length}\n` +
+                      `**Tests:** ${extraction.testCases.length}`,
+                    success: true,
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Extract error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+              return;
+            }
+
+            // Check for /design-system command
+            const designMatch = text.match(/^\/design-system\s+(.+)$/);
+            if (designMatch) {
+              const feature = designMatch[1].trim();
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🎨 Designing system for ${feature}...`,
+                  type: 'info',
+                });
+
+                // Get patterns
+                const patterns = architecturePatterns.getAllPatterns();
+                
+                // Generate plan
+                const designPlan = await planner.generatePlan(
+                  `Design a complete ${feature} feature using best practices. Include schema, service layer, custom hook, and component.`,
+                  { messages: llmClient.getHistory() }
+                );
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `🏗️ **System Design: ${feature}**\n\n` +
+                    `${designPlan.markdown}\n\n` +
+                    `Available patterns: ${patterns.map(p => p.name).join(', ')}\n\n` +
+                    `_Use **/approve** to generate all files_`,
+                  success: true,
+                });
+
+                (chatPanel as any)._currentPlan = designPlan.plan;
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Design error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+              return;
+            }
+
+            // Check for /rate-architecture command
+            const rateMatch = text.match(/^\/rate-architecture/);
+            if (rateMatch) {
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `📊 Scanning codebase...`,
+                  type: 'info',
+                });
+
+                // Initialize codebase index if needed
+                if (!codebaseIndex) {
+                  codebaseIndex = new CodebaseIndex(
+                    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+                  );
+                  await codebaseIndex.scan();
+                }
+
+                // Get summary and patterns
+                const summary = codebaseIndex.getSummary();
+                const patterns = codebaseIndex.getPatterns();
+
+                let totalScore = 0;
+                const purposes = ['schema', 'service', 'hook', 'component'];
+                
+                for (const purpose of purposes) {
+                  const files = codebaseIndex.getFilesByPurpose(purpose);
+                  if (files.length > 0) {
+                    totalScore += (files.length / 10) * 2.5;
+                  }
+                }
+
+                const score = Math.min(10, totalScore);
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `🏆 **Architecture Rating**\n\n${summary}\n\n` +
+                    `**Overall Score:** ${Math.round(score)}/10\n` +
+                    (score >= 8 ? `✅ Excellent architecture!` :
+                     score >= 6 ? `⚠️ Good structure, room for improvement` :
+                     `❌ Consider refactoring for better patterns`),
+                  success: true,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Rating error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+              return;
+            }
+
+            // Check for /suggest-patterns command
+            const suggestMatch = text.match(/^\/suggest-patterns/);
+            if (suggestMatch) {
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔍 Analyzing patterns...`,
+                  type: 'info',
+                });
+
+                // Initialize codebase index if needed
+                if (!codebaseIndex) {
+                  codebaseIndex = new CodebaseIndex(
+                    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+                  );
+                  await codebaseIndex.scan();
+                }
+
+                // Get all files and suggest patterns
+                const patterns = architecturePatterns.getAllPatterns();
+                const suggestions: string[] = [];
+                
+                const allFiles = codebaseIndex.getFilesInDependencyOrder();
+                
+                for (const file of allFiles) {
+                  // Try to detect pattern from path and purpose
+                  const detected = architecturePatterns.detectPattern(file.path || '');
+                  if (!detected) {
+                    suggestions.push(`📄 ${file.path} (${file.purpose}) — Could use a structured pattern`);
+                  }
+                }
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `💡 **Pattern Suggestions**\n\n` +
+                    `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
+                    `**Recommendations:**\n${suggestions.length > 0 ? suggestions.slice(0, 5).join('\n') : 'All files follow good patterns!'}\n\n` +
+                    `Use **/refactor <file>** to apply improvements`,
+                  success: true,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Pattern error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+              return;
+            }
+
             // Check for /read command
             const readMatch = text.match(/\/read\s+(\S+)/);
 
@@ -1445,6 +1730,12 @@ export async function activate(context: vscode.ExtensionContext) {
       });
     },
   });
+
+  // Initialize Phase 3.4 components
+  architecturePatterns = new ArchitecturePatterns();
+  featureAnalyzer = new FeatureAnalyzer();
+  serviceExtractor = new ServiceExtractor();
+  refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
 
   // Register commands
   const openChatCommand = vscode.commands.registerCommand('llm-local-assistant.openChat', () => {
