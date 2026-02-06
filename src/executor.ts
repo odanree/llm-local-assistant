@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as cp from 'child_process';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
+import CodebaseIndex from './codebaseIndex';
 import { TaskPlan, PlanStep, StepResult } from './planner';
 
 /**
@@ -15,6 +16,7 @@ export interface ExecutorConfig {
   llmClient: LLMClient;
   gitClient?: GitClient;
   workspace: vscode.Uri;
+  codebaseIndex?: CodebaseIndex; // Phase 3.3.2: Track files being created
   maxRetries?: number;      // Default: 2
   timeout?: number;         // Default: 30000ms
   onProgress?: (step: number, total: number, description: string) => void;
@@ -1171,6 +1173,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       }
       
       await vscode.workspace.fs.writeFile(filePath, bytes);
+
+      // Phase 3.3.2: Track file in CodebaseIndex for next steps
+      if (this.config.codebaseIndex) {
+        this.config.codebaseIndex.addFile(filePath.fsPath, finalContent);
+      }
 
       return {
         stepId: step.stepId,
