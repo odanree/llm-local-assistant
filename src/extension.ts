@@ -367,13 +367,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // ============================================================================
                 
                 let finalContent = generatedContent;
+                console.log(`[LLM Assistant] /write validation starting - isCodeFile=${isCodeFile}, fileExtension=${fileExtension}`);
                 
                 if (isCodeFile) {
+                  console.log(`[LLM Assistant] Running validation for code file: ${relPath}`);
+                  
                   // DETECTION: Check if LLM ignored instructions
                   const hasMarkdownBackticks = generatedContent.includes('```');
                   const hasExcessiveComments = (generatedContent.match(/^\/\//gm) || []).length > 5;
                   const hasMultipleFileInstructions = (generatedContent.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
                   const hasYAMLOrConfigMarkers = generatedContent.includes('---') || generatedContent.includes('package.json') || generatedContent.includes('tsconfig');
+                  
+                  console.log(`[LLM Assistant] Detection: markdown=${hasMarkdownBackticks}, excessiveComments=${hasExcessiveComments}, multiFile=${hasMultipleFileInstructions}, yaml=${hasYAMLOrConfigMarkers}`);
                   
                   if (hasMarkdownBackticks) {
                     // Extract code from markdown
@@ -450,8 +455,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     validationErrors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
                   }
                   
+                  console.log(`[LLM Assistant] Validation complete - errors found: ${validationErrors.length}`);
+                  
                   if (validationErrors.length > 0) {
                     // VALIDATION FAILED
+                    console.log(`[LLM Assistant] VALIDATION FAILED:\n${validationErrors.join('\n')}`);
+                    
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
                       error: `❌ VALIDATION FAILED - Code cannot be written:\n${validationErrors.join('\n')}\n\nAttempting auto-correction...`,
@@ -495,6 +504,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                     
                     if (revalidationErrors.length > 0) {
+                      console.log(`[LLM Assistant] Auto-correction failed: ${revalidationErrors.join(', ')}`);
+                      
                       chatPanel?.webview.postMessage({
                         command: 'addMessage',
                         error: `❌ Auto-correction incomplete:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
@@ -504,6 +515,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                     
                     // Auto-correction succeeded
+                    console.log(`[LLM Assistant] Auto-correction succeeded`);
+                    
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
                       text: `✅ Auto-correction successful! Code now passes validation.`,
@@ -511,7 +524,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     });
                     
                     finalContent = correctedContent;
+                  } else {
+                    console.log(`[LLM Assistant] Validation PASSED - code is valid`);
                   }
+                } else {
+                  console.log(`[LLM Assistant] Skipping validation - not a code file (${fileExtension})`);
                 }
 
                 // NOW safe to write (only reached if validation passed or non-code file)
