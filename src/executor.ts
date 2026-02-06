@@ -306,6 +306,33 @@ export class Executor {
       }
     }
 
+    // TYPO CHECK: @hookform/resolve vs @hookform/resolvers (common mistake)
+    if (content.includes('@hookform/resolve') && !content.includes('@hookform/resolvers')) {
+      errors.push(
+        `❌ Typo detected: '@hookform/resolve' is not a valid package. ` +
+        `Did you mean '@hookform/resolvers'? ` +
+        `Correct usage: import { zodResolver } from '@hookform/resolvers/zod'`
+      );
+    }
+
+    // IMPORT PATTERN: TanStack Query imports
+    if (content.includes('useQuery') || content.includes('useMutation')) {
+      if (!content.includes('@tanstack/react-query')) {
+        errors.push(
+          `❌ TanStack Query used but not imported correctly. ` +
+          `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
+        );
+      }
+    }
+
+    // IMPORT PATTERN: Zod imports
+    if (content.includes('z.') && !content.includes("import { z }") && !content.includes("import * as z")) {
+      errors.push(
+        `❌ Zod used (z.object, z.string, etc) but not imported. ` +
+        `Add: import { z } from 'zod'`
+      );
+    }
+
     return errors;
   }
 
@@ -846,63 +873,92 @@ IMPORTANT: Output ONLY the code content for ${step.path}. NO explanations, NO co
           .trim();
       }
       
-      // Stream the generated content to callback
-      if (this.config.onStepOutput && content.length > 0) {
-        // Show first 200 chars as preview, or full content if shorter
-        const preview = content.length > 200 
-          ? `\`\`\`${fileExtension || ''}\n${content.substring(0, 200)}...\n\`\`\``
-          : `\`\`\`${fileExtension || ''}\n${content}\n\`\`\``;
-        this.config.onStepOutput(step.stepId, preview, false);
-      }
+      // ============================================================================
+      // GATEKEEPER: Validate code BEFORE writing to disk
+      // LLM output is a PROPOSAL, not final. Must pass validation gates before committing.
+      // ============================================================================
       
-      // Encode string to bytes
-      const bytes = new Uint8Array(content.length);
-      for (let i = 0; i < content.length; i++) {
-        bytes[i] = content.charCodeAt(i);
-      }
+      let finalContent = content;
       
-      await vscode.workspace.fs.writeFile(filePath, bytes);
-
-      // Validate generated code if it's a TypeScript/JavaScript file
       if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
+        this.config.onMessage?.(
+          `🔍 Validating ${step.path}...`,
+          'info'
+        );
+        
         const validationResult = await this.validateGeneratedCode(step.path, content, step);
+        
         if (!validationResult.valid && validationResult.errors) {
-          // Attempt auto-correction via LLM
+          // ❌ VALIDATION FAILED - Cannot write
+          const errorList = validationResult.errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
           this.config.onMessage?.(
-            `⚠️ Validation issues found in ${step.path}:\n${validationResult.errors.join('\n')}`,
+            `❌ Validation failed for ${step.path}:\n${errorList}`,
+            'error'
+          );
+          
+          // Attempt auto-correction: send specific errors back to LLM
+          this.config.onMessage?.(
+            `🔧 Attempting auto-correction (sending errors to LLM for context-aware fix)...`,
             'info'
           );
           
-          const fixPrompt = `The code you generated has validation errors:\n\n${validationResult.errors.join('\n')}\n\nPlease fix these errors and provide the corrected code for ${step.path}.`;
+          const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${validationResult.errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+          
           const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
           
           if (fixResponse.success) {
-            // Extract corrected content
             let correctedContent = fixResponse.message || '';
             const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
             if (codeBlockMatch) {
               correctedContent = codeBlockMatch[1];
             }
             
-            // Re-validate
+            // Re-validate the corrected code
             const secondValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            
             if (secondValidation.valid) {
-              this.config.onMessage?.('✓ Auto-fix successful! Code now passes validation.', 'info');
-              // Write the corrected content
-              const correctedBytes = new Uint8Array(correctedContent.length);
-              for (let i = 0; i < correctedContent.length; i++) {
-                correctedBytes[i] = correctedContent.charCodeAt(i);
-              }
-              await vscode.workspace.fs.writeFile(filePath, correctedBytes);
-            } else {
+              // ✅ Auto-correction succeeded - Use corrected content
               this.config.onMessage?.(
-                `⚠️ Auto-fix didn't fully resolve issues. Please review manually.`,
+                `✅ Auto-correction successful! Code now passes all validation checks.`,
+                'info'
+              );
+              finalContent = correctedContent;
+            } else {
+              // ❌ Auto-correction failed - Show remaining issues
+              const remainingErrors = secondValidation.errors?.map((e, i) => `  ${i + 1}. ${e}`).join('\n') || 'Unknown errors';
+              this.config.onMessage?.(
+                `❌ Auto-correction incomplete. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
                 'error'
               );
+              throw new Error(`Validation failed even after auto-correction.\n${remainingErrors}`);
             }
+          } else {
+            throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
           }
+        } else {
+          // ✅ Validation passed
+          this.config.onMessage?.(
+            `✅ Validation passed for ${step.path}`,
+            'info'
+          );
         }
       }
+      
+      // Show preview of final (validated) content
+      if (this.config.onStepOutput && finalContent.length > 0) {
+        const preview = finalContent.length > 200 
+          ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
+          : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
+        this.config.onStepOutput(step.stepId, preview, false);
+      }
+      
+      // NOW safe to write (only reached if validation passed or non-code file)
+      const bytes = new Uint8Array(finalContent.length);
+      for (let i = 0; i < finalContent.length; i++) {
+        bytes[i] = finalContent.charCodeAt(i);
+      }
+      
+      await vscode.workspace.fs.writeFile(filePath, bytes);
 
       return {
         stepId: step.stepId,
