@@ -463,6 +463,48 @@ export class Executor {
       );
     }
 
+    // UNUSED IMPORTS: Check for imported items that are never used
+    const unusedImports: string[] = [];
+    importedItems.forEach((item) => {
+      // Skip common React hooks that might be used indirectly
+      if (['React', 'Component'].includes(item)) return;
+      
+      // Check if this import is actually used in the code
+      // Pattern: used as identifier (standalone), not just in strings/comments
+      const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+      const usageMatches = content.match(usagePattern) || [];
+      
+      if (usageMatches.length === 0) {
+        unusedImports.push(item);
+      }
+    });
+    
+    if (unusedImports.length > 0) {
+      unusedImports.forEach((unused) => {
+        errors.push(
+          `⚠️ Unused import: '${unused}' is imported but never used. ` +
+          `Remove: import { ${unused} } from '...'`
+        );
+      });
+    }
+
+    // RETURN TYPE CHECK: Detect common functions with wrong return types
+    // JSON.stringify() always returns string, never null
+    if (content.includes('JSON.stringify') && content.includes(': string | null')) {
+      errors.push(
+        `⚠️ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
+        `Fix: Change return type to just 'string'`
+      );
+    }
+
+    // JSON.parse() can throw, but return type should reflect actual object type
+    if (content.includes('JSON.parse') && content.includes(': any')) {
+      errors.push(
+        `⚠️ Type issue: JSON.parse() result should not be 'any'. ` +
+        `Use a Zod schema or specific type instead of 'any'`
+      );
+    }
+
     return errors;
   }
 
