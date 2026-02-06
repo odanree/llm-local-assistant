@@ -256,7 +256,7 @@ export class Executor {
     }
 
     // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
-    if (rules.includes('TanStack Query') && content.includes('fetch(')) {
+    if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
       errors.push(
         `❌ Rule violation: Using direct fetch() instead of TanStack Query. ` +
         `Use: const { data } = useQuery(...) or useMutation(...)`
