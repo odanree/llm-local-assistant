@@ -421,19 +421,67 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     validationErrors.push(`❌ Found 'any' type - use specific types or 'unknown'`);
                   }
                   
-                  // Check 5: Missing imports
-                  if ((generatedContent.includes('useState') || generatedContent.includes('useEffect')) && !generatedContent.includes("import { useState")) {
-                    validationErrors.push(`❌ Missing React import: useState is used but not imported`);
+                  // Check 5: Missing imports (generic namespace detection)
+                  // Extract all imported items and namespaces
+                  const importedItems = new Set<string>();
+                  const importedNamespaces = new Set<string>();
+                  
+                  generatedContent.replace(/import\s+{([^}]+)}/g, (_, items) => {
+                    items.split(',').forEach((item: string) => {
+                      importedItems.add(item.trim());
+                    });
+                    return '';
+                  });
+                  
+                  // Capture namespace imports (import * as X)
+                  generatedContent.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
+                    importedNamespaces.add(namespace.trim());
+                    return '';
+                  });
+                  
+                  // And default imports
+                  generatedContent.replace(/import\s+(\w+)\s+from/g, (_, name) => {
+                    importedNamespaces.add(name.trim());
+                    return '';
+                  });
+                  
+                  // Find all namespace.method() patterns
+                  const namespaceUsages = new Set<string>();
+                  generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+                    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
+                    if (!globalKeywords.includes(namespace)) {
+                      namespaceUsages.add(namespace);
+                    }
+                    return '';
+                  });
+                  
+                  // Check if all used namespaces are imported
+                  Array.from(namespaceUsages).forEach((namespace) => {
+                    if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
+                      validationErrors.push(
+                        `❌ Missing import: '${namespace}' is used but never imported. ` +
+                        `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
+                      );
+                    }
+                  });
+                  
+                  // Specific React Hook Form + Zod pattern check
+                  if ((generatedContent.includes('useState') || generatedContent.includes('useEffect')) && !importedItems.has('useState')) {
+                    if (!generatedContent.includes("import { useState")) {
+                      validationErrors.push(
+                        `❌ Missing React import: useState is used but not imported. ` +
+                        `Add: import { useState } from 'react'`
+                      );
+                    }
                   }
                   
                   if (generatedContent.includes('useQuery') || generatedContent.includes('useMutation')) {
                     if (!generatedContent.includes('@tanstack/react-query')) {
-                      validationErrors.push(`❌ TanStack Query used but not imported from @tanstack/react-query`);
+                      validationErrors.push(
+                        `❌ TanStack Query used but not imported correctly. ` +
+                        `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
+                      );
                     }
-                  }
-                  
-                  if (generatedContent.includes('z.') && !generatedContent.includes("import { z }") && !generatedContent.includes("import * as z")) {
-                    validationErrors.push(`❌ Zod used (z.object, z.string) but not imported`);
                   }
                   
                   // Check 6: React Hook Form resolver pattern
