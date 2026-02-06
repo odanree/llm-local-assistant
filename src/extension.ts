@@ -1394,6 +1394,7 @@ export async function activate(context: vscode.ExtensionContext) {
     llmClient,
     gitClient,
     workspace: wsFolder || vscode.Uri.file('/'),
+    codebaseIndex, // Phase 3.3.2: Track files created during execution
     maxRetries: 2,
     timeout: 30000,
     onProgress: (step: number, total: number, description: string) => {
