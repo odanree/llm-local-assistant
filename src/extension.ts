@@ -1020,9 +1020,29 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   report += `**Quick Extract Commands:**\n`;
                   semanticAnalysis.suggestedExtractions.forEach((extraction, idx) => {
                     // Parse extraction suggestion to get service name
-                    // e.g., "API logic to useApi hook" -> "useApi"
-                    const serviceName = extraction
-                      .match(/use\w+|[A-Z]\w+/)?.[0] || `service${idx + 1}`;
+                    // e.g., "Extract API logic to useApi hook" -> "useApi"
+                    // Try to find camelCase words (useXxx) or PascalCase (Xxx)
+                    let serviceName = '';
+                    
+                    // First try: match 'to <serviceName>' pattern
+                    const toMatch = extraction.match(/\bto\s+(\w+)/i);
+                    if (toMatch && toMatch[1]) {
+                      serviceName = toMatch[1];
+                    }
+                    
+                    // Second try: match camelCase starting with 'use' (useApi, useFilter)
+                    if (!serviceName) {
+                      const useMatch = extraction.match(/\b(use\w+)\b/i);
+                      if (useMatch && useMatch[1]) {
+                        serviceName = useMatch[1];
+                      }
+                    }
+                    
+                    // Fallback
+                    if (!serviceName) {
+                      serviceName = `service${idx + 1}`;
+                    }
+                    
                     report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
                   });
                   report += `\n`;
