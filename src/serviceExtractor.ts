@@ -531,4 +531,115 @@ export class ServiceExtractor {
 
     return testCases;
   }
+
+  /**
+   * Phase 3.4.5.1: LLM-based service extraction
+   * Uses LLM to intelligently generate service code based on semantic analysis
+   */
+  async extractServiceWithLLM(
+    hookCode: string,
+    serviceName: string,
+    semanticAnalysis?: any
+  ): Promise<ServiceExtraction> {
+    // If no LLM client, fall back to deterministic extraction
+    if (!this.llmClient) {
+      return this.extractService(hookCode, '', serviceName);
+    }
+
+    try {
+      // Build prompt with semantic analysis insights
+      const analysisContext = semanticAnalysis
+        ? `
+Key Issues Found:
+${semanticAnalysis.unusedStates?.map((s: string) => `- Unused state: ${s}`).join('\n') || ''}
+${semanticAnalysis.tightCoupling?.map((c: string) => `- Tight coupling: ${c}`).join('\n') || ''}
+${semanticAnalysis.antiPatterns?.map((a: string) => `- Anti-pattern: ${a}`).join('\n') || ''}
+        `
+        : '';
+
+      const prompt = `
+Extract the API/business logic from this React hook into a pure service.
+
+Hook Code:
+\`\`\`typescript
+${hookCode}
+\`\`\`
+
+${analysisContext}
+
+Requirements:
+1. Create a pure service (NO React imports, NO hooks)
+2. Extract all API calls, data transformations, validation
+3. Use TypeScript with proper types
+4. Add JSDoc comments for each function
+5. Export named functions (not default)
+6. Keep it testable and reusable
+
+Service Name: ${serviceName}
+
+Generate ONLY the service code, nothing else.
+`;
+
+      const response = await this.llmClient.sendMessage(prompt);
+
+      if (!response.success) {
+        // Fall back to deterministic extraction on LLM failure
+        return this.extractService(hookCode, '', serviceName);
+      }
+
+      // Extract code from LLM response
+      const extractedCode = this.extractCodeFromLLMResponse(response.message);
+
+      // Generate updated hook (still deterministic)
+      const updatedHookCode = this.generateUpdatedHook(hookCode, serviceName);
+
+      // Extract metadata
+      const imports = this.extractImports(extractedCode);
+      const exports = this.extractExports(extractedCode);
+      const testCases = this.generateTestCases(serviceName, extractedCode);
+
+      // Validate
+      const validationErrors: string[] = [];
+      if (!extractedCode.includes('export')) {
+        validationErrors.push('Service should export functions');
+      }
+      if (extractedCode.includes('import React') || extractedCode.includes('from "react"')) {
+        validationErrors.push('Service should not import React');
+      }
+      if (extractedCode.includes('useState') || extractedCode.includes('useEffect')) {
+        validationErrors.push('Service should not use React hooks');
+      }
+
+      return {
+        originalFile: '',
+        serviceName,
+        serviceFile: `${serviceName}.ts`,
+        extractedCode,
+        updatedHookCode,
+        imports,
+        exports,
+        confidence: validationErrors.length === 0 ? 0.95 : 0.7,
+        validationErrors,
+        testCases,
+      };
+    } catch (err) {
+      // Fall back to deterministic extraction on any error
+      console.error('LLM extraction failed, falling back to deterministic:', err);
+      return this.extractService(hookCode, '', serviceName);
+    }
+  }
+
+  /**
+   * Extract code from LLM response (handles markdown blocks)
+   */
+  private extractCodeFromLLMResponse(response: string): string {
+    // Try to extract from markdown code block
+    const codeBlockMatch = response.match(/```(?:typescript|ts)?\n([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      return codeBlockMatch[1].trim();
+    }
+
+    // If no markdown block, return the whole response (assume it's code)
+    return response.trim();
+  }
 }

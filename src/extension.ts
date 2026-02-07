@@ -1808,8 +1808,9 @@ ${fileContent}
                   serviceName = extractionName.split(' ')[0];
                 }
 
-                // Extract service
-                const extraction = serviceExtractor.extractService(code, filepath, serviceName);
+                // Extract service using LLM-based extraction with semantic analysis
+                const analysis = refactorData.analysis;
+                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName, analysis);
                 
                 // Store extraction data for when user chooses action
                 (chatPanel as any)._currentExtraction = {
