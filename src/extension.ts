@@ -976,23 +976,52 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
-                // Analyze with FeatureAnalyzer
-                const analysis = featureAnalyzer.detectAntiPatterns(code);
+                // FIXED: Use semantic analysis instead of regex-based analysis
+                console.log('[Extension] /refactor: Starting semantic analysis...');
+                const semanticAnalysis = await featureAnalyzer.analyzeHookSemantically(code);
+                console.log('[Extension] /refactor: Semantic analysis complete - Complexity:', semanticAnalysis.overallComplexity);
                 
-                // Generate plan with ServiceExtractor
-                const hookAnalysis = serviceExtractor.analyzeHook(filepath, code);
-                const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
+                // Build detailed report
+                let report = `📊 **Refactoring Analysis: ${filepath}**\n\n`;
+                report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
+                
+                if (semanticAnalysis.issues.length > 0) {
+                  report += `**Issues Found:**\n${semanticAnalysis.issues.map(i => `- ${i}`).join('\n')}\n\n`;
+                }
+                
+                if (semanticAnalysis.unusedStates.length > 0) {
+                  report += `**Unused States:**\n${
+                    semanticAnalysis.unusedStates.map(s => `- ${s.name}: ${s.description}`).join('\n')
+                  }\n\n`;
+                }
+                
+                if (semanticAnalysis.dependencyIssues.length > 0) {
+                  report += `**Dependency Issues:**\n${
+                    semanticAnalysis.dependencyIssues.map(d => {
+                      let msg = `- Line ${d.effect}: ${d.description}`;
+                      if (d.missing.length > 0) msg += ` [Missing: ${d.missing.join(', ')}]`;
+                      return msg;
+                    }).join('\n')
+                  }\n\n`;
+                }
+                
+                if (semanticAnalysis.couplingProblems.length > 0) {
+                  report += `**Coupling Problems:**\n${
+                    semanticAnalysis.couplingProblems.map(c => `- ${c.type}: ${c.suggestion}`).join('\n')
+                  }\n\n`;
+                }
+                
+                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                  report += `**Suggested Extractions:**\n${
+                    semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
+                  }\n\n`;
+                }
+                
+                report += `_Use **/extract-service <hook> <name>** to extract suggested services_`;
 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `📊 **Analysis: ${filepath}**\n\n` +
-                    `Complexity: ${plan.estimatedComplexity}\n` +
-                    `Confidence: ${Math.round(plan.confidence * 100)}%\n\n` +
-                    `**Suggested Changes:**\n${
-                      plan.proposedChanges.map(c => `- ${c.type}: ${c.description} (${c.impact})`).join('\n')
-                    }\n\n` +
-                    `**Estimated Effort:** ${plan.estimatedEffort}\n\n` +
-                    `**Risks:**\n${plan.risks.map(r => `- ${r.description}`).join('\n')}`,
+                  text: report,
                   success: true,
                 });
               } catch (err) {
