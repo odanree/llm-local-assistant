@@ -1154,10 +1154,10 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             if (canAutoFix) {
               // Try smart auto-correction first
               this.config.onMessage?.(
-                `🧠 Attempting smart auto-correction (missing imports, unused imports, etc.)...`,
+                `🧠 Attempting smart auto-correction (circular imports, missing/unused imports, etc.)...`,
                 'info'
               );
-              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastValidationErrors);
+              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastValidationErrors, step.path);
               
               // Validate the smart-fixed code
               const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step);

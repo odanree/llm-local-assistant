@@ -4,6 +4,64 @@
  */
 export class SmartAutoCorrection {
   /**
+   * Detect if code has circular/self-referential imports
+   * Example: blogService.ts importing blogService
+   */
+  static detectCircularImports(code: string, filePath: string): string[] {
+    const circularImports: string[] = [];
+    
+    // Extract filename without extension
+    const fileName = filePath.split('/').pop()?.split('.')[0] || '';
+    const baseName = fileName.replace(/Service|Repository|Hook|Controller/, '');
+    
+    // Check for self-referential imports
+    const importLines = code.match(/^import\s+.*from\s+['"].*['"];?$/gm) || [];
+    
+    importLines.forEach(importLine => {
+      // Extract the module being imported
+      const moduleMatch = importLine.match(/from\s+['"]([^'"]+)['"]/);
+      if (moduleMatch) {
+        const importSource = moduleMatch[1];
+        
+        // Check if importing itself (by filename or base name)
+        if (
+          importSource.includes(fileName) ||
+          importSource.includes(baseName) ||
+          importSource.includes(fileName.replace(/Service/, '')) ||
+          importSource.includes(fileName.replace(/Repository/, ''))
+        ) {
+          circularImports.push(importLine);
+        }
+      }
+    });
+    
+    return circularImports;
+  }
+
+  /**
+   * Fix circular/self-referential imports by removing them
+   * These are always semantic errors - the file shouldn't import itself
+   */
+  static fixCircularImports(code: string, filePath: string): string {
+    const circularImports = this.detectCircularImports(code, filePath);
+    
+    if (circularImports.length === 0) {
+      return code;
+    }
+    
+    let fixed = code;
+    
+    // Remove each circular import
+    circularImports.forEach(circularImport => {
+      // Escape special regex characters
+      const escaped = circularImport.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      fixed = fixed.replace(new RegExp(`^${escaped}\n?`, 'gm'), '');
+    });
+    
+    return fixed;
+  }
+
+  /**
    * Analyze code and auto-fix missing imports
    * @param code The code with validation errors
    * @param validationErrors The errors to fix
@@ -166,8 +224,13 @@ export class SmartAutoCorrection {
   /**
    * Fix multiple common patterns
    */
-  static fixCommonPatterns(code: string, validationErrors: string[]): string {
+  static fixCommonPatterns(code: string, validationErrors: string[], filePath?: string): string {
     let fixed = code;
+
+    // FIRST: Check for circular imports (highest priority - always wrong)
+    if (filePath) {
+      fixed = this.fixCircularImports(fixed, filePath);
+    }
 
     validationErrors.forEach(error => {
       // Fix: Unused import → Remove it
