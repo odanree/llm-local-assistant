@@ -53,32 +53,80 @@ export class CodebaseIndex {
 
   /**
    * Scan project directory and index all TypeScript files
+   * Auto-detects source directory (src, app, components, etc.)
    */
   async scan(srcDir?: string): Promise<void> {
-    const scanRoot = srcDir || path.join(this.projectRoot, 'src');
+    let scanRoot = srcDir;
 
-    if (!fs.existsSync(scanRoot)) {
-      console.log(`[CodebaseIndex] Scan root not found: ${scanRoot}`);
+    // If no explicit dir provided, auto-detect source directory
+    if (!scanRoot) {
+      scanRoot = this.autoDetectSourceDir();
+    }
+
+    if (!scanRoot || !fs.existsSync(scanRoot)) {
+      console.log(`[CodebaseIndex] Scan root not found: ${srcDir || scanRoot}`);
       return;
     }
 
+    console.log(`[CodebaseIndex] Scanning from: ${scanRoot}`);
     this.scanDirectory(scanRoot);
     this.extractDependencies();
     this.detectPatterns();
   }
 
   /**
+   * Auto-detect source directory in project
+   * Looks for common patterns: src/, app/, components/, lib/
+   */
+  private autoDetectSourceDir(): string | null {
+    const commonSourceDirs = ['src', 'app', 'components', 'lib', 'source', 'code'];
+
+    for (const dir of commonSourceDirs) {
+      const fullPath = path.join(this.projectRoot, dir);
+      if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+        console.log(`[CodebaseIndex] Auto-detected source dir: ${dir}`);
+        return fullPath;
+      }
+    }
+
+    // If no common source dir found, scan project root
+    console.log(`[CodebaseIndex] No source directory found, scanning project root`);
+    return this.projectRoot;
+  }
+
+  /**
    * Recursively scan directory for TypeScript files
+   * Skips node_modules, .next, .git, and other common non-source directories
    */
   private scanDirectory(dir: string): void {
     try {
+      // Skip directories that shouldn't be scanned
+      const dirName = path.basename(dir);
+      const skipDirs = [
+        'node_modules',
+        '.next',
+        '.git',
+        '.venv',
+        'dist',
+        'build',
+        'coverage',
+        '.nuxt',
+        'out',
+        '__pycache__',
+        '.pytest_cache',
+      ];
+
+      if (skipDirs.includes(dirName)) {
+        return;
+      }
+
       const entries = fs.readdirSync(dir, { withFileTypes: true });
 
       entries.forEach(entry => {
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          // Recurse into subdirectories
+          // Recurse into subdirectories (unless skipped)
           this.scanDirectory(fullPath);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
           // Parse TypeScript file
