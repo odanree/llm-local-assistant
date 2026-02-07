@@ -1058,60 +1058,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // Extract service
                 const extraction = serviceExtractor.extractService(code, hookFile, serviceName);
                 
-                // Show dialog asking what to do
-                console.log('[Extension] /extract-service: Showing dialog...');
-                const userChoice = await vscode.window.showQuickPick(
-                  ['Execute Refactoring', 'Preview Only', 'Cancel'],
-                  { placeHolder: 'What would you like to do?' }
-                );
-                console.log('[Extension] /extract-service: User choice:', userChoice);
+                // Store extraction data for when user clicks a button
+                (chatPanel as any)._currentExtraction = {
+                  extraction,
+                  hookFile,
+                  serviceName,
+                  code,
+                };
 
-                if (userChoice === 'Execute Refactoring') {
-                  chatPanel?.webview.postMessage({
-                    command: 'status',
-                    text: `✏️ Executing refactoring...`,
-                    type: 'info',
-                  });
-
-                  // Execute with RefactoringExecutor
-                  const hookAnalysis = serviceExtractor.analyzeHook(hookFile, code);
-                  const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
-                  const execution = await refactoringExecutor.executeRefactoring(plan, code);
-
-                  if (execution.success) {
-                    postChatMessage({
-                      command: 'addMessage',
-                      text: `✅ **Service Extraction Successful**\n\n` +
-                        `**New Service File:** ${serviceName}.ts\n` +
-                        `**Updated Hook:** ${hookFile}\n` +
-                        `**Generated Tests:** ${execution.testCases.length}\n\n` +
-                        `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
-                        `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)`,
-                      success: true,
-                    });
-                  } else {
-                    postChatMessage({
-                      command: 'addMessage',
-                      error: `Extraction failed: ${execution.errors.join(', ')}`,
-                    });
-                  }
-                } else if (userChoice === 'Preview Only') {
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `📋 **Extraction Preview**\n\n` +
-                      `**Service File:** ${serviceName}.ts\n` +
-                      `**Lines:** ${extraction.extractedCode.split('\n').length}\n` +
-                      `**Functions:** ${extraction.exports.length}\n` +
-                      `**Tests:** ${extraction.testCases.length}`,
-                    success: true,
-                  });
-                } else if (userChoice === undefined || userChoice === 'Cancel') {
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `⏭️ **Service extraction cancelled**`,
-                    success: true,
-                  });
-                }
+                // Show extraction preview with action buttons in the UI
+                postChatMessage({
+                  command: 'question',
+                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nWhat would you like to do?`,
+                  options: [
+                    { label: 'Execute Refactoring', value: 'execute' },
+                    { label: 'Preview Only', value: 'preview' },
+                    { label: 'Cancel', value: 'cancel' },
+                  ],
+                });
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
@@ -1703,6 +1667,73 @@ ${fileContent}
               text: 'Chat history cleared',
               type: 'info',
             });
+            break;
+          }
+
+          case 'extractAction': {
+            // Handle user's choice from extraction preview buttons
+            const action = message.value; // 'execute', 'preview', or 'cancel'
+            const data = (chatPanel as any)._currentExtraction;
+
+            if (!data) {
+              chatPanel?.webview.postMessage({
+                command: 'addMessage',
+                error: 'No extraction data found. Please run /extract-service again.',
+              });
+              break;
+            }
+
+            const { extraction, hookFile, serviceName, code } = data;
+
+            try {
+              if (action === 'execute') {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `✏️ Executing refactoring...`,
+                  type: 'info',
+                });
+
+                // Execute with RefactoringExecutor
+                const hookAnalysis = serviceExtractor.analyzeHook(hookFile, code);
+                const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
+                const execution = await refactoringExecutor.executeRefactoring(plan, code);
+
+                if (execution.success) {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    text: `✅ **Service Extraction Successful**\n\n` +
+                      `**New Service File:** ${serviceName}.ts\n` +
+                      `**Updated Hook:** ${hookFile}\n` +
+                      `**Generated Tests:** ${execution.testCases.length}\n\n` +
+                      `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
+                      `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)`,
+                    success: true,
+                  });
+                } else {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    error: `Extraction failed: ${execution.errors.join(', ')}`,
+                  });
+                }
+              } else if (action === 'preview') {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: `✅ Preview confirmed. Run the command again and select "Execute Refactoring" to apply changes.`,
+                  success: true,
+                });
+              } else if (action === 'cancel') {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  text: `⏭️ **Service extraction cancelled**`,
+                  success: true,
+                });
+              }
+            } catch (err) {
+              chatPanel?.webview.postMessage({
+                command: 'addMessage',
+                error: `Extract action error: ${err instanceof Error ? err.message : String(err)}`,
+              });
+            }
             break;
           }
         }
