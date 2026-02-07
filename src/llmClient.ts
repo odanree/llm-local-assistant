@@ -55,6 +55,13 @@ export class LLMClient {
   }
 
   /**
+   * Get the current LLM configuration (for debugging/logging)
+   */
+  getConfig(): LLMConfig {
+    return this.config;
+  }
+
+  /**
    * Build messages array with system prompt injection (architecture rules)
    * @param userMessage The user's current message
    * @returns Messages array with optional system message if rules exist
@@ -97,6 +104,53 @@ export class LLMClient {
     } catch (error) {
       console.error('LLM server health check failed:', error);
       return false;
+    }
+  }
+
+  /**
+   * Get information about currently loaded models and active model
+   */
+  async getModelInfo(): Promise<{
+    configuredModel: string;
+    endpoint: string;
+    availableModels: string[];
+    error?: string;
+  }> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+
+      const response = await fetch(`${this.config.endpoint}/api/tags`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        return {
+          configuredModel: this.config.model,
+          endpoint: this.config.endpoint,
+          availableModels: [],
+          error: `Server returned status ${response.status}`,
+        };
+      }
+
+      const data = await response.json() as { models?: Array<{ name: string }> };
+      const models = data.models?.map((m) => m.name) || [];
+
+      return {
+        configuredModel: this.config.model,
+        endpoint: this.config.endpoint,
+        availableModels: models,
+      };
+    } catch (error) {
+      return {
+        configuredModel: this.config.model,
+        endpoint: this.config.endpoint,
+        availableModels: [],
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
   }
 

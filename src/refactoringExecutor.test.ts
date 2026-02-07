@@ -11,6 +11,10 @@ describe('RefactoringExecutor', () => {
   beforeEach(() => {
     mockLlmClient = {
       sendMessage: vi.fn(),
+      getConfig: vi.fn().mockReturnValue({
+        endpoint: 'http://localhost:11434',
+        model: 'test-model',
+      }),
     } as unknown as LLMClient;
 
     mockExtractor = new ServiceExtractor();

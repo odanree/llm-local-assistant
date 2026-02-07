@@ -145,7 +145,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /explain <path> — Generate detailed code explanation\n\n` +
           `📝 **Git Integration:**\n` +
           `- /git-commit-msg — Generate commit message from staged changes\n` +
-          `- /git-review [staged|unstaged|all] — Review code changes with AI`,
+          `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
+          `🔍 **Diagnostics:**\n` +
+          `- /check-model — Show configured model and available models on server`,
         type: 'info',
         success: true,
       });
@@ -224,6 +226,56 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 postChatMessage({
                   command: 'addMessage',
                   error: `Planning error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /check-model command
+            const checkModelMatch = text.match(/^\/check-model/);
+
+            // DIAGNOSTIC: /check-model - Show configured and running models
+            if (checkModelMatch) {
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: 'Checking model configuration...',
+                type: 'info',
+              });
+
+              try {
+                const modelInfo = await llmClient.getModelInfo();
+                
+                let response = `🔍 **Model Configuration**\n\n`;
+                response += `**Endpoint:** \`${modelInfo.endpoint}\`\n\n`;
+                response += `**Configured Model:** \`${modelInfo.configuredModel}\`\n\n`;
+                
+                if (modelInfo.availableModels.length > 0) {
+                  response += `**Available Models on Server:**\n`;
+                  modelInfo.availableModels.forEach(model => {
+                    const isCurrent = model === modelInfo.configuredModel;
+                    response += `- \`${model}\`${isCurrent ? ' ✅ (configured)' : ''}\n`;
+                  });
+                } else if (modelInfo.error) {
+                  response += `**Error:** ${modelInfo.error}\n\n`;
+                  response += `**Troubleshooting:**\n`;
+                  response += `- Check if Ollama is running: \`ollama serve\`\n`;
+                  response += `- Verify endpoint in settings: \`llm-assistant.endpoint\`\n`;
+                  response += `- Pull the model if missing: \`ollama pull ${modelInfo.configuredModel}\`\n`;
+                } else {
+                  response += `**Status:** Server is running but no models found.\n`;
+                  response += `Pull a model first: \`ollama pull ${modelInfo.configuredModel}\`\n`;
+                }
+                
+                postChatMessage({
+                  command: 'addMessage',
+                  text: response,
+                  success: !modelInfo.error,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error checking models: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }
@@ -924,25 +976,99 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
-                // Analyze with FeatureAnalyzer
-                const analysis = featureAnalyzer.detectAntiPatterns(code);
+                // FIXED: Use semantic analysis instead of regex-based analysis
+                console.log('[Extension] /refactor: Starting semantic analysis...');
+                const semanticAnalysis = await featureAnalyzer.analyzeHookSemantically(code);
+                console.log('[Extension] /refactor: Semantic analysis complete - Complexity:', semanticAnalysis.overallComplexity);
                 
-                // Generate plan with ServiceExtractor
-                const hookAnalysis = serviceExtractor.analyzeHook(filepath, code);
-                const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
-
+                // Build detailed report
+                let report = `📊 **Refactoring Analysis: ${filepath}**\n\n`;
+                report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
+                
+                if (semanticAnalysis.issues.length > 0) {
+                  report += `**Issues Found:**\n${semanticAnalysis.issues.map(i => `- ${i}`).join('\n')}\n\n`;
+                }
+                
+                if (semanticAnalysis.unusedStates.length > 0) {
+                  report += `**Unused States:**\n${
+                    semanticAnalysis.unusedStates.map(s => `- ${s.name}: ${s.description}`).join('\n')
+                  }\n\n`;
+                }
+                
+                if (semanticAnalysis.dependencyIssues.length > 0) {
+                  report += `**Dependency Issues:**\n${
+                    semanticAnalysis.dependencyIssues.map(d => {
+                      let msg = `- Line ${d.effect}: ${d.description}`;
+                      if (d.missing.length > 0) msg += ` [Missing: ${d.missing.join(', ')}]`;
+                      return msg;
+                    }).join('\n')
+                  }\n\n`;
+                }
+                
+                if (semanticAnalysis.couplingProblems.length > 0) {
+                  report += `**Coupling Problems:**\n${
+                    semanticAnalysis.couplingProblems.map(c => `- ${c.type}: ${c.suggestion}`).join('\n')
+                  }\n\n`;
+                }
+                
+                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                  report += `**Suggested Extractions:**\n${
+                    semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
+                  }\n\n`;
+                  
+                  // Add command line options for each extraction
+                  report += `**Quick Extract Commands:**\n`;
+                  semanticAnalysis.suggestedExtractions.forEach((extraction, idx) => {
+                    // Parse extraction suggestion to get service name
+                    // e.g., "Extract API logic to useApi hook" -> "useApi"
+                    // Try to find camelCase words (useXxx) or PascalCase (Xxx)
+                    let serviceName = '';
+                    
+                    // First try: match 'to <serviceName>' pattern
+                    const toMatch = extraction.match(/\bto\s+(\w+)/i);
+                    if (toMatch && toMatch[1]) {
+                      serviceName = toMatch[1];
+                    }
+                    
+                    // Second try: match camelCase starting with 'use' (useApi, useFilter)
+                    if (!serviceName) {
+                      const useMatch = extraction.match(/\b(use\w+)\b/i);
+                      if (useMatch && useMatch[1]) {
+                        serviceName = useMatch[1];
+                      }
+                    }
+                    
+                    // Fallback
+                    if (!serviceName) {
+                      serviceName = `service${idx + 1}`;
+                    }
+                    
+                    report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
+                  });
+                  report += `\n`;
+                }
+                
                 postChatMessage({
                   command: 'addMessage',
-                  text: `📊 **Analysis: ${filepath}**\n\n` +
-                    `Complexity: ${plan.estimatedComplexity}\n` +
-                    `Confidence: ${Math.round(plan.confidence * 100)}%\n\n` +
-                    `**Suggested Changes:**\n${
-                      plan.proposedChanges.map(c => `- ${c.type}: ${c.description} (${c.impact})`).join('\n')
-                    }\n\n` +
-                    `**Estimated Effort:** ${plan.estimatedEffort}\n\n` +
-                    `**Risks:**\n${plan.risks.map(r => `- ${r.description}`).join('\n')}`,
+                  text: report,
                   success: true,
                 });
+
+                // If there are suggested extractions, show buttons to apply them
+                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                  // Store analysis for extraction buttons
+                  (chatPanel as any)._currentRefactorData = {
+                    filepath,
+                    code,
+                    analysis: semanticAnalysis,
+                  };
+
+                  postChatMessage({
+                    command: 'question',
+                    question: `Would you like to extract a service?`,
+                    options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
+                  });
+                }
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
@@ -974,55 +1100,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
-                // Extract service
-                const extraction = serviceExtractor.extractService(code, hookFile, serviceName);
+                // Extract service using LLM-based extraction
+                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName);
                 
-                // Execute refactoring if user wants
-                const userChoice = await vscode.window.showQuickPick(
-                  ['Execute Refactoring', 'Preview Only', 'Cancel'],
-                  { placeHolder: 'What would you like to do?' }
-                );
+                // Store extraction data for when user clicks a button
+                (chatPanel as any)._currentExtraction = {
+                  extraction,
+                  hookFile,
+                  serviceName,
+                  code,
+                };
 
-                if (userChoice === 'Execute Refactoring') {
-                  chatPanel?.webview.postMessage({
-                    command: 'status',
-                    text: `✏️ Executing refactoring...`,
-                    type: 'info',
-                  });
-
-                  // Execute with RefactoringExecutor
-                  const hookAnalysis = serviceExtractor.analyzeHook(hookFile, code);
-                  const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
-                  const execution = await refactoringExecutor.executeRefactoring(plan, code);
-
-                  if (execution.success) {
-                    postChatMessage({
-                      command: 'addMessage',
-                      text: `✅ **Service Extraction Successful**\n\n` +
-                        `**New Service File:** ${serviceName}.ts\n` +
-                        `**Updated Hook:** ${hookFile}\n` +
-                        `**Generated Tests:** ${execution.testCases.length}\n\n` +
-                        `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
-                        `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)`,
-                      success: true,
-                    });
-                  } else {
-                    postChatMessage({
-                      command: 'addMessage',
-                      error: `Extraction failed: ${execution.errors.join(', ')}`,
-                    });
-                  }
-                } else {
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `📋 **Extraction Preview**\n\n` +
-                      `**Service File:** ${serviceName}.ts\n` +
-                      `**Lines:** ${extraction.extractedCode.split('\n').length}\n` +
-                      `**Functions:** ${extraction.exports.length}\n` +
-                      `**Tests:** ${extraction.testCases.length}`,
-                    success: true,
-                  });
-                }
+                // Show extraction preview with action buttons in the UI
+                postChatMessage({
+                  command: 'question',
+                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
+                  options: [
+                    'Execute',
+                    'Cancel',
+                  ],
+                });
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
@@ -1093,25 +1190,85 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const summary = codebaseIndex.getSummary();
                 const patterns = codebaseIndex.getPatterns();
 
-                let totalScore = 0;
+                // Better architecture scoring
                 const purposes = ['schema', 'service', 'hook', 'component'];
-                
+                const filesByPurpose: Record<string, number> = {};
+                let hasAllLayers = true;
+                let layerScore = 0;
+
                 for (const purpose of purposes) {
                   const files = codebaseIndex.getFilesByPurpose(purpose);
-                  if (files.length > 0) {
-                    totalScore += (files.length / 10) * 2.5;
+                  filesByPurpose[purpose] = files.length;
+                  
+                  // Check if layer exists
+                  if (files.length === 0) {
+                    hasAllLayers = false;
+                  } else {
+                    // Award points for having this layer with reasonable file count
+                    if (files.length >= 1) {
+                      layerScore += 2; // Layer exists: 2 points
+                    }
                   }
                 }
 
-                const score = Math.min(10, totalScore);
+                // Base score from layer completeness
+                let totalScore = layerScore; // 0-8 points from layers
+
+                // Bonus for layer separation quality
+                const hasServices = filesByPurpose['service'] > 0;
+                const hasHooks = filesByPurpose['hook'] > 0;
+                const hasComponents = filesByPurpose['component'] > 0;
+                const hasSchemas = filesByPurpose['schema'] > 0;
+
+                // Award points for proper architecture patterns
+                if (hasSchemas && hasServices && hasHooks && hasComponents) {
+                  totalScore += 1.5; // Proper 4-layer architecture
+                }
+                
+                if (hasServices && hasComponents && !hasHooks) {
+                  totalScore += 0.5; // Services + Components is acceptable (no hooks needed for all)
+                }
+
+                // Bonus for good service-to-component ratio
+                const serviceCount = filesByPurpose['service'];
+                const componentCount = filesByPurpose['component'];
+                if (serviceCount >= 2 && componentCount >= 1) {
+                  totalScore += 1; // Good modular structure
+                }
+
+                // Penalty for too few files or bad structure
+                if (filesByPurpose['component'] === 0 && (filesByPurpose['service'] + filesByPurpose['hook']) === 0) {
+                  totalScore -= 3; // No actual code structure
+                }
+
+                const score = Math.min(10, Math.max(0, totalScore));
+
+                // Build detailed report
+                let report = `🏆 **Architecture Rating: ${Math.round(score)}/10**\n\n`;
+                report += `${summary}\n\n`;
+                report += `**Layer Breakdown:**\n`;
+                report += `${filesByPurpose['schema'] > 0 ? '✅' : '❌'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
+                report += `${filesByPurpose['service'] > 0 ? '✅' : '❌'} Services: ${filesByPurpose['service']} file(s)\n`;
+                report += `${filesByPurpose['hook'] > 0 ? '✅' : '❌'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
+                report += `${filesByPurpose['component'] > 0 ? '✅' : '❌'} Components: ${filesByPurpose['component']} file(s)\n\n`;
+
+                if (score >= 8) {
+                  report += `✅ **Excellent architecture!** Clear separation of concerns, proper layering.`;
+                } else if (score >= 6) {
+                  report += `⚠️ **Good structure** with room for improvement. Consider:`;
+                  if (filesByPurpose['schema'] === 0) report += `\n- Add schemas for type safety`;
+                  if (filesByPurpose['service'] < 2) report += `\n- Extract more business logic to services`;
+                  if (filesByPurpose['component'] === 0) report += `\n- Create UI components`;
+                } else {
+                  report += `❌ **Needs refactoring.** Consider:`;
+                  report += `\n- Create proper layer separation`;
+                  report += `\n- Extract business logic from components`;
+                  report += `\n- Add schema validation`;
+                }
 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `🏆 **Architecture Rating**\n\n${summary}\n\n` +
-                    `**Overall Score:** ${Math.round(score)}/10\n` +
-                    (score >= 8 ? `✅ Excellent architecture!` :
-                     score >= 6 ? `⚠️ Good structure, room for improvement` :
-                     `❌ Consider refactoring for better patterns`),
+                  text: report,
                   success: true,
                 });
               } catch (err) {
@@ -1599,8 +1756,154 @@ ${fileContent}
 
           case 'answerQuestion': {
             // Handle clarification question response
+            const answer = message.answer;
+            
+            // Check if this is an extraction action response
+            const extractionData = (chatPanel as any)._currentExtraction;
+            if (extractionData && ['Execute', 'Cancel'].includes(answer)) {
+              const { extraction, hookFile, serviceName, code } = extractionData;
+              
+              try {
+                if (answer === 'Execute') {
+                  chatPanel?.webview.postMessage({
+                    command: 'status',
+                    text: `✏️ Executing extraction...`,
+                    type: 'info',
+                  });
+
+                  const { extraction, hookFile, serviceName, code } = extractionData;
+
+                  try {
+                    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                    if (!workspaceFolder) {
+                      throw new Error('No workspace folder open');
+                    }
+
+                    // Write service file to src/services/ directory
+                    const serviceDir = vscode.Uri.joinPath(workspaceFolder.uri, 'src', 'services');
+                    try {
+                      await vscode.workspace.fs.createDirectory(serviceDir);
+                    } catch (e) {
+                      // Directory might already exist
+                    }
+
+                    const serviceFilePath = vscode.Uri.joinPath(serviceDir, `${serviceName}.ts`);
+                    await vscode.workspace.fs.writeFile(
+                      serviceFilePath,
+                      new TextEncoder().encode(extraction.extractedCode)
+                    );
+
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `✅ **Service Extraction Successful**\n\n` +
+                        `**New Service File:** src/services/${serviceName}.ts\n` +
+                        `**Updated Hook:** ${hookFile}\n\n` +
+                        `The API logic has been extracted to a pure service layer (no React hooks).\n\n` +
+                        `**Next Steps:**\n` +
+                        `1. Update your hook to import from the new service\n` +
+                        `2. Run tests to verify functionality\n` +
+                        `3. Remove duplicate logic from the original hook`,
+                      success: true,
+                    });
+                  } catch (err) {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+                    });
+                  }
+                } else if (answer === 'Cancel') {
+                  chatPanel?.webview.postMessage({
+                    command: 'addMessage',
+                    text: `⏭️ **Extraction cancelled**`,
+                    success: true,
+                  });
+                }
+                
+                // Clear extraction data
+                (chatPanel as any)._currentExtraction = null;
+                break;
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Extract action error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+                break;
+              }
+            }
+            
+            // Check if this is a refactor extraction button click
+            const refactorData = (chatPanel as any)._currentRefactorData;
+            if (refactorData && answer.startsWith('Extract: ')) {
+              const extractionName = answer.replace('Extract: ', '');
+              const { filepath, code } = refactorData;
+              
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔄 Extracting ${extractionName}...`,
+                  type: 'info',
+                });
+
+                // Generate service name from extraction suggestion
+                // e.g., "Extract API logic to useApi hook" -> "useApi"
+                let serviceName = '';
+                
+                // First try: match 'to <serviceName>' pattern
+                const toMatch = extractionName.match(/\bto\s+(\w+)/i);
+                if (toMatch && toMatch[1]) {
+                  serviceName = toMatch[1];
+                }
+                
+                // Second try: match camelCase starting with 'use'
+                if (!serviceName) {
+                  const useMatch = extractionName.match(/\b(use\w+)\b/i);
+                  if (useMatch && useMatch[1]) {
+                    serviceName = useMatch[1];
+                  }
+                }
+                
+                // Fallback
+                if (!serviceName) {
+                  serviceName = extractionName.split(' ')[0];
+                }
+
+                // Extract service using LLM-based extraction with semantic analysis
+                const analysis = refactorData.analysis;
+                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName, analysis);
+                
+                // Store extraction data for when user chooses action
+                (chatPanel as any)._currentExtraction = {
+                  extraction,
+                  hookFile: filepath,
+                  serviceName,
+                  code,
+                };
+
+                // Show extraction preview with action buttons
+                postChatMessage({
+                  command: 'question',
+                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
+                  options: [
+                    'Execute',
+                    'Cancel',
+                  ],
+                });
+                
+                // Clear refactor data
+                (chatPanel as any)._currentRefactorData = null;
+                break;
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Refactor extraction error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+                break;
+              }
+            }
+            
+            // Regular question answer (not extraction)
             if (pendingQuestionResolve) {
-              pendingQuestionResolve(message.answer);
+              pendingQuestionResolve(answer);
               pendingQuestionResolve = null;
             }
             break;
@@ -1733,8 +2036,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize Phase 3.4 components
   architecturePatterns = new ArchitecturePatterns();
-  featureAnalyzer = new FeatureAnalyzer();
-  serviceExtractor = new ServiceExtractor();
+  featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
+  serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
 
   // Register commands
