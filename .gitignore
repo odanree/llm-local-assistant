@@ -16,3 +16,6 @@ examples/**/test/
 
 # LinkedIn post (less transparency on social media strategy)
 docs/LINKEDIN_POST.md
+
+# Generated packages
+llm-local-assistant-*.vsix
