@@ -1190,25 +1190,85 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const summary = codebaseIndex.getSummary();
                 const patterns = codebaseIndex.getPatterns();
 
-                let totalScore = 0;
+                // Better architecture scoring
                 const purposes = ['schema', 'service', 'hook', 'component'];
-                
+                const filesByPurpose: Record<string, number> = {};
+                let hasAllLayers = true;
+                let layerScore = 0;
+
                 for (const purpose of purposes) {
                   const files = codebaseIndex.getFilesByPurpose(purpose);
-                  if (files.length > 0) {
-                    totalScore += (files.length / 10) * 2.5;
+                  filesByPurpose[purpose] = files.length;
+                  
+                  // Check if layer exists
+                  if (files.length === 0) {
+                    hasAllLayers = false;
+                  } else {
+                    // Award points for having this layer with reasonable file count
+                    if (files.length >= 1) {
+                      layerScore += 2; // Layer exists: 2 points
+                    }
                   }
                 }
 
-                const score = Math.min(10, totalScore);
+                // Base score from layer completeness
+                let totalScore = layerScore; // 0-8 points from layers
+
+                // Bonus for layer separation quality
+                const hasServices = filesByPurpose['service'] > 0;
+                const hasHooks = filesByPurpose['hook'] > 0;
+                const hasComponents = filesByPurpose['component'] > 0;
+                const hasSchemas = filesByPurpose['schema'] > 0;
+
+                // Award points for proper architecture patterns
+                if (hasSchemas && hasServices && hasHooks && hasComponents) {
+                  totalScore += 1.5; // Proper 4-layer architecture
+                }
+                
+                if (hasServices && hasComponents && !hasHooks) {
+                  totalScore += 0.5; // Services + Components is acceptable (no hooks needed for all)
+                }
+
+                // Bonus for good service-to-component ratio
+                const serviceCount = filesByPurpose['service'];
+                const componentCount = filesByPurpose['component'];
+                if (serviceCount >= 2 && componentCount >= 1) {
+                  totalScore += 1; // Good modular structure
+                }
+
+                // Penalty for too few files or bad structure
+                if (filesByPurpose['component'] === 0 && (filesByPurpose['service'] + filesByPurpose['hook']) === 0) {
+                  totalScore -= 3; // No actual code structure
+                }
+
+                const score = Math.min(10, Math.max(0, totalScore));
+
+                // Build detailed report
+                let report = `🏆 **Architecture Rating: ${Math.round(score)}/10**\n\n`;
+                report += `${summary}\n\n`;
+                report += `**Layer Breakdown:**\n`;
+                report += `${filesByPurpose['schema'] > 0 ? '✅' : '❌'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
+                report += `${filesByPurpose['service'] > 0 ? '✅' : '❌'} Services: ${filesByPurpose['service']} file(s)\n`;
+                report += `${filesByPurpose['hook'] > 0 ? '✅' : '❌'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
+                report += `${filesByPurpose['component'] > 0 ? '✅' : '❌'} Components: ${filesByPurpose['component']} file(s)\n\n`;
+
+                if (score >= 8) {
+                  report += `✅ **Excellent architecture!** Clear separation of concerns, proper layering.`;
+                } else if (score >= 6) {
+                  report += `⚠️ **Good structure** with room for improvement. Consider:`;
+                  if (filesByPurpose['schema'] === 0) report += `\n- Add schemas for type safety`;
+                  if (filesByPurpose['service'] < 2) report += `\n- Extract more business logic to services`;
+                  if (filesByPurpose['component'] === 0) report += `\n- Create UI components`;
+                } else {
+                  report += `❌ **Needs refactoring.** Consider:`;
+                  report += `\n- Create proper layer separation`;
+                  report += `\n- Extract business logic from components`;
+                  report += `\n- Add schema validation`;
+                }
 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `🏆 **Architecture Rating**\n\n${summary}\n\n` +
-                    `**Overall Score:** ${Math.round(score)}/10\n` +
-                    (score >= 8 ? `✅ Excellent architecture!` :
-                     score >= 6 ? `⚠️ Good structure, room for improvement` :
-                     `❌ Consider refactoring for better patterns`),
+                  text: report,
                   success: true,
                 });
               } catch (err) {
