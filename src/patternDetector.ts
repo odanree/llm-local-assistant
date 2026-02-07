@@ -81,7 +81,7 @@ Don't force a pattern just because of coincidental keywords.`;
       
       return {
         pattern: result.pattern || 'None',
-        confidence: Math.min(1, Math.max(0, result.confidence || 0.5)),
+        confidence: Math.min(1, Math.max(0, result.confidence !== undefined ? result.confidence : 0.5)),
         reasoning: result.reasoning || 'LLM analysis',
         suggestedImprovements: Array.isArray(result.suggestedImprovements) 
           ? result.suggestedImprovements 
