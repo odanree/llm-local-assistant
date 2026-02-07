@@ -1718,16 +1718,59 @@ ${fileContent}
                   const execution = await refactoringExecutor.executeRefactoring(plan, code);
 
                   if (execution.success) {
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: `✅ **Service Extraction Successful**\n\n` +
-                        `**New Service File:** ${serviceName}.ts\n` +
-                        `**Updated Hook:** ${hookFile}\n` +
-                        `**Generated Tests:** ${execution.testCases.length}\n\n` +
-                        `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
-                        `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)`,
-                      success: true,
-                    });
+                    // Write files to disk
+                    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                    if (workspaceFolder) {
+                      try {
+                        // Determine file directory from hookFile path
+                        const hookDir = hookFile.substring(0, hookFile.lastIndexOf('/'));
+                        const serviceFileName = `${serviceName}.ts`;
+                        const testFileName = `${serviceName}.test.ts`;
+                        
+                        // Write service file
+                        const serviceFileUri = vscode.Uri.joinPath(
+                          workspaceFolder.uri,
+                          hookDir ? `${hookDir}/${serviceFileName}` : serviceFileName
+                        );
+                        const serviceContent = new TextEncoder().encode(execution.refactoredCode);
+                        await vscode.workspace.fs.writeFile(serviceFileUri, serviceContent);
+                        
+                        // Write test file if there are test cases
+                        if (execution.testCases.length > 0) {
+                          const testContent = execution.testCases
+                            .map(tc => `// ${tc.name}: ${tc.description}\n${tc.code}`)
+                            .join('\n\n');
+                          const testFileUri = vscode.Uri.joinPath(
+                            workspaceFolder.uri,
+                            hookDir ? `${hookDir}/${testFileName}` : testFileName
+                          );
+                          const encodedTestContent = new TextEncoder().encode(testContent);
+                          await vscode.workspace.fs.writeFile(testFileUri, encodedTestContent);
+                        }
+                        
+                        chatPanel?.webview.postMessage({
+                          command: 'addMessage',
+                          text: `✅ **Service Extraction Successful**\n\n` +
+                            `**New Service File:** ${serviceFileName}\n` +
+                            `**Test File:** ${testFileName} (${execution.testCases.length} tests)\n` +
+                            `**Updated Hook:** ${hookFile}\n\n` +
+                            `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
+                            `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)\n\n` +
+                            `✨ Files written to disk!`,
+                          success: true,
+                        });
+                      } catch (writeErr) {
+                        chatPanel?.webview.postMessage({
+                          command: 'addMessage',
+                          error: `Failed to write files: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`,
+                        });
+                      }
+                    } else {
+                      chatPanel?.webview.postMessage({
+                        command: 'addMessage',
+                        error: 'No workspace folder open',
+                      });
+                    }
                   } else {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
