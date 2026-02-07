@@ -1416,17 +1416,35 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             const suggestMatch = text.match(/^\/suggest-patterns/);
             if (suggestMatch) {
               try {
+                const folders = vscode.workspace.workspaceFolders;
+                
+                // If multiple workspaces, ask user which one to analyze
+                if (folders && folders.length > 1) {
+                  postChatMessage({
+                    command: 'question',
+                    question: `📁 **Multiple workspaces detected.** Which project would you like to analyze?`,
+                    options: folders.map(f => f.name),
+                  });
+                  
+                  // Store for handling the answer
+                  (chatPanel as any)._suggestPatternsWorkspaces = folders;
+                  return;
+                }
+
                 chatPanel?.webview.postMessage({
                   command: 'status',
                   text: `🔍 Analyzing patterns...`,
                   type: 'info',
                 });
 
-                // Initialize codebase index if needed
+                // Initialize codebase index with the selected/only workspace
+                const selectedFolder = folders?.[0];
+                if (!selectedFolder) {
+                  throw new Error('No workspace folder open');
+                }
+
                 if (!codebaseIndex) {
-                  codebaseIndex = new CodebaseIndex(
-                    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-                  );
+                  codebaseIndex = new CodebaseIndex(selectedFolder.uri.fsPath);
                   await codebaseIndex.scan();
                 }
 
@@ -1446,7 +1464,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `💡 **Pattern Suggestions**\n\n` +
+                  text: `💡 **Pattern Suggestions** (${selectedFolder.name})\n\n` +
                     `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
                     `**Recommendations:**\n${suggestions.length > 0 ? suggestions.slice(0, 5).join('\n') : 'All files follow good patterns!'}\n\n` +
                     `Use **/refactor <file>** to apply improvements`,
@@ -2003,6 +2021,59 @@ ${fileContent}
                   error: `Rating error: ${err instanceof Error ? err.message : String(err)}`,
                 });
                 (chatPanel as any)._rateArchitectureWorkspaces = null;
+                break;
+              }
+            }
+            
+            // Check if this is a workspace selection for /suggest-patterns
+            const suggestPatternsWorkspaces = (chatPanel as any)._suggestPatternsWorkspaces;
+            if (suggestPatternsWorkspaces && suggestPatternsWorkspaces.some((f: any) => f.name === answer)) {
+              try {
+                // Find the selected workspace
+                const selectedFolder = suggestPatternsWorkspaces.find((f: any) => f.name === answer);
+                
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔍 Analyzing ${answer} patterns...`,
+                  type: 'info',
+                });
+
+                // Initialize codebase index for selected workspace
+                codebaseIndex = new CodebaseIndex(selectedFolder.uri.fsPath);
+                await codebaseIndex.scan();
+
+                // Get all files and suggest patterns
+                const patterns = architecturePatterns.getAllPatterns();
+                const suggestions: string[] = [];
+                
+                const allFiles = codebaseIndex.getFilesInDependencyOrder();
+                
+                for (const file of allFiles) {
+                  // Try to detect pattern from path and purpose
+                  const detected = architecturePatterns.detectPattern(file.path || '');
+                  if (!detected) {
+                    suggestions.push(`📄 ${file.path} (${file.purpose}) — Could use a structured pattern`);
+                  }
+                }
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `💡 **Pattern Suggestions** (${answer})\n\n` +
+                    `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
+                    `**Recommendations:**\n${suggestions.length > 0 ? suggestions.slice(0, 5).join('\n') : 'All files follow good patterns!'}\n\n` +
+                    `Use **/refactor <file>** to apply improvements`,
+                  success: true,
+                });
+                
+                // Clear workspace selection
+                (chatPanel as any)._suggestPatternsWorkspaces = null;
+                break;
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Pattern error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+                (chatPanel as any)._suggestPatternsWorkspaces = null;
                 break;
               }
             }
