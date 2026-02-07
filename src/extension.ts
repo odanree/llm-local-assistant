@@ -1497,19 +1497,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   }
                 }
 
-                // Format suggestions with confidence levels and copy-pastable commands
+                // Format suggestions with button options for quick refactoring
                 const suggestionText = suggestions.length > 0 
                   ? suggestions.slice(0, 5).map(s => 
-                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}\n   \`/refactor ${s.file}\``
+                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}`
                     ).join('\n\n')
                   : 'All files already follow good patterns!';
+
+                // Create refactor buttons for each suggestion
+                const refactorButtons = suggestions.length > 0
+                  ? suggestions.slice(0, 5).map(s => `Execute: /refactor ${s.file}`)
+                  : [];
 
                 postChatMessage({
                   command: 'addMessage',
                   text: `💡 **Pattern Suggestions** (${selectedFolder.name})\n\n` +
                     `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
-                    `**Recommendations:**\n${suggestionText}\n\n` +
-                    `Use **/refactor <file>** to apply improvements`,
+                    `**Recommendations:**\n${suggestionText}`,
+                  options: refactorButtons.length > 0 ? refactorButtons : undefined,
                   success: true,
                 });
               } catch (err) {
@@ -2116,19 +2121,24 @@ ${fileContent}
                   }
                 }
 
-                // Format suggestions with confidence levels and copy-pastable commands
+                // Format suggestions with button options for quick refactoring
                 const suggestionText = suggestions.length > 0 
                   ? suggestions.slice(0, 5).map(s => 
-                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}\n   \`/refactor ${s.file}\``
+                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}`
                     ).join('\n\n')
                   : 'All files already follow good patterns!';
+
+                // Create refactor buttons for each suggestion
+                const refactorButtons = suggestions.length > 0
+                  ? suggestions.slice(0, 5).map(s => `Execute: /refactor ${s.file}`)
+                  : [];
 
                 postChatMessage({
                   command: 'addMessage',
                   text: `💡 **Pattern Suggestions** (${answer})\n\n` +
                     `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
-                    `**Recommendations:**\n${suggestionText}\n\n` +
-                    `Use **/refactor <file>** to apply improvements`,
+                    `**Recommendations:**\n${suggestionText}`,
+                  options: refactorButtons.length > 0 ? refactorButtons : undefined,
                   success: true,
                 });
                 
