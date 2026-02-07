@@ -1015,6 +1015,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   report += `**Suggested Extractions:**\n${
                     semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
                   }\n\n`;
+                  
+                  // Add command line options for each extraction
+                  report += `**Quick Extract Commands:**\n`;
+                  semanticAnalysis.suggestedExtractions.forEach((extraction, idx) => {
+                    // Parse extraction suggestion to get service name
+                    // e.g., "API logic to useApi hook" -> "useApi"
+                    const serviceName = extraction
+                      .match(/use\w+|[A-Z]\w+/)?.[0] || `service${idx + 1}`;
+                    report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
+                  });
+                  report += `\n`;
                 }
                 
                 postChatMessage({
