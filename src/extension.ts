@@ -1708,73 +1708,48 @@ ${fileContent}
                 if (answer === 'Execute') {
                   chatPanel?.webview.postMessage({
                     command: 'status',
-                    text: `✏️ Executing refactoring...`,
+                    text: `✏️ Executing extraction...`,
                     type: 'info',
                   });
 
-                  // Execute with RefactoringExecutor
-                  const hookAnalysis = serviceExtractor.analyzeHook(hookFile, code);
-                  const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
-                  const execution = await refactoringExecutor.executeRefactoring(plan, code);
+                  const { extraction, hookFile, serviceName, code } = extractionData;
 
-                  if (execution.success) {
-                    // Write files to disk
+                  try {
                     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-                    if (workspaceFolder) {
-                      try {
-                        // Determine file directory from hookFile path
-                        const hookDir = hookFile.substring(0, hookFile.lastIndexOf('/'));
-                        const serviceFileName = `${serviceName}.ts`;
-                        const testFileName = `${serviceName}.test.ts`;
-                        
-                        // Write service file
-                        const serviceFileUri = vscode.Uri.joinPath(
-                          workspaceFolder.uri,
-                          hookDir ? `${hookDir}/${serviceFileName}` : serviceFileName
-                        );
-                        const serviceContent = new TextEncoder().encode(execution.refactoredCode);
-                        await vscode.workspace.fs.writeFile(serviceFileUri, serviceContent);
-                        
-                        // Write test file if there are test cases
-                        if (execution.testCases.length > 0) {
-                          const testContent = execution.testCases
-                            .map(tc => `// ${tc.name}: ${tc.description}\n${tc.code}`)
-                            .join('\n\n');
-                          const testFileUri = vscode.Uri.joinPath(
-                            workspaceFolder.uri,
-                            hookDir ? `${hookDir}/${testFileName}` : testFileName
-                          );
-                          const encodedTestContent = new TextEncoder().encode(testContent);
-                          await vscode.workspace.fs.writeFile(testFileUri, encodedTestContent);
-                        }
-                        
-                        chatPanel?.webview.postMessage({
-                          command: 'addMessage',
-                          text: `✅ **Service Extraction Successful**\n\n` +
-                            `**New Service File:** ${serviceFileName}\n` +
-                            `**Test File:** ${testFileName} (${execution.testCases.length} tests)\n` +
-                            `**Updated Hook:** ${hookFile}\n\n` +
-                            `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
-                            `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)\n\n` +
-                            `✨ Files written to disk!`,
-                          success: true,
-                        });
-                      } catch (writeErr) {
-                        chatPanel?.webview.postMessage({
-                          command: 'addMessage',
-                          error: `Failed to write files: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`,
-                        });
-                      }
-                    } else {
-                      chatPanel?.webview.postMessage({
-                        command: 'addMessage',
-                        error: 'No workspace folder open',
-                      });
+                    if (!workspaceFolder) {
+                      throw new Error('No workspace folder open');
                     }
-                  } else {
+
+                    // Write service file to src/services/ directory
+                    const serviceDir = vscode.Uri.joinPath(workspaceFolder.uri, 'src', 'services');
+                    try {
+                      await vscode.workspace.fs.createDirectory(serviceDir);
+                    } catch (e) {
+                      // Directory might already exist
+                    }
+
+                    const serviceFilePath = vscode.Uri.joinPath(serviceDir, `${serviceName}.ts`);
+                    await vscode.workspace.fs.writeFile(
+                      serviceFilePath,
+                      new TextEncoder().encode(extraction.extractedCode)
+                    );
+
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      error: `Extraction failed: ${execution.errors.join(', ')}`,
+                      text: `✅ **Service Extraction Successful**\n\n` +
+                        `**New Service File:** src/services/${serviceName}.ts\n` +
+                        `**Updated Hook:** ${hookFile}\n\n` +
+                        `The API logic has been extracted to a pure service layer (no React hooks).\n\n` +
+                        `**Next Steps:**\n` +
+                        `1. Update your hook to import from the new service\n` +
+                        `2. Run tests to verify functionality\n` +
+                        `3. Remove duplicate logic from the original hook`,
+                      success: true,
+                    });
+                  } catch (err) {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
                     });
                   }
                 } else if (answer === 'Cancel') {
@@ -1833,8 +1808,9 @@ ${fileContent}
                   serviceName = extractionName.split(' ')[0];
                 }
 
-                // Extract service
-                const extraction = serviceExtractor.extractService(code, filepath, serviceName);
+                // Extract service using LLM-based extraction with semantic analysis
+                const analysis = refactorData.analysis;
+                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName, analysis);
                 
                 // Store extraction data for when user chooses action
                 (chatPanel as any)._currentExtraction = {
