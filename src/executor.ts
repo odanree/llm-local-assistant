@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
+import SmartAutoCorrection from './smartAutoCorrection';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
 import CodebaseIndex from './codebaseIndex';
@@ -1146,18 +1147,64 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               'info'
             );
             
-            const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+            // SMART AUTO-CORRECTION: Try to fix common issues without LLM first
+            const canAutoFix = SmartAutoCorrection.isAutoFixable(lastValidationErrors);
+            let correctedContent: string;
             
-            const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-            
-            if (!fixResponse.success) {
-              throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
-            }
-            
-            let correctedContent = fixResponse.message || '';
-            const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-            if (codeBlockMatch) {
-              correctedContent = codeBlockMatch[1];
+            if (canAutoFix) {
+              // Try smart auto-correction first
+              this.config.onMessage?.(
+                `🧠 Attempting smart auto-correction (missing imports, unused imports, etc.)...`,
+                'info'
+              );
+              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastValidationErrors);
+              
+              // Validate the smart-fixed code
+              const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step);
+              if (smartValidation.valid) {
+                // Smart fix worked!
+                this.config.onMessage?.(
+                  `✅ Smart auto-correction successful! Fixed: ${lastValidationErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastValidationErrors.length > 2 ? ', ...' : ''}`,
+                  'info'
+                );
+                correctedContent = smartFixed;
+              } else {
+                // Smart fix didn't fully work, fall back to LLM
+                this.config.onMessage?.(
+                  `⚠️ Smart fix incomplete, using LLM for context-aware correction...`,
+                  'info'
+                );
+                const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+                
+                const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+                if (!fixResponse.success) {
+                  throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                }
+                
+                correctedContent = fixResponse.message || '';
+                const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                if (codeBlockMatch) {
+                  correctedContent = codeBlockMatch[1];
+                }
+              }
+            } else {
+              // Complex errors that need LLM
+              this.config.onMessage?.(
+                `🤖 Using LLM for context-aware correction (complex errors detected)...`,
+                'info'
+              );
+              const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+              
+              const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+              if (!fixResponse.success) {
+                throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+              }
+              
+              correctedContent = fixResponse.message || '';
+              const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+              if (codeBlockMatch) {
+                correctedContent = codeBlockMatch[1];
+              }
             }
             
             // Re-validate the corrected code
