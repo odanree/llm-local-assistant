@@ -43,6 +43,9 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
     return folders[0];
   }
 
+  // Normalize the path: convert backslashes to forward slashes for consistency
+  const normalizedPath = filepath.replace(/\\/g, '/');
+
   // For multiple folders, try to find the one containing the file
   // First, check if filepath is absolute
   if (path.isAbsolute(filepath)) {
@@ -57,10 +60,13 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
   // If relative path, try to find it in any workspace folder by checking existence
   for (const folder of folders) {
     try {
-      const fileUri = vscode.Uri.joinPath(folder.uri, filepath);
+      // Use normalized path with forward slashes
+      const fileUri = vscode.Uri.joinPath(folder.uri, normalizedPath);
+      console.log(`[Multi-workspace] Checking ${folder.name}: ${fileUri.fsPath}`);
       // Try to stat the file to check if it exists
       await vscode.workspace.fs.stat(fileUri);
       // If we get here, file exists in this folder
+      console.log(`[Multi-workspace] Found file in workspace: ${folder.name}`);
       return folder;
     } catch (error) {
       // File doesn't exist in this folder, continue searching
@@ -69,6 +75,7 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
   }
 
   // Default to first folder (will let command handler report the error)
+  console.log(`[Multi-workspace] File not found in any workspace, defaulting to first folder`);
   return folders[0];
 }
 
