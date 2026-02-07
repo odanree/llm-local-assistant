@@ -1785,8 +1785,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize Phase 3.4 components
   architecturePatterns = new ArchitecturePatterns();
-  featureAnalyzer = new FeatureAnalyzer();
-  serviceExtractor = new ServiceExtractor();
+  featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
+  serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
 
   // Register commands
