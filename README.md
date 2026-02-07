@@ -504,6 +504,66 @@ Run: /design-system <feature>
 
 ## 📸 Workflow Screenshots
 
+### Phase 3.4 - Intelligent Refactoring Commands
+
+#### `/refactor` + `/extract-service` - Semantic Analysis & Extraction
+![Phase 3.4 Refactor](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase3.4-screenshots/1-refactor-and-extract.png)
+
+*Shows `/refactor` command with intelligent extraction suggestions:*
+- *5-layer semantic analysis (state, dependencies, coupling, data flow, patterns)*
+- *Issues found with severity indicators (⚠️ warnings, ⚡ anti-patterns)*
+- *Suggested extractions with confidence scores*
+- *One-click buttons to extract services: "Extract: Extract API logic to useApi hook"*
+- *Seamless workflow: analyze → suggest → extract*
+
+#### `/rate-architecture` - Architecture Scoring
+![Phase 3.4 Rate Architecture](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase3.4-screenshots/2-rate-architecture.png)
+
+*Shows `/rate-architecture` providing intelligent scoring:*
+- *Overall architecture rating (10/10 scale with emoji)*
+- *Codebase structure analysis with file organization*
+- *Detected patterns: Zod schema, React components, TanStack Query, custom hooks*
+- *Layer breakdown: Schemas (1), Services (8), Hooks (2), Components (2)*
+- *Assessment: "Excellent architecture - Clear separation of concerns, proper layering"*
+- *Scanner output showing real codebase analysis*
+
+#### `/suggest-patterns` - Design Pattern Recommendations
+![Phase 3.4 Suggest Patterns](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase3.4-screenshots/3-suggest-patterns.png)
+
+*Shows `/suggest-patterns` with actionable recommendations:*
+- *Available patterns list: CRUD, Authentication, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination*
+- *Recommendations with file-by-file guidance*
+- *Pattern suggestions for components, hooks, schemas*
+- *Next steps guidance: "Use **/refactor <file>** to apply improvements"*
+
+#### `/context show structure` - Project Organization
+![Phase 3.4 Context Structure](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase3.4-screenshots/4-context-structure.png)
+
+*Shows `/context show structure` visualizing project organization:*
+- *Project structure header*
+- *Files organized by purpose: components, hooks, services, types, schemas, models*
+- *File list with proper naming conventions*
+- *Layer breakdown showing distribution: Schemas (1), Services (8), Hooks (2), Components (2)*
+- *Architecture assessment: "Excellent architecture - Clear separation of concerns, proper layering"*
+
+#### `/context show patterns` - Pattern Detection
+![Phase 3.4 Context Patterns](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase3.4-screenshots/5-context-patterns.png)
+
+*Shows `/context show patterns` detecting design patterns:*
+- *Detected patterns with file counts:*
+  - *Zod schema (5 files)*
+  - *React component (2 files)*
+  - *TanStack Query (1 file)*
+  - *Custom hook (2 files)*
+  - *Validation schema (1 file)*
+  - *API service (8 files)*
+- *Pattern recognition helps identify code organization*
+- *Foundation for automated refactoring suggestions*
+
+---
+
+### Phase 2-3 - Earlier Workflow Screenshots
+
 ### 1. Planning View - Multi-Step Decomposition
 ![Phase 2 Planning](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-planning.png)
 
