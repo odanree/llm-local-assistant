@@ -11,6 +11,7 @@ import { ArchitecturePatterns } from './architecturePatterns';
 import { FeatureAnalyzer } from './featureAnalyzer';
 import { ServiceExtractor } from './serviceExtractor';
 import { RefactoringExecutor } from './refactoringExecutor';
+import { PatternDetector } from './patternDetector';
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -18,6 +19,7 @@ let planner: Planner;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let architecturePatterns: ArchitecturePatterns;
+let patternDetector: PatternDetector;
 let featureAnalyzer: FeatureAnalyzer;
 let serviceExtractor: ServiceExtractor;
 let refactoringExecutor: RefactoringExecutor;
@@ -1448,25 +1450,50 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   await codebaseIndex.scan();
                 }
 
-                // Get all files and suggest patterns
+                // Get all files and suggest patterns using LLM-based detection
                 const patterns = architecturePatterns.getAllPatterns();
-                const suggestions: string[] = [];
+                const suggestions: { file: string; pattern: string; confidence: number; reason: string }[] = [];
                 
                 const allFiles = codebaseIndex.getFilesInDependencyOrder();
                 
+                // Analyze each file with LLM for smarter pattern detection
                 for (const file of allFiles) {
-                  // Try to detect pattern from path and purpose
-                  const detected = architecturePatterns.detectPattern(file.path || '');
-                  if (!detected) {
-                    suggestions.push(`📄 ${file.path} (${file.purpose}) — Could use a structured pattern`);
+                  try {
+                    // Read file content for LLM analysis
+                    const fileUri = vscode.Uri.joinPath(selectedFolder.uri, file.path || '');
+                    const fileData = await vscode.workspace.fs.readFile(fileUri);
+                    const fileContent = new TextDecoder().decode(fileData);
+                    
+                    // Use LLM-based pattern detection instead of keyword matching
+                    const detectionResult = await patternDetector.detectPatternWithLLM(fileContent, file.path || '');
+                    
+                    // Only flag if we should (high confidence + not "None")
+                    if (patternDetector.shouldFlagPattern(detectionResult)) {
+                      suggestions.push({
+                        file: file.path || '',
+                        pattern: detectionResult.pattern,
+                        confidence: detectionResult.confidence,
+                        reason: detectionResult.reasoning,
+                      });
+                    }
+                  } catch (err) {
+                    // Skip files that can't be read
+                    console.log(`[suggest-patterns] Could not analyze ${file.path}: ${err}`);
                   }
                 }
+
+                // Format suggestions with confidence levels
+                const suggestionText = suggestions.length > 0 
+                  ? suggestions.slice(0, 5).map(s => 
+                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}`
+                    ).join('\n')
+                  : 'All files already follow good patterns!';
 
                 postChatMessage({
                   command: 'addMessage',
                   text: `💡 **Pattern Suggestions** (${selectedFolder.name})\n\n` +
                     `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
-                    `**Recommendations:**\n${suggestions.length > 0 ? suggestions.slice(0, 5).join('\n') : 'All files follow good patterns!'}\n\n` +
+                    `**Recommendations:**\n${suggestionText}\n\n` +
                     `Use **/refactor <file>** to apply improvements`,
                   success: true,
                 });
@@ -2042,25 +2069,50 @@ ${fileContent}
                 codebaseIndex = new CodebaseIndex(selectedFolder.uri.fsPath);
                 await codebaseIndex.scan();
 
-                // Get all files and suggest patterns
+                // Get all files and suggest patterns using LLM-based detection
                 const patterns = architecturePatterns.getAllPatterns();
-                const suggestions: string[] = [];
+                const suggestions: { file: string; pattern: string; confidence: number; reason: string }[] = [];
                 
                 const allFiles = codebaseIndex.getFilesInDependencyOrder();
                 
+                // Analyze each file with LLM for smarter pattern detection
                 for (const file of allFiles) {
-                  // Try to detect pattern from path and purpose
-                  const detected = architecturePatterns.detectPattern(file.path || '');
-                  if (!detected) {
-                    suggestions.push(`📄 ${file.path} (${file.purpose}) — Could use a structured pattern`);
+                  try {
+                    // Read file content for LLM analysis
+                    const fileUri = vscode.Uri.joinPath(selectedFolder.uri, file.path || '');
+                    const fileData = await vscode.workspace.fs.readFile(fileUri);
+                    const fileContent = new TextDecoder().decode(fileData);
+                    
+                    // Use LLM-based pattern detection instead of keyword matching
+                    const detectionResult = await patternDetector.detectPatternWithLLM(fileContent, file.path || '');
+                    
+                    // Only flag if we should (high confidence + not "None")
+                    if (patternDetector.shouldFlagPattern(detectionResult)) {
+                      suggestions.push({
+                        file: file.path || '',
+                        pattern: detectionResult.pattern,
+                        confidence: detectionResult.confidence,
+                        reason: detectionResult.reasoning,
+                      });
+                    }
+                  } catch (err) {
+                    // Skip files that can't be read
+                    console.log(`[suggest-patterns] Could not analyze ${file.path}: ${err}`);
                   }
                 }
+
+                // Format suggestions with confidence levels
+                const suggestionText = suggestions.length > 0 
+                  ? suggestions.slice(0, 5).map(s => 
+                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}`
+                    ).join('\n')
+                  : 'All files already follow good patterns!';
 
                 postChatMessage({
                   command: 'addMessage',
                   text: `💡 **Pattern Suggestions** (${answer})\n\n` +
                     `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
-                    `**Recommendations:**\n${suggestions.length > 0 ? suggestions.slice(0, 5).join('\n') : 'All files follow good patterns!'}\n\n` +
+                    `**Recommendations:**\n${suggestionText}\n\n` +
                     `Use **/refactor <file>** to apply improvements`,
                   success: true,
                 });
@@ -2356,6 +2408,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize Phase 3.4 components
   architecturePatterns = new ArchitecturePatterns();
+  patternDetector = new PatternDetector(llmClient);
   featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
   serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
