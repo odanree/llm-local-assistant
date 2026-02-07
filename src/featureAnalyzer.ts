@@ -1,5 +1,6 @@
 import { ArchitecturePatterns, PatternType, PatternSuggestion, FeatureAnalysis } from './architecturePatterns';
 import { LLMClient } from './llmClient';
+import { SemanticAnalyzer, SemanticAnalysis } from './semanticAnalyzer';
 
 /**
  * Phase 3.4.2: Feature Analyzer
@@ -58,10 +59,12 @@ export interface MaintainabilityAnalysis {
 export class FeatureAnalyzer {
   private patterns: ArchitecturePatterns;
   private llmClient: LLMClient | undefined;
+  private semanticAnalyzer: SemanticAnalyzer;
 
   constructor(patterns?: ArchitecturePatterns, llmClient?: LLMClient) {
     this.patterns = patterns || new ArchitecturePatterns();
     this.llmClient = llmClient;
+    this.semanticAnalyzer = new SemanticAnalyzer(llmClient);
     
     // Log which model is being used
     if (this.llmClient) {
@@ -213,6 +216,16 @@ export class FeatureAnalyzer {
     });
 
     return fatHooks.sort((a, b) => b.lines - a.lines);
+  }
+
+  /**
+   * Perform semantic analysis on a hook for detailed issues
+   */
+  async analyzeHookSemantically(code: string): Promise<SemanticAnalysis> {
+    console.log('[FeatureAnalyzer] Running semantic analysis on hook...');
+    const analysis = await this.semanticAnalyzer.analyzeHook(code);
+    console.log(`[FeatureAnalyzer] Semantic analysis complete - Complexity: ${analysis.overallComplexity}`);
+    return analysis;
   }
 
   /**
