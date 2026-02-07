@@ -88,12 +88,19 @@ export class Executor {
       let retries = 0;
       let result: StepResult | null = null;
       let autoFixAttempted = false;
+      let retryCount = 0; // Track how many retries actually happened
       const maxRetries = this.config.maxRetries || 2;
 
       while (retries <= maxRetries) {
         result = await this.executeStep(plan, step.stepId);
 
-        if (result.success) {break;}
+        if (result.success) {
+          // Success! Show retry info if retries happened
+          if (retryCount > 0) {
+            this.config.onMessage?.(`✅ Step ${step.stepId} succeeded (after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''})`, 'info');
+          }
+          break;
+        }
 
         // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
         if (!autoFixAttempted && result.error) {
@@ -102,15 +109,17 @@ export class Executor {
           if (fixedResult && fixedResult.success) {
             result = fixedResult;
             autoFixAttempted = true;
+            this.config.onMessage?.(`✅ Auto-correction succeeded for step ${step.stepId}`, 'info');
             break; // Auto-fix succeeded, move to next step
           }
           autoFixAttempted = true; // Mark that we tried, don't try again
         }
 
         retries++;
+        retryCount++;
         if (retries <= maxRetries) {
-          const msg = `Step ${step.stepId} failed. Retrying (${retries}/${maxRetries})...`;
-          this.config.onMessage?.(msg, 'info');
+          const msg = `❌ Step ${step.stepId} failed. Retrying (${retries}/${maxRetries})...`;
+          this.config.onMessage?.(msg, 'error');
           await new Promise(r => setTimeout(r, 1000));
         }
       }
@@ -120,11 +129,14 @@ export class Executor {
       if (!result!.success) {
         plan.status = 'failed';
         plan.currentStep = step.stepId;
+        const failureMsg = retryCount > 0 
+          ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
+          : `Step ${step.stepId} failed on first attempt`;
         return {
           success: false,
           completedSteps: plan.currentStep,
           results: plan.results,
-          error: `Step ${step.stepId} failed: ${result!.error}`,
+          error: failureMsg + `: ${result!.error}`,
           totalDuration: Date.now() - startTime,
         };
       }

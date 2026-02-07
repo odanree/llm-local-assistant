@@ -316,7 +316,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 delete (chatPanel as any)._currentPlan;
                 
                 const message = result.success 
-                  ? `✅ **Plan completed successfully**\n\nCompleted ${result.completedSteps} of ${currentPlan.steps.length} steps`
+                  ? `✅ **Plan completed successfully**\n\nCompleted ${result.completedSteps} of ${currentPlan.steps.length} steps\n\n💡 *All steps executed successfully (check messages above for retry details)*`
                   : `⚠️ **Plan execution failed**\n\nError: ${result.error || 'Unknown error'}`;
                 
                 chatPanel?.webview.postMessage({
