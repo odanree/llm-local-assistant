@@ -1701,11 +1701,11 @@ ${fileContent}
             
             // Check if this is an extraction action response
             const extractionData = (chatPanel as any)._currentExtraction;
-            if (extractionData && ['Execute Refactoring', 'Preview Only', 'Cancel'].includes(answer)) {
+            if (extractionData && ['Execute', 'Cancel'].includes(answer)) {
               const { extraction, hookFile, serviceName, code } = extractionData;
               
               try {
-                if (answer === 'Execute Refactoring') {
+                if (answer === 'Execute') {
                   chatPanel?.webview.postMessage({
                     command: 'status',
                     text: `✏️ Executing refactoring...`,
@@ -1734,16 +1734,10 @@ ${fileContent}
                       error: `Extraction failed: ${execution.errors.join(', ')}`,
                     });
                   }
-                } else if (answer === 'Preview Only') {
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    text: `✅ Preview confirmed. Run the command again and select "Execute Refactoring" to apply changes.`,
-                    success: true,
-                  });
                 } else if (answer === 'Cancel') {
                   chatPanel?.webview.postMessage({
                     command: 'addMessage',
-                    text: `⏭️ **Service extraction cancelled**`,
+                    text: `⏭️ **Extraction cancelled**`,
                     success: true,
                   });
                 }
@@ -1775,8 +1769,26 @@ ${fileContent}
 
                 // Generate service name from extraction suggestion
                 // e.g., "Extract API logic to useApi hook" -> "useApi"
-                const serviceName = extractionName
-                  .match(/use\w+|[A-Z]\w+/)?.[0] || extractionName.split(' ')[0];
+                let serviceName = '';
+                
+                // First try: match 'to <serviceName>' pattern
+                const toMatch = extractionName.match(/\bto\s+(\w+)/i);
+                if (toMatch && toMatch[1]) {
+                  serviceName = toMatch[1];
+                }
+                
+                // Second try: match camelCase starting with 'use'
+                if (!serviceName) {
+                  const useMatch = extractionName.match(/\b(use\w+)\b/i);
+                  if (useMatch && useMatch[1]) {
+                    serviceName = useMatch[1];
+                  }
+                }
+                
+                // Fallback
+                if (!serviceName) {
+                  serviceName = extractionName.split(' ')[0];
+                }
 
                 // Extract service
                 const extraction = serviceExtractor.extractService(code, filepath, serviceName);
@@ -1792,10 +1804,9 @@ ${fileContent}
                 // Show extraction preview with action buttons
                 postChatMessage({
                   command: 'question',
-                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nWhat would you like to do?`,
+                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
                   options: [
-                    'Execute Refactoring',
-                    'Preview Only',
+                    'Execute',
                     'Cancel',
                   ],
                 });
