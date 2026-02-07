@@ -5,6 +5,7 @@ import SmartAutoCorrection from './smartAutoCorrection';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
 import CodebaseIndex from './codebaseIndex';
+import { ArchitectureValidator } from './architectureValidator';
 import { TaskPlan, PlanStep, StepResult } from './planner';
 
 /**
@@ -1256,6 +1257,89 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
           : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
         this.config.onStepOutput(step.stepId, preview, false);
+      }
+      
+      // PRE-WRITE ARCHITECTURE VALIDATION (Phase 3.4.6)
+      // Check if code violates layer-based architecture rules before writing
+      const archValidator = new ArchitectureValidator();
+      const archValidation = archValidator.validateAgainstLayer(finalContent, step.path);
+      
+      if (archValidation.hasViolations) {
+        const report = archValidator.generateErrorReport(archValidation);
+        this.config.onMessage?.(report, 'error');
+        
+        if (archValidation.recommendation === 'skip') {
+          // High-severity violations - skip this file
+          this.config.onMessage?.(
+            `⏭️ Skipping ${step.path} due to architecture violations. Plan will continue with other files.`,
+            'info'
+          );
+          return {
+            stepId: step.stepId,
+            success: true, // Return success so plan continues
+            output: `Skipped (architecture violations): ${step.path}`,
+            duration: Date.now() - startTime,
+          };
+        } else if (archValidation.recommendation === 'fix') {
+          // Medium-severity violations - try to fix with LLM
+          this.config.onMessage?.(
+            `🔧 Attempting to fix architecture violations...`,
+            'info'
+          );
+          
+          const violationDesc = archValidation.violations
+            .map(v => `- ${v.type}: ${v.message}\n  Suggestion: ${v.suggestion}`)
+            .join('\n');
+          
+          const fixPrompt = `The code you generated has ARCHITECTURE VIOLATIONS in ${step.path}:\n\n${violationDesc}\n\nPlease FIX these violations and provide ONLY the corrected code. No explanations, no markdown.`;
+          
+          const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+          if (fixResponse.success) {
+            let fixedContent = fixResponse.message || finalContent;
+            const codeBlockMatch = fixedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+            if (codeBlockMatch) {
+              fixedContent = codeBlockMatch[1];
+            }
+            
+            // Re-validate the fixed code
+            const revalidation = archValidator.validateAgainstLayer(fixedContent, step.path);
+            if (!revalidation.hasViolations || revalidation.recommendation === 'allow') {
+              this.config.onMessage?.(
+                `✅ Architecture violations fixed! Code now complies with layer rules.`,
+                'info'
+              );
+              // Use the fixed content
+              const fixedBytes = new Uint8Array(fixedContent.length);
+              for (let i = 0; i < fixedContent.length; i++) {
+                fixedBytes[i] = fixedContent.charCodeAt(i);
+              }
+              await vscode.workspace.fs.writeFile(filePath, fixedBytes);
+              
+              if (this.config.codebaseIndex) {
+                this.config.codebaseIndex.addFile(filePath.fsPath, fixedContent);
+              }
+              
+              return {
+                stepId: step.stepId,
+                success: true,
+                output: `Wrote ${step.path} (${fixedContent.length} bytes, after architecture fixes)`,
+                duration: Date.now() - startTime,
+              };
+            }
+          }
+          
+          // If LLM fix didn't work, skip this file
+          this.config.onMessage?.(
+            `⏭️ Could not auto-fix architecture violations. Skipping ${step.path}.`,
+            'info'
+          );
+          return {
+            stepId: step.stepId,
+            success: true,
+            output: `Skipped (could not fix architecture violations): ${step.path}`,
+            duration: Date.now() - startTime,
+          };
+        }
       }
       
       // NOW safe to write (only reached if validation passed or non-code file)
