@@ -1100,8 +1100,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
-                // Extract service
-                const extraction = serviceExtractor.extractService(code, hookFile, serviceName);
+                // Extract service using LLM-based extraction
+                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName);
                 
                 // Store extraction data for when user clicks a button
                 (chatPanel as any)._currentExtraction = {
@@ -1114,10 +1114,9 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // Show extraction preview with action buttons in the UI
                 postChatMessage({
                   command: 'question',
-                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nWhat would you like to do?`,
+                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
                   options: [
-                    'Execute Refactoring',
-                    'Preview Only',
+                    'Execute',
                     'Cancel',
                   ],
                 });
