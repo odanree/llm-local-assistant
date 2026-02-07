@@ -41,6 +41,7 @@ export class Executor {
   private plan: TaskPlan | null = null;
   private paused: boolean = false;
   private cancelled: boolean = false;
+  private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
 
   constructor(config: ExecutorConfig) {
     this.config = {
@@ -87,7 +88,6 @@ export class Executor {
       let result: StepResult | null = null;
       let autoFixAttempted = false;
       const maxRetries = this.config.maxRetries || 2;
-      const MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1 fix: Prevent infinite validation loops
 
       while (retries <= maxRetries) {
         result = await this.executeStep(plan, step.stepId);
@@ -96,8 +96,8 @@ export class Executor {
 
         // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
         if (!autoFixAttempted && result.error) {
-          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${MAX_VALIDATION_ITERATIONS})...`, 'info');
-          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), MAX_VALIDATION_ITERATIONS);
+          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${this.MAX_VALIDATION_ITERATIONS})...`, 'info');
+          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS);
           if (fixedResult && fixedResult.success) {
             result = fixedResult;
             autoFixAttempted = true;
@@ -1104,24 +1104,56 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         const validationResult = await this.validateGeneratedCode(step.path, content, step);
         
         if (!validationResult.valid && validationResult.errors) {
-          // ❌ VALIDATION FAILED - Cannot write
-          const errorList = validationResult.errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
-          this.config.onMessage?.(
-            `❌ Validation failed for ${step.path}:\n${errorList}`,
-            'error'
-          );
+          // ❌ VALIDATION FAILED - Try auto-correction up to MAX_VALIDATION_ITERATIONS
+          let validationAttempt = 1;
+          let currentContent = content;
+          let lastValidationErrors = validationResult.errors;
+          let loopDetected = false;
+          const previousErrors: string[] = [];
           
-          // Attempt auto-correction: send specific errors back to LLM
-          this.config.onMessage?.(
-            `🔧 Attempting auto-correction (sending errors to LLM for context-aware fix)...`,
-            'info'
-          );
-          
-          const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${validationResult.errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
-          
-          const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-          
-          if (fixResponse.success) {
+          while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
+            const errorList = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+            
+            this.config.onMessage?.(
+              `❌ Validation failed (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
+              'error'
+            );
+            
+            // LOOP DETECTION: Check if same errors are repeating
+            if (previousErrors.length > 0 && JSON.stringify(lastValidationErrors.sort()) === JSON.stringify(previousErrors.sort())) {
+              this.config.onMessage?.(
+                `🔄 LOOP DETECTED: Same validation errors appearing again - stopping auto-correction to prevent infinite loop`,
+                'error'
+              );
+              loopDetected = true;
+              break;
+            }
+            previousErrors.push(...lastValidationErrors);
+            
+            // If last attempt, give up
+            if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
+              const remainingErrors = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+              this.config.onMessage?.(
+                `❌ Max validation attempts (${this.MAX_VALIDATION_ITERATIONS}) reached. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
+                'error'
+              );
+              throw new Error(`Validation failed after ${this.MAX_VALIDATION_ITERATIONS} attempts.\n${remainingErrors}`);
+            }
+            
+            // Attempt auto-correction
+            this.config.onMessage?.(
+              `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
+              'info'
+            );
+            
+            const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+            
+            const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+            
+            if (!fixResponse.success) {
+              throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+            }
+            
             let correctedContent = fixResponse.message || '';
             const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
             if (codeBlockMatch) {
@@ -1129,26 +1161,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             }
             
             // Re-validate the corrected code
-            const secondValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
             
-            if (secondValidation.valid) {
-              // ✅ Auto-correction succeeded - Use corrected content
+            if (nextValidation.valid) {
+              // ✅ Auto-correction succeeded
               this.config.onMessage?.(
-                `✅ Auto-correction successful! Code now passes all validation checks.`,
+                `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all validation checks.`,
                 'info'
               );
               finalContent = correctedContent;
-            } else {
-              // ❌ Auto-correction failed - Show remaining issues
-              const remainingErrors = secondValidation.errors?.map((e, i) => `  ${i + 1}. ${e}`).join('\n') || 'Unknown errors';
-              this.config.onMessage?.(
-                `❌ Auto-correction incomplete. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
-                'error'
-              );
-              throw new Error(`Validation failed even after auto-correction.\n${remainingErrors}`);
+              break;
             }
-          } else {
-            throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+            
+            // Validation still failing - prepare for next iteration
+            currentContent = correctedContent;
+            lastValidationErrors = nextValidation.errors || [];
+            validationAttempt++;
+          }
+          
+          if (loopDetected) {
+            throw new Error(`Validation loop detected - infinite correction cycle prevented. Please fix manually.`);
           }
         } else {
           // ✅ Validation passed
