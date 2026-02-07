@@ -1058,11 +1058,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // Extract service
                 const extraction = serviceExtractor.extractService(code, hookFile, serviceName);
                 
-                // Execute refactoring if user wants
+                // Show dialog asking what to do
+                console.log('[Extension] /extract-service: Showing dialog...');
                 const userChoice = await vscode.window.showQuickPick(
                   ['Execute Refactoring', 'Preview Only', 'Cancel'],
                   { placeHolder: 'What would you like to do?' }
                 );
+                console.log('[Extension] /extract-service: User choice:', userChoice);
 
                 if (userChoice === 'Execute Refactoring') {
                   chatPanel?.webview.postMessage({
@@ -1093,7 +1095,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       error: `Extraction failed: ${execution.errors.join(', ')}`,
                     });
                   }
-                } else {
+                } else if (userChoice === 'Preview Only') {
                   postChatMessage({
                     command: 'addMessage',
                     text: `📋 **Extraction Preview**\n\n` +
@@ -1101,6 +1103,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       `**Lines:** ${extraction.extractedCode.split('\n').length}\n` +
                       `**Functions:** ${extraction.exports.length}\n` +
                       `**Tests:** ${extraction.testCases.length}`,
+                    success: true,
+                  });
+                } else if (userChoice === undefined || userChoice === 'Cancel') {
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `⏭️ **Service extraction cancelled**`,
                     success: true,
                   });
                 }
