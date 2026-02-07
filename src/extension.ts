@@ -1017,13 +1017,27 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   }\n\n`;
                 }
                 
-                report += `_Use **/extract-service <hook> <name>** to extract suggested services_`;
-
                 postChatMessage({
                   command: 'addMessage',
                   text: report,
                   success: true,
                 });
+
+                // If there are suggested extractions, show buttons to apply them
+                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                  // Store analysis for extraction buttons
+                  (chatPanel as any)._currentRefactorData = {
+                    filepath,
+                    code,
+                    analysis: semanticAnalysis,
+                  };
+
+                  postChatMessage({
+                    command: 'question',
+                    question: `Would you like to extract a service?`,
+                    options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
+                  });
+                }
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
@@ -1710,6 +1724,58 @@ ${fileContent}
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
                   error: `Extract action error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+                break;
+              }
+            }
+            
+            // Check if this is a refactor extraction button click
+            const refactorData = (chatPanel as any)._currentRefactorData;
+            if (refactorData && answer.startsWith('Extract: ')) {
+              const extractionName = answer.replace('Extract: ', '');
+              const { filepath, code } = refactorData;
+              
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔄 Extracting ${extractionName}...`,
+                  type: 'info',
+                });
+
+                // Generate service name from extraction suggestion
+                // e.g., "Extract API logic to useApi hook" -> "useApi"
+                const serviceName = extractionName
+                  .match(/use\w+|[A-Z]\w+/)?.[0] || extractionName.split(' ')[0];
+
+                // Extract service
+                const extraction = serviceExtractor.extractService(code, filepath, serviceName);
+                
+                // Store extraction data for when user chooses action
+                (chatPanel as any)._currentExtraction = {
+                  extraction,
+                  hookFile: filepath,
+                  serviceName,
+                  code,
+                };
+
+                // Show extraction preview with action buttons
+                postChatMessage({
+                  command: 'question',
+                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nWhat would you like to do?`,
+                  options: [
+                    'Execute Refactoring',
+                    'Preview Only',
+                    'Cancel',
+                  ],
+                });
+                
+                // Clear refactor data
+                (chatPanel as any)._currentRefactorData = null;
+                break;
+              } catch (err) {
+                chatPanel?.webview.postMessage({
+                  command: 'addMessage',
+                  error: `Refactor extraction error: ${err instanceof Error ? err.message : String(err)}`,
                 });
                 break;
               }
