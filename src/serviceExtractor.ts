@@ -1,5 +1,6 @@
 import { ArchitecturePatterns, PatternType } from './architecturePatterns';
 import { FeatureAnalyzer, FatHook } from './featureAnalyzer';
+import { LLMClient } from './llmClient';
 
 /**
  * Phase 3.4.3: Service Extractor
@@ -88,10 +89,20 @@ export interface ErrorHandlingAnalysis {
 export class ServiceExtractor {
   private analyzer: FeatureAnalyzer;
   private patterns: ArchitecturePatterns;
+  private llmClient: LLMClient | undefined;
 
-  constructor(analyzer?: FeatureAnalyzer, patterns?: ArchitecturePatterns) {
+  constructor(analyzer?: FeatureAnalyzer, patterns?: ArchitecturePatterns, llmClient?: LLMClient) {
     this.analyzer = analyzer || new FeatureAnalyzer();
     this.patterns = patterns || new ArchitecturePatterns();
+    this.llmClient = llmClient;
+    
+    // Log which model is being used
+    if (this.llmClient) {
+      const config = this.llmClient.getConfig();
+      console.log(`[ServiceExtractor] Using model: ${config.model} at ${config.endpoint}`);
+    } else {
+      console.log('[ServiceExtractor] No LLMClient provided - using pattern-based extraction only');
+    }
   }
 
   /**

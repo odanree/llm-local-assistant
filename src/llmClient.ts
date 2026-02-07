@@ -55,6 +55,13 @@ export class LLMClient {
   }
 
   /**
+   * Get the current LLM configuration (for debugging/logging)
+   */
+  getConfig(): LLMConfig {
+    return this.config;
+  }
+
+  /**
    * Build messages array with system prompt injection (architecture rules)
    * @param userMessage The user's current message
    * @returns Messages array with optional system message if rules exist
