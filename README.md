@@ -8,8 +8,9 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 **🚀 NEW in v2.0**: Intelligent refactoring framework with architecture analysis, pattern detection, and safe code transformation.
 
-> **Latest Release**: v2.0.0 - Intelligent Refactoring Framework ✨  
-> **Previous**: v1.3.0 - Architecture Alignment & .cursorrules Support 🏗️  
+> **Latest Release**: v2.0.0+ - Phase 3.4: Intelligent Refactoring ✨ + UI Improvements 🎨  
+> **Phase 3.4 Features**: `/refactor`, `/extract-service`, `/design-system`, `/rate-architecture`, `/suggest-patterns`  
+> **UI/UX**: Tab autocomplete, command history, copy-pastable commands  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Key Features
@@ -96,6 +97,26 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - `/git-review` - AI-powered code review of staged changes
 - `/explain <path>` - Analyze and explain code
 - **Auto-Correction** - LLM suggestions for command mistakes
+
+### 💬 Smart Chat & UI/UX (NEW in v2.0+)
+- **Tab Autocomplete** - Complete commands with Tab key
+  - Type `/ref` → Press Tab → `/refactor` ✅
+  - Works with all 8 Phase 3.4 commands
+  
+- **Tab Cycling** - Multiple matches? Cycle through them
+  - Type `/r` → Tab → `/rate-architecture`
+  - Tab again → `/read`
+  - Tab again → `/refactor`
+  
+- **Command History** - Arrow Up/Down to navigate
+  - Press Up → Restore last command
+  - Press Down → Go forward in history
+  - Useful for re-running similar analyses
+  
+- **Copy-Pastable Commands** - Easy refactoring workflow
+  - `/suggest-patterns` shows: `` `/refactor app/page.tsx` ``
+  - Double-click to select, Ctrl+C to copy
+  - Paste directly into chat
 
 ### 💻 Local & Private
 - 🔒 Works with Ollama, LM Studio, vLLM - no external APIs
