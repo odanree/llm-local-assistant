@@ -1,4 +1,5 @@
 import { ArchitecturePatterns, PatternType, PatternSuggestion, FeatureAnalysis } from './architecturePatterns';
+import { LLMClient } from './llmClient';
 
 /**
  * Phase 3.4.2: Feature Analyzer
@@ -56,9 +57,19 @@ export interface MaintainabilityAnalysis {
 
 export class FeatureAnalyzer {
   private patterns: ArchitecturePatterns;
+  private llmClient: LLMClient | undefined;
 
-  constructor(patterns?: ArchitecturePatterns) {
+  constructor(patterns?: ArchitecturePatterns, llmClient?: LLMClient) {
     this.patterns = patterns || new ArchitecturePatterns();
+    this.llmClient = llmClient;
+    
+    // Log which model is being used
+    if (this.llmClient) {
+      const config = this.llmClient.getConfig();
+      console.log(`[FeatureAnalyzer] Using model: ${config.model} at ${config.endpoint}`);
+    } else {
+      console.log('[FeatureAnalyzer] No LLMClient provided - using pattern-based analysis only');
+    }
   }
 
   /**

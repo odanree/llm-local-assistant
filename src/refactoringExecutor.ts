@@ -57,7 +57,11 @@ export class RefactoringExecutor {
 
   constructor(llmClient: LLMClient, extractor?: ServiceExtractor) {
     this.llmClient = llmClient;
-    this.extractor = extractor || new ServiceExtractor();
+    this.extractor = extractor || new ServiceExtractor(undefined, undefined, llmClient);
+    
+    // Log which model is being used
+    const config = this.llmClient.getConfig();
+    console.log(`[RefactoringExecutor] Using model: ${config.model} at ${config.endpoint}`);
   }
 
   /**
