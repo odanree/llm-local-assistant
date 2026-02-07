@@ -1708,30 +1708,48 @@ ${fileContent}
                 if (answer === 'Execute') {
                   chatPanel?.webview.postMessage({
                     command: 'status',
-                    text: `✏️ Executing refactoring...`,
+                    text: `✏️ Executing extraction...`,
                     type: 'info',
                   });
 
-                  // Execute with RefactoringExecutor
-                  const hookAnalysis = serviceExtractor.analyzeHook(hookFile, code);
-                  const plan = serviceExtractor.generateRefactoringPlan(hookAnalysis);
-                  const execution = await refactoringExecutor.executeRefactoring(plan, code);
+                  const { extraction, hookFile, serviceName, code } = extractionData;
 
-                  if (execution.success) {
+                  try {
+                    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                    if (!workspaceFolder) {
+                      throw new Error('No workspace folder open');
+                    }
+
+                    // Write service file to src/services/ directory
+                    const serviceDir = vscode.Uri.joinPath(workspaceFolder.uri, 'src', 'services');
+                    try {
+                      await vscode.workspace.fs.createDirectory(serviceDir);
+                    } catch (e) {
+                      // Directory might already exist
+                    }
+
+                    const serviceFilePath = vscode.Uri.joinPath(serviceDir, `${serviceName}.ts`);
+                    await vscode.workspace.fs.writeFile(
+                      serviceFilePath,
+                      new TextEncoder().encode(extraction.extractedCode)
+                    );
+
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
                       text: `✅ **Service Extraction Successful**\n\n` +
-                        `**New Service File:** ${serviceName}.ts\n` +
-                        `**Updated Hook:** ${hookFile}\n` +
-                        `**Generated Tests:** ${execution.testCases.length}\n\n` +
-                        `**Impact:**\n- ${execution.estimatedImpact.estimatedBenefits.join('\n- ')}\n\n` +
-                        `**Validation:** All layers passed (syntax, types, logic, performance, compatibility)`,
+                        `**New Service File:** src/services/${serviceName}.ts\n` +
+                        `**Updated Hook:** ${hookFile}\n\n` +
+                        `The API logic has been extracted to a pure service layer (no React hooks).\n\n` +
+                        `**Next Steps:**\n` +
+                        `1. Update your hook to import from the new service\n` +
+                        `2. Run tests to verify functionality\n` +
+                        `3. Remove duplicate logic from the original hook`,
                       success: true,
                     });
-                  } else {
+                  } catch (err) {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      error: `Extraction failed: ${execution.errors.join(', ')}`,
+                      error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
                     });
                   }
                 } else if (answer === 'Cancel') {
