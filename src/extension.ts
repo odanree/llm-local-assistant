@@ -1095,7 +1095,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 console.log('[Extension] /refactor: Semantic analysis complete - Complexity:', semanticAnalysis.overallComplexity);
                 
                 // Build detailed report
-                let report = `📊 **Refactoring Analysis: ${filepath}**\n\n`;
+                let report = `📊 **Refactoring Analysis: ${filepath}**\n`;
+                report += `📁 **Workspace:** ${workspaceFolder.name}\n\n`;
                 report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
                 
                 if (semanticAnalysis.issues.length > 0) {
