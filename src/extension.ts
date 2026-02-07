@@ -1500,7 +1500,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // Format suggestions with confidence levels and copy-pastable commands
                 const suggestionText = suggestions.length > 0 
                   ? suggestions.slice(0, 5).map(s => 
-                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}\n   \`/refactor ${s.file}\``
+                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}\n\n   **Quick Refactor:**\n   \`\`\`\n   /refactor ${s.file}\n   \`\`\``
                     ).join('\n\n')
                   : 'All files already follow good patterns!';
 
