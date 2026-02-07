@@ -1200,54 +1200,95 @@ curl -fsSL https://ollama.ai/install.sh | sh
 
 ## 🎓 Learn More
 
-### For Users
-- How to install and configure: [docs/INSTALL.md](docs/INSTALL.md)
-- Command reference: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
-- Video tutorial: [See demo video](https://github.com/odanree/llm-local-assistant/wiki/Demo-Video)
+### For Users - Getting Started
+- **Quick Start**: See Installation & Configuration section above
+- **Command Reference**: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
+- **Troubleshooting**: See Troubleshooting section above
+- **Examples**: Check `examples/` folder for real-world usage
 
-### For Developers
-- Architecture deep dive: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Development guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Phase 2 extensibility: [docs/EXTENSIBILITY_ANALYSIS.md](docs/EXTENSIBILITY_ANALYSIS.md)
-- Future roadmap: [ROADMAP.md](ROADMAP.md)
+### For Developers - Understanding the Code
+- **Architecture**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System design and modules
+- **Development**: [docs/DEVELOPER_GUIDE_V1.2.0.md](docs/DEVELOPER_GUIDE_V1.2.0.md) - Setup and dev workflow
+- **Phase Plans**: [docs/PHASE-3.*.md](docs/) - Detailed feature specifications
+- **Testing**: [docs/PHASE-3.4.5-TESTING-QUICKSTART.md](docs/PHASE-3.4.5-TESTING-QUICKSTART.md)
 
-### For Contributors
-- Clean code patterns: Review `src/*.ts` files
-- Test patterns: Review `src/*.test.ts` files
-- Git workflow: Check clean commit history with `git log --oneline`
+### For Contributors - Contributing Code
+- **Code Patterns**: Review `src/*.ts` for style and structure
+- **Test Patterns**: Review `src/*.test.ts` for testing approach
+- **Clean History**: `git log --oneline` shows atomic commits
+- **Setup**: Run `npm install && npm run watch`
+
+### Documentation Map
+
+| Document | Purpose | Location |
+|----------|---------|----------|
+| **README.md** | Overview, features, quickstart | Root (this file) |
+| **CHANGELOG.md** | Version history and releases | Root |
+| **ROADMAP.md** | Future features and phases | Root |
+| **LICENSE** | MIT License | Root |
+| **docs/ARCHITECTURE.md** | System design deep dive | docs/ |
+| **docs/PHASE-*.md** | Phase-by-phase development | docs/ |
+| **docs/QUICK_REFERENCE.md** | Command quick reference | docs/ |
+| **docs/DEVELOPER_GUIDE_*.md** | Developer setup | docs/ |
 
 ---
 
-## 📊 Project Stats
+## 📊 Project Stats (v2.0)
 
-| Metric | Count |
+| Metric | Value |
 |--------|-------|
-| **Tests** | 120+ |
-| **Test Coverage** | >85% |
-| **Modules** | 6 core |
+| **Tests** | 255 |
+| **Test Pass Rate** | 100% |
 | **TypeScript Strict** | ✅ Yes |
 | **Type Errors** | 0 |
-| **Commit History** | 30+ atomic |
-| **Versions** | 2 released |
+| **Compilation Errors** | 0 |
+| **Production Blockers** | 0 |
+| **Commit History** | 50+ atomic |
+| **Versions Released** | 2 (v1.2.5, v2.0) |
+| **Lines of Code** | 1,200+ (v2.0) |
+| **Commands Available** | 8 |
+| **Success Rates** | 85-100% |
 
 ---
 
 ## 🙏 Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup
-- Code style guidelines  
-- Testing requirements
-- Pull request process
+Contributions welcome! 
 
-### Quick Contribution Guide
+### For Bug Reports
+1. Check [ROADMAP.md](ROADMAP.md) for known limitations
+2. Search existing GitHub Issues
+3. Open new issue with:
+   - What happened
+   - What you expected
+   - Steps to reproduce
+   - Your setup (model, endpoint, OS)
+
+### For Features/PRs
 1. **Fork** the repository
 2. **Create** a feature branch (`git checkout -b feature/amazing-thing`)
-3. **Code** with tests (see existing patterns)
-4. **Test** locally (`npm test`)
-5. **Commit** with clear message (`git commit -m "feat: add amazing thing"`)
-6. **Push** to your fork
-7. **Open** PR with description
+3. **Setup**: Run `npm install && npm run watch`
+4. **Code** with tests (follow patterns in `src/*.test.ts`)
+5. **Test**: Run `npm test` - all must pass
+6. **Commit** with clear message (`git commit -m "feat: add amazing thing"`)
+7. **Push** to your fork
+8. **Open** PR with description
+
+### Code Style
+- **TypeScript strict mode** required
+- **100% type coverage** (no `any` types)
+- **JSDoc comments** on public functions
+- **Tests required** for all features
+- **ESLint compliant** code
+
+---
+
+## 🤝 Community
+
+- **GitHub**: https://github.com/odanree/llm-local-assistant
+- **Marketplace**: https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
+- **Issues**: GitHub Issues for bugs and features
+- **Discussions**: GitHub Discussions for questions
 
 ---
 
@@ -1259,4 +1300,4 @@ MIT License - See [LICENSE](LICENSE) file for details
 
 ---
 
-**🚀 Local AI Agent for VS Code | 🔒 100% Private | ⚡ Autonomous Planning & Execution**
+**✨ v2.0 - Intelligent Refactoring Suite | 🎯 8 Production Commands | 🔒 100% Private | 🚀 Live on VS Code Marketplace**
