@@ -42,6 +42,7 @@ export interface PlannerConfig {
   timeout?: number;            // Default: 30000ms
   workspace?: vscode.Uri;      // For codebase awareness
   codebaseIndex?: CodebaseIndex; // Phase 3.3.2: For dependency detection
+  onMessage?: (message: string, type: 'info' | 'error' | 'warn') => void; // For user feedback
 }
 
 export interface ConversationContext {
@@ -223,11 +224,54 @@ Be concise and direct. Do NOT generate code or detailed plans yet.`;
         const isTruncated = message.endsWith('fil') || message.endsWith('...') || 
                            message.match(/[a-z]$/) && message.length > 1000;
         
-        const errorMsg = isTruncated 
-          ? `Failed to parse plan JSON. Response appears truncated. Length: ${message.length}. Last 200 chars: ${message.substring(Math.max(0, message.length - 200))}`
-          : `Failed to parse plan JSON. Response length: ${message.length}. First 300 chars: ${message.substring(0, 300)}`;
-        
-        throw new Error(errorMsg);
+        if (isTruncated) {
+          // RETRY with simplified prompt
+          console.log(`[Planner] Response truncated at ${message.length} bytes. Retrying with simplified prompt...`);
+          this.config.onMessage?.(`⚠️ Initial plan response truncated. Retrying with simplified request...`, 'info');
+          
+          const simplifiedPrompt = this.generateSimplifiedPlanPrompt(userRequest, context);
+          const retryResponse = await this.config.llmClient.sendMessage(simplifiedPrompt);
+          
+          if (!retryResponse.success) {
+            throw new Error(`Failed to generate plan on retry: ${retryResponse.error}`);
+          }
+          
+          // Try to parse retry response
+          try {
+            planData = JSON.parse(retryResponse.message || '');
+          } catch {
+            // Try extraction on retry response too
+            const retryMessage = retryResponse.message || '';
+            const retryStartIdx = retryMessage.indexOf('{');
+            if (retryStartIdx !== -1) {
+              let braceCount = 0;
+              let retryEndIdx = -1;
+              for (let i = retryStartIdx; i < retryMessage.length; i++) {
+                if (retryMessage[i] === '{') {braceCount++;}
+                if (retryMessage[i] === '}') {
+                  braceCount--;
+                  if (braceCount === 0) {
+                    retryEndIdx = i;
+                    break;
+                  }
+                }
+              }
+              if (retryEndIdx !== -1) {
+                const retryJsonStr = retryMessage.substring(retryStartIdx, retryEndIdx + 1);
+                planData = JSON.parse(retryJsonStr);
+              }
+            }
+          }
+          
+          if (!planData) {
+            throw new Error(`Failed to parse plan JSON even after retry. Response truncated at ${message.length} bytes.`);
+          }
+          
+          this.config.onMessage?.(`✅ Plan generated successfully on retry`, 'info');
+        } else {
+          const errorMsg = `Failed to parse plan JSON. Response length: ${message.length}. First 300 chars: ${message.substring(0, 300)}`;
+          throw new Error(errorMsg);
+        }
       }
     }
 
@@ -409,6 +453,34 @@ Please generate a refined plan that addresses the feedback. Use the same JSON fo
     }
     const codebase = codebaseContext || '';
     return `${PLAN_SYSTEM_PROMPT}${contextStr}${codebase}\nNew user request: "${userRequest}"\n\nGenerate a step-by-step plan in JSON format.`;
+  }
+
+  /**
+   * Generate simplified plan prompt for retry when response is truncated
+   * Reduces context to get smaller JSON response
+   */
+  private generateSimplifiedPlanPrompt(userRequest: string, context?: ConversationContext): string {
+    return `You are a code planning assistant. Create a BRIEF multi-step plan.
+
+User request: "${userRequest}"
+
+Generate a JSON plan with AT MOST 4 steps. Each step should be SHORT and focused.
+
+STRICT FORMAT - ONLY output valid JSON, nothing else:
+{
+  "steps": [
+    {
+      "stepId": 1,
+      "action": "write",
+      "path": "src/types/Schema.ts",
+      "description": "Create schema"
+    }
+  ]
+}
+
+Valid actions: read, write, run, suggestwrite
+
+OUTPUT ONLY THE JSON BLOCK. NO EXPLANATIONS.`;
   }
 
   /**
