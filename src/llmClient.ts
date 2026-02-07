@@ -75,6 +75,53 @@ export class LLMClient {
   }
 
   /**
+   * Get information about currently loaded models and active model
+   */
+  async getModelInfo(): Promise<{
+    configuredModel: string;
+    endpoint: string;
+    availableModels: string[];
+    error?: string;
+  }> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+
+      const response = await fetch(`${this.config.endpoint}/api/tags`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        return {
+          configuredModel: this.config.model,
+          endpoint: this.config.endpoint,
+          availableModels: [],
+          error: `Server returned status ${response.status}`,
+        };
+      }
+
+      const data = await response.json() as { models?: Array<{ name: string }> };
+      const models = data.models?.map((m) => m.name) || [];
+
+      return {
+        configuredModel: this.config.model,
+        endpoint: this.config.endpoint,
+        availableModels: models,
+      };
+    } catch (error) {
+      return {
+        configuredModel: this.config.model,
+        endpoint: this.config.endpoint,
+        availableModels: [],
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
    * Send message with streaming response
    */
   async sendMessageStream(
