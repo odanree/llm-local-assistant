@@ -708,69 +708,124 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     // VALIDATION FAILED
                     console.log(`[LLM Assistant] VALIDATION FAILED:\n${validationErrors.join('\n')}`);
                     
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      error: `❌ VALIDATION FAILED - Code cannot be written:\n${validationErrors.join('\n')}\n\nAttempting auto-correction...`,
-                      success: false,
-                    });
+                    // LOOP VALIDATION: Try auto-correction up to MAX_VALIDATION_ATTEMPTS
+                    let correctionAttempt = 0;
+                    let currentValidationErrors = validationErrors;
+                    let correctionSucceeded = false;
+                    const previousErrorSets: string[] = [];
                     
-                    // Attempt auto-correction
-                    const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${validationErrors.join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${relPath}. No explanations, no markdown. Start with code immediately.`;
-                    
-                    let correctedContent = '';
-                    if (isOllamaNonDefaultPort) {
-                      const fixResponse = await llmClient.sendMessage(fixPrompt);
-                      if (fixResponse.success) {
-                        correctedContent = fixResponse.message || '';
-                      }
-                    } else {
-                      const fixResponse = await llmClient.sendMessageStream(
-                        fixPrompt,
-                        async (token: string) => {
-                          correctedContent += token;
-                        }
-                      );
-                      if (!fixResponse.success) {
-                        throw new Error('Auto-correction failed');
-                      }
-                    }
-                    
-                    // Extract code from markdown if present
-                    const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                    if (codeBlockMatch) {
-                      correctedContent = codeBlockMatch[1];
-                    }
-                    
-                    // Re-validate corrected code (simplified check)
-                    const revalidationErrors: string[] = [];
-                    if (correctedContent.includes('```')) {
-                      revalidationErrors.push('Still has markdown backticks');
-                    }
-                    if ((correctedContent.match(/{/g) || []).length > (correctedContent.match(/}/g) || []).length) {
-                      revalidationErrors.push('Still has unmatched braces');
-                    }
-                    
-                    if (revalidationErrors.length > 0) {
-                      console.log(`[LLM Assistant] Auto-correction failed: ${revalidationErrors.join(', ')}`);
+                    while (correctionAttempt < MAX_VALIDATION_ATTEMPTS && !correctionSucceeded) {
+                      correctionAttempt++;
                       
                       chatPanel?.webview.postMessage({
                         command: 'addMessage',
-                        error: `❌ Auto-correction incomplete:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
+                        error: `❌ VALIDATION FAILED (attempt ${correctionAttempt}/${MAX_VALIDATION_ATTEMPTS}) - Code cannot be written:\n${currentValidationErrors.join('\n')}\n\nAttempting auto-correction...`,
                         success: false,
                       });
-                      return;
+                      
+                      // LOOP DETECTION: Check if same errors are repeating
+                      const errorKey = JSON.stringify(currentValidationErrors.sort());
+                      if (previousErrorSets.includes(errorKey)) {
+                        console.log(`[LLM Assistant] ⚠️ LOOP DETECTED: Same validation errors appearing again - stopping to prevent infinite loop`);
+                        chatPanel?.webview.postMessage({
+                          command: 'addMessage',
+                          error: `🔄 LOOP DETECTED: Same validation errors repeating - cannot auto-correct further.\n\nPlease fix manually in the editor:\n${currentValidationErrors.join('\n')}`,
+                          success: false,
+                        });
+                        return;
+                      }
+                      previousErrorSets.push(errorKey);
+                      
+                      // Attempt auto-correction
+                      const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${currentValidationErrors.join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${relPath}. No explanations, no markdown. Start with code immediately.`;
+                      
+                      let correctedContent = '';
+                      if (isOllamaNonDefaultPort) {
+                        const fixResponse = await llmClient.sendMessage(fixPrompt);
+                        if (fixResponse.success) {
+                          correctedContent = fixResponse.message || '';
+                        } else {
+                          throw new Error('Auto-correction LLM call failed');
+                        }
+                      } else {
+                        const fixResponse = await llmClient.sendMessageStream(
+                          fixPrompt,
+                          async (token: string) => {
+                            correctedContent += token;
+                          }
+                        );
+                        if (!fixResponse.success) {
+                          throw new Error('Auto-correction failed');
+                        }
+                      }
+                      
+                      // Extract code from markdown if present
+                      const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                      if (codeBlockMatch) {
+                        correctedContent = codeBlockMatch[1];
+                      }
+                      
+                      // Re-run FULL validation on corrected code
+                      const revalidationErrors: string[] = [];
+                      
+                      // Check 1: Markdown wrapped code
+                      if (correctedContent.includes('```') || correctedContent.match(/^```/m)) {
+                        revalidationErrors.push(`❌ Code wrapped in markdown backticks - not valid ${fileExtension}`);
+                      }
+                      
+                      // Check 2: Documentation instead of code
+                      if (correctedContent.includes('# Setup') || correctedContent.includes('## Installation') || correctedContent.includes('### Step')) {
+                        revalidationErrors.push(`❌ Content is documentation/tutorial instead of executable code`);
+                      }
+                      
+                      // Check 3: Unmatched braces
+                      const openBraces = (correctedContent.match(/{/g) || []).length;
+                      const closeBraces = (correctedContent.match(/}/g) || []).length;
+                      if (openBraces > closeBraces) {
+                        revalidationErrors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+                      }
+                      
+                      // Check 4: Missing imports (basic check)
+                      const hasReact = correctedContent.includes('export');
+                      const hasImportReact = correctedContent.includes('import');
+                      if (hasReact && !hasImportReact) {
+                        revalidationErrors.push(`⚠️ Code exports something but has no imports - check imports`);
+                      }
+                      
+                      if (revalidationErrors.length > 0) {
+                        console.log(`[LLM Assistant] Revalidation attempt ${correctionAttempt} still has errors: ${revalidationErrors.join(', ')}`);
+                        currentValidationErrors = revalidationErrors;
+                        
+                        // If we've hit max attempts, give up
+                        if (correctionAttempt >= MAX_VALIDATION_ATTEMPTS) {
+                          console.log(`[LLM Assistant] Max auto-correction attempts (${MAX_VALIDATION_ATTEMPTS}) reached`);
+                          chatPanel?.webview.postMessage({
+                            command: 'addMessage',
+                            error: `❌ Max auto-correction attempts (${MAX_VALIDATION_ATTEMPTS}) reached. Remaining issues:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
+                            success: false,
+                          });
+                          return;
+                        }
+                        // Otherwise loop continues with next correction attempt
+                      } else {
+                        // ✅ Auto-correction succeeded
+                        console.log(`[LLM Assistant] Auto-correction succeeded on attempt ${correctionAttempt}`);
+                        
+                        chatPanel?.webview.postMessage({
+                          command: 'addMessage',
+                          text: `✅ Auto-correction successful! Code now passes validation.`,
+                          success: true,
+                        });
+                        
+                        finalContent = correctedContent;
+                        correctionSucceeded = true;
+                      }
                     }
                     
-                    // Auto-correction succeeded
-                    console.log(`[LLM Assistant] Auto-correction succeeded`);
-                    
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: `✅ Auto-correction successful! Code now passes validation.`,
-                      success: true,
-                    });
-                    
-                    finalContent = correctedContent;
+                    if (!correctionSucceeded && correctionAttempt > 0) {
+                      console.log(`[LLM Assistant] Auto-correction loop ended without success`);
+                      return;
+                    }
                   } else {
                     console.log(`[LLM Assistant] Validation PASSED - code is valid`);
                   }
