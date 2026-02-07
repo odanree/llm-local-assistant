@@ -1,38 +1,47 @@
 # Roadmap: LLM Local Assistant
 
-**Status**: ✅ **v2.0 RELEASED** - Intelligent Refactoring Suite Live on VS Code Marketplace
+**Status**: ✅ **v2.0+ RELEASED** - Intelligent Refactoring Suite + Smart UI/UX Live on VS Code Marketplace
 
 ---
 
 ## 📊 Version History
 
-### ✅ v2.0 - Intelligent Refactoring Suite (Feb 6, 2026)
+### ✅ v2.0+ - Intelligent Refactoring Suite + Smart UI (Feb 6-7, 2026)
+
+**Phase 3.4: Intelligent Refactoring** ✅ COMPLETE
+- ✅ `/refactor <file>` - 5-layer semantic analysis + architectural pattern detection (95%+ success)
+- ✅ `/extract-service <hook> <name>` - LLM-guided extraction (90%+ success)
+- ✅ `/rate-architecture` - Architecture scoring 0-10 with workspace selection (100% success)
+- ✅ `/suggest-patterns` - LLM-based pattern recommendations with copy-pastable commands (100% success)
+- ✅ `/design-system <feature>` - Multi-file generation (85%+ success)
+- ✅ `/check-model` - Model diagnostics
 
 **Phase 3.3: Context Awareness** ✅ COMPLETE
 - ✅ `/context show structure` - View project organization
 - ✅ `/context show patterns` - Detect design patterns
 - ✅ `/context show dependencies` - Analyze file relationships
 
-**Phase 3.4: Intelligent Refactoring** ✅ COMPLETE
-- ✅ `/refactor <file>` - 5-layer semantic analysis (95%+ success)
-- ✅ `/extract-service <hook> <name>` - LLM-guided extraction (90%+ success)
-- ✅ `/rate-architecture` - Architecture scoring 0-10 (100% success)
-- ✅ `/suggest-patterns` - Pattern recommendations (100% success)
-- ✅ `/design-system <feature>` - Multi-file generation (85%+ success)
-- ✅ `/check-model` - Model diagnostics
+**UI/UX Improvements** ✅ (NEW in v2.0+)
+- ✅ **Tab Autocomplete** - Complete commands with Tab key
+- ✅ **Tab Cycling** - Navigate through multiple matches
+- ✅ **Command History** - Arrow Up/Down to recall previous commands
+- ✅ **Copy-Pastable Commands** - `/suggest-patterns` output includes ready-to-use commands
 
-**Quality**
-- ✅ 255 comprehensive tests (100% pass rate)
+**Infrastructure & Quality**
+- ✅ 273 comprehensive tests (100% pass rate)
 - ✅ 100% TypeScript strict mode
+- ✅ GitHub Actions CI/CD (tests on every PR)
 - ✅ Zero compilation errors
 - ✅ Zero production blockers
+- ✅ Multi-workspace support with auto-detection
 
-**Critical Fixes**
-- ✅ JSON truncation retry logic
-- ✅ Architecture validation system
-- ✅ Semantic analysis integration
-- ✅ LLMClient routing
-- ✅ Validation loop prevention
+**Key Improvements from v2.0.0 → v2.0+**
+- ✅ LLM-based pattern detection (semantic analysis, not keywords)
+- ✅ CodebaseIndex auto-detection (supports app/, components/, lib/, src/)
+- ✅ Node modules blacklist (10x faster scans)
+- ✅ `/refactor` shows architectural patterns
+- ✅ GitHub Actions CI/CD workflow
+- ✅ Smart chat keyboard shortcuts
 
 ---
 
@@ -249,14 +258,16 @@
 
 ---
 
-## 🏆 Key Achievements
+## 🏆 Key Achievements (v2.0+)
 
-- ✅ 1,200+ lines of intelligent code
-- ✅ 255 comprehensive tests (100% pass rate)
-- ✅ 5 production-ready commands
-- ✅ 95-100% success rates across features
+- ✅ 1,500+ lines of intelligent code
+- ✅ 273 comprehensive tests (100% pass rate)
+- ✅ 8 production-ready commands
+- ✅ 85-100% success rates across features
 - ✅ Zero production blockers
 - ✅ Live on VS Code Marketplace
+- ✅ GitHub Actions CI/CD
+- ✅ Smart UI/UX with keyboard shortcuts
 - ✅ Complete documentation
 - ✅ Professional git history
 
