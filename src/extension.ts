@@ -28,6 +28,49 @@ let messageHandlerAttached = false; // Track if message handler is already attac
 let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
 
 /**
+ * Find the workspace folder that contains a given file path
+ * @param filepath - The file path to search for (relative or absolute)
+ * @returns The workspace folder URI, or the first folder if not found
+ */
+function findWorkspaceFolderForFile(filepath: string): vscode.WorkspaceFolder | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+
+  // If only one workspace folder, use it
+  if (folders.length === 1) {
+    return folders[0];
+  }
+
+  // For multiple folders, try to find the one containing the file
+  // First, check if filepath is absolute
+  if (path.isAbsolute(filepath)) {
+    for (const folder of folders) {
+      const folderPath = folder.uri.fsPath;
+      if (filepath.startsWith(folderPath)) {
+        return folder;
+      }
+    }
+  }
+
+  // If relative path, try to find it in any workspace folder
+  for (const folder of folders) {
+    try {
+      const fileUri = vscode.Uri.joinPath(folder.uri, filepath);
+      // We can't check if file exists without reading it, so we'll just return the first match
+      // The actual file read will fail if it's wrong, and we can handle that error
+      return folder;
+    } catch (error) {
+      continue;
+    }
+  }
+
+  // Default to first folder
+  return folders[0];
+}
+
+/**
  * Load architecture rules from workspace root
  * Checks in priority order: .lla-rules (primary) → .cursorrules (migration/fallback)
  * @returns Rules content if file exists, undefined otherwise
@@ -1027,8 +1070,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   type: 'info',
                 });
 
-                // Read file
-                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                // Find the correct workspace folder for this file
+                const workspaceFolder = findWorkspaceFolderForFile(filepath);
                 if (!workspaceFolder) {
                   throw new Error('No workspace folder open');
                 }
@@ -1151,8 +1194,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   type: 'info',
                 });
 
-                // Read file
-                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                // Find the correct workspace folder for this file
+                const workspaceFolder = findWorkspaceFolderForFile(hookFile);
                 if (!workspaceFolder) {
                   throw new Error('No workspace folder open');
                 }
@@ -1396,7 +1439,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             // AGENT MODE: /read <path>
             if (readMatch) {
               const relPath = readMatch[1];
-              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+              // Find the correct workspace folder for this file
+              const wsFolder = findWorkspaceFolderForFile(relPath)?.uri;
               if (!wsFolder) {throw new Error('No workspace folder open.');}
               const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
 
