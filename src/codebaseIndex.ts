@@ -96,16 +96,37 @@ export class CodebaseIndex {
 
   /**
    * Recursively scan directory for TypeScript files
+   * Skips node_modules, .next, .git, and other common non-source directories
    */
   private scanDirectory(dir: string): void {
     try {
+      // Skip directories that shouldn't be scanned
+      const dirName = path.basename(dir);
+      const skipDirs = [
+        'node_modules',
+        '.next',
+        '.git',
+        '.venv',
+        'dist',
+        'build',
+        'coverage',
+        '.nuxt',
+        'out',
+        '__pycache__',
+        '.pytest_cache',
+      ];
+
+      if (skipDirs.includes(dirName)) {
+        return;
+      }
+
       const entries = fs.readdirSync(dir, { withFileTypes: true });
 
       entries.forEach(entry => {
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          // Recurse into subdirectories
+          // Recurse into subdirectories (unless skipped)
           this.scanDirectory(fullPath);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
           // Parse TypeScript file
