@@ -87,6 +87,7 @@ export class Executor {
       let result: StepResult | null = null;
       let autoFixAttempted = false;
       const maxRetries = this.config.maxRetries || 2;
+      const MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1 fix: Prevent infinite validation loops
 
       while (retries <= maxRetries) {
         result = await this.executeStep(plan, step.stepId);
@@ -95,8 +96,8 @@ export class Executor {
 
         // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
         if (!autoFixAttempted && result.error) {
-          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId}...`, 'info');
-          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now());
+          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${MAX_VALIDATION_ITERATIONS})...`, 'info');
+          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), MAX_VALIDATION_ITERATIONS);
           if (fixedResult && fixedResult.success) {
             result = fixedResult;
             autoFixAttempted = true;
@@ -537,7 +538,7 @@ export class Executor {
    * Automatically attempts to fix failures without manual intervention
    * Returns null if no auto-fix is possible, or a fixed StepResult if successful
    */
-  private async attemptAutoFix(step: PlanStep, error: string, startTime: number): Promise<StepResult | null> {
+  private async attemptAutoFix(step: PlanStep, error: string, startTime: number, maxIterations: number = 3): Promise<StepResult | null> {
     // Pattern 1: File not found on read → Try reading parent directory (walk up until exists)
     if (step.action === 'read' && error.includes('ENOENT') && step.path) {
       let currentPath = step.path;
