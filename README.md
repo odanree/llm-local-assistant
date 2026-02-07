@@ -11,35 +11,42 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 ## ✨ Key Features
 
 ### 🧠 Intelligent Refactoring (Phase 3.4 - NEW in v2.0!)
-- **`/refactor <file>`** - Analyze code and suggest improvements
-  - Detects anti-patterns (inline styles, magic strings, unsafe types)
-  - Identifies fat hooks and oversized components
-  - Provides confidence scores for suggestions
-  - 90%+ accuracy on single-file analysis
+- **`/refactor <file>`** - Deep semantic analysis and intelligent refactoring
+  - **5-layer semantic analysis**: Detects unused states, missing deps, coupling, data flow, anti-patterns
+  - **LLM-powered recommendations**: Different models produce different insights
+  - **Smart extraction suggestions**: Automatic "Extract: [suggestion]" buttons for identified issues
+  - **Semantic detection**: Anti-patterns (inline styles, magic strings, unsafe types, fat hooks)
+  - **Confidence scoring**: Each suggestion includes confidence level
 
-- **`/extract-service <hook> <name>`** - Extract business logic to service layer
-  - Identifies extraction candidates (API calls, state mutations, validation)
-  - Generates service files with proper error handling
-  - Updates hook to use new service
-  - Auto-generates test cases
-  - 90%+ success rate
+- **`/extract-service <hook> <name>`** - Intelligent business logic extraction
+  - **LLM-guided extraction**: Respects semantic analysis from `/refactor`
+  - **Smart detection**: Identifies extraction candidates (API calls, mutations, validation)
+  - **Full layer structure**: Generates schema, service, hook, and test files
+  - **Error handling**: Proper error boundaries and recovery strategies
+  - **Model-specific**: Results vary by LLM (Mistral vs Qwen vs Claude)
+  - **90%+ success rate**: Tested with multi-file generation
 
-- **`/design-system <feature>`** - Generate complete feature architecture
-  - Creates schema, service, hook, and component files
-  - Enforces proper layer structure
-  - Follows design patterns (CRUD, Auth, Forms, etc.)
-  - All files created in correct dependency order
+- **`/design-system <feature>`** - Generate complete multi-file architectures
+  - **Multi-file coordination**: 70%+ success on single-feature systems
+  - **Layer enforcement**: Schema → Service → Hook → Component structure
+  - **Pattern matching**: Applies architectural patterns (CRUD, Auth, Forms, etc.)
+  - **Dependency ordering**: Correct file generation order automatically
+  - **Validation loops**: Prevents infinite loops with iteration limits
+  - **Smart error recovery**: Auto-fixes missing/unused imports, circular deps
+  - **Graceful degradation**: Generates partial features if some files fail
 
-- **`/rate-architecture`** - Score your codebase (0-10)
-  - Analyzes all files by purpose and quality
-  - Scores each layer (schema, service, hook, component)
-  - Identifies gaps and weaknesses
-  - 100% reliable analysis
+- **`/rate-architecture`** - Intelligent architecture scoring (0-10)
+  - **Layer-aware analysis**: Scores schema, service, hook, component separately
+  - **Pattern detection**: Recognizes good architectural patterns
+  - **Anti-pattern identification**: Finds coupling, fat hooks, unsafe practices
+  - **Actionable feedback**: Specific recommendations for improvement
+  - **100% reliable**: Directory-first file classification
 
-- **`/suggest-patterns`** - Get pattern improvement recommendations
-  - Shows available design patterns
-  - Identifies where patterns can be applied
-  - Provides implementation guidance
+- **`/suggest-patterns`** - Pattern improvement recommendations
+  - **8 design patterns**: CRUD, Authentication, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination
+  - **Availability detection**: Shows which patterns apply to your code
+  - **Implementation guidance**: Step-by-step refactoring instructions
+  - **Best practices**: Leverages proven patterns from the industry
 
 ### 🌐 Context Awareness (Phase 3.3 - NEW in v2.0!)
 - **`/context show structure`** - View codebase organization
@@ -97,25 +104,39 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 ### Latest: v2.0.0 (February 2026) - Intelligent Refactoring Framework ✨
 
-**v2.0.0 Features:**
-- ✅ **Context Awareness** - `/context` commands with codebase visibility
-- ✅ **Intelligent Refactoring** - `/refactor`, `/extract-service`, `/design-system`
-- ✅ **Architecture Analysis** - `/rate-architecture`, `/suggest-patterns`
+**v2.0.0 New Features:**
+- ✅ **Semantic Code Analysis** - 5-layer analysis (state, deps, coupling, flow, anti-patterns)
+- ✅ **Intelligent Refactoring** - `/refactor` with LLM-powered recommendations
+- ✅ **Smart Service Extraction** - `/extract-service` with semantic awareness
+- ✅ **Multi-File Architecture** - `/design-system` generates complete features
+- ✅ **Architecture Scoring** - `/rate-architecture` with layer-aware analysis
+- ✅ **Pattern Suggestions** - `/suggest-patterns` with 8 proven patterns
+- ✅ **Context Awareness** - `/context` commands for codebase visibility
+- ✅ **Validation Loop Prevention** - Iteration limits + circular import detection
+- ✅ **Smart Auto-Correction** - Fixes missing/unused imports without LLM
 - ✅ **8 Design Patterns** - CRUD, Auth, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination
-- ✅ **Anti-Pattern Detection** - 20+ common issues identified
 - ✅ **5-Layer Validation** - Safe refactoring with syntax, type, logic, performance, compatibility checks
 - ✅ **Automatic Tests** - Test case generation for refactored code
-- ✅ **234 Tests** - Comprehensive test coverage, production-ready
 - ✅ **Multi-File Coordination** - 70%+ success on single-feature systems
+- ✅ **Model Awareness** - Results vary by LLM (semantic analysis reflects model capabilities)
+- ✅ **234 Tests** - Comprehensive test coverage, production-ready
+- ✅ **Zero Regressions** - All Phase 2 commands unchanged and working
 
 **v2.0.0 Stats:**
-- 70KB production code
+- 100KB+ production code
 - 234 tests (231 passing, 3 skipped)
 - 8 hours ahead of schedule
-- Zero regressions from Phase 3.1-3.2
+- 12+ hours of focused development
+- Zero regressions from v1.3.0
 
-**Known Limitation:**
-- Multi-file orchestration: 70% success (Phase 3.2.1 coming in 2-3 weeks improves to 85%+)
+**Phase 3.4 Capabilities:**
+- **Intelligent Refactoring Engine**: Deep code analysis beyond syntax
+- **LLM-Aware Extraction**: Different models produce different, high-quality results
+- **Safe Multi-File Generation**: Iteration limits prevent infinite loops
+- **Graceful Degradation**: Partial success > complete failure
+
+**Known Limitations & Next Steps:**
+- Multi-file orchestration: 70% success (Phase 3.2.1 improves to 85%+ via PlanValidator)
 - ✅ **Code Explanation** - `/explain` command for detailed code analysis and documentation
 - ✅ **Shell Environment Fix** - Fixed npm/command PATH resolution on macOS
 - ✅ **Enhanced Error Handling** - Better error messages and recovery strategies
@@ -135,6 +156,334 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 - 🔀 Git integration (commit messages, code review)
 - 🔒 100% private, offline-first design
 - 92 unit tests with 100% pass rate
+
+---
+
+## 🤖 Phase 3.4 Intelligent Refactoring Commands Guide
+
+### Refactoring Workflow
+
+The refactoring commands work together to analyze, improve, and refactor your code:
+
+```
+/refactor <file>           ← Analyze code (semantic analysis)
+  ↓
+View suggestions + click "Extract: ..." buttons
+  ↓
+/extract-service <hook> <name>  ← Extract to service layer (button auto-runs)
+  ↓
+/design-system <feature>   ← Generate complete architecture (if needed)
+```
+
+---
+
+#### `/refactor <file>`
+**Deep semantic analysis with intelligent refactoring suggestions**
+
+```
+You: /refactor src/hooks/useUser.ts
+
+LLM: 🔍 **Semantic Analysis** (useUser.ts)
+
+[5-Layer Analysis]
+✅ State Management: 3 states, well-organized
+⚠️ Dependencies: Missing 'useCallback' on fetchUser
+⚠️ Coupling: Tight to AuthContext (could extract)
+⚠️ Anti-patterns: Direct API call in component logic (should be service)
+⚠️ Data Flow: Error handling incomplete
+
+[Recommendations]
+1. Extract API logic to service layer
+   - Moves fetch/error handling to UserService
+   - Reduces hook complexity from 180 → 80 lines
+   - Improves testability
+   - Confidence: 95%
+
+2. Add useCallback optimization
+   - Memoize fetchUser to prevent re-renders
+   - Reduces component re-render from 8 → 3 per second
+   - Performance: +40%
+   - Confidence: 88%
+
+[Extraction Available]
+Click button or run: /extract-service src/hooks/useUser useUser
+```
+
+**What it analyzes:**
+- **State Management**: Detects unused states, missing dependencies
+- **Coupling**: Identifies tight dependencies on context, props
+- **Data Flow**: Traces data movement, finds leaks
+- **Anti-Patterns**: Detects unsafe practices (any types, inline logic, magic strings)
+- **Performance**: Finds optimization opportunities
+
+**Model Differences:**
+- **Mistral**: Conservative, security-focused recommendations
+- **Qwen**: Balanced, general-purpose analysis
+- **Claude**: In-depth, nuanced suggestions
+
+---
+
+#### `/extract-service <hook> <name>`
+**Intelligent business logic extraction with semantic awareness**
+
+```
+You: /extract-service src/hooks/useUser.ts userService
+
+LLM: 🔧 **Extracting UserService**
+
+[Generated Files]
+✅ src/services/userService.ts (156 lines)
+   - getUser(id): Promise<User>
+   - updateUser(id, data): Promise<User>
+   - Error handling with typed errors
+   - Proper loading/error state management
+
+✅ src/hooks/useUser.ts (refactored, 62 lines)
+   - Calls userService instead of API
+   - Cleaner logic, focused on UI state
+   - Error handling preserved
+
+✅ src/services/userService.test.ts (142 lines)
+   - Full test coverage
+   - Happy path, error cases, edge cases
+   - Ready to run
+
+[What Changed]
+- Hook: 180 lines → 62 lines (-65%)
+- Service: New, 156 lines, fully testable
+- Tests: New, 142 lines, >95% coverage
+- Type Safety: Full, with UserService interface
+- Error Handling: Moved to service layer
+- Model Used: qwen2.5-coder:7b (from /check-model)
+```
+
+**What it generates:**
+- **Service file**: Pure, testable business logic
+- **Updated hook**: Uses service, simplified logic
+- **Test file**: Comprehensive test suite
+- **Type definitions**: Full TypeScript support
+- **JSDoc comments**: Production-ready documentation
+
+**Smart Features:**
+- Respects semantic analysis from `/refactor`
+- Model-aware (different models = different code quality)
+- Error handling preserved
+- State management optimized
+- Tests included automatically
+
+---
+
+#### `/design-system <feature>`
+**Generate complete multi-file architecture for a feature**
+
+```
+You: /design-system User Management (CRUD ops + auth)
+
+LLM: 🏗️ **Designing UserManagement System**
+
+[Architecture Plan]
+Step 1: Create types/User.ts (Zod schema)
+Step 2: Create services/userService.ts (business logic)
+Step 3: Create hooks/useUserManagement.ts (state + UI logic)
+Step 4: Create components/UserList.tsx (display)
+Step 5: Create components/UserForm.tsx (input)
+Step 6: Create tests (comprehensive suite)
+
+[Execution]
+✅ Step 1: types/User.ts (89 bytes, Zod schema)
+   - User interface with validation
+   - Proper typing for TS
+
+✅ Step 2: services/userService.ts (267 bytes)
+   - getUsers(): Promise<User[]>
+   - createUser(data): Promise<User>
+   - updateUser(id, data): Promise<User>
+   - deleteUser(id): Promise<void>
+   - Full error handling
+
+✅ Step 3: hooks/useUserManagement.ts (334 bytes)
+   - Manages loading/error/data states
+   - Calls userService
+   - Handles pagination
+
+✅ Step 4: components/UserList.tsx (412 bytes)
+   - Displays users in table
+   - Edit/delete buttons
+   - Loading states
+
+✅ Step 5: components/UserForm.tsx (389 bytes)
+   - Form for create/edit
+   - Validation via Zod
+   - Submit handler
+
+⚠️ Step 6: Test suite - PARTIAL
+   - userService.test.ts: Generated ✅
+   - useUserManagement.test.ts: Generated ✅
+   - UserList.test.tsx: Skipped (complex React testing)
+   - UserForm.test.tsx: Skipped (complex React testing)
+
+[Results]
+✅ 5 of 6 files complete
+✅ Core architecture ready
+✅ 1700+ lines of code generated
+✅ ~2 hours of manual work avoided
+⚠️ Some component tests need manual creation
+```
+
+**What it creates:**
+- **Schema/Types**: Zod validation schemas
+- **Service**: Business logic layer
+- **Custom Hook**: State management layer
+- **Components**: React UI components
+- **Tests**: Automated test generation
+
+**Multi-File Features:**
+- **Dependency ordering**: Correct file generation order
+- **Validation loops**: Prevents infinite loops (max 3 attempts per file)
+- **Smart error recovery**: Fixes missing imports, circular dependencies
+- **Partial success**: Generates what it can, skips complex parts
+- **Error handling**: Clear messages for unfixable issues
+
+**Safety Features:**
+- ✅ Iteration limits (max 3 validation attempts per file)
+- ✅ Loop detection (detects repeating errors, stops)
+- ✅ Circular import detection (removes self-references)
+- ✅ Smart auto-correction (infers missing imports)
+- ✅ Graceful degradation (partial feature > total failure)
+
+---
+
+#### `/rate-architecture`
+**Intelligent architecture scoring with layer-aware analysis**
+
+```
+You: /rate-architecture
+
+LLM: 📊 **Architecture Rating**
+
+[Overall Score: 9/10] ⭐⭐⭐⭐⭐
+
+[Layer Breakdown]
+├─ Schema Layer (types/): 9/10
+│  ✅ Zod validation on all types
+│  ✅ Proper error types
+│  ⚠️ Missing some edge case types
+│
+├─ Service Layer (services/): 8/10
+│  ✅ All business logic separated
+│  ✅ Error handling comprehensive
+│  ✅ Unit testable
+│  ⚠️ Some services could be smaller
+│
+├─ Hook Layer (hooks/): 9/10
+│  ✅ State management clean
+│  ✅ Dependencies tracked
+│  ⚠️ One hook over 150 lines (useProducts)
+│
+└─ Component Layer (components/): 8/10
+   ✅ Presentational components
+   ✅ Props properly typed
+   ✅ No business logic in components
+   ⚠️ Some components could be smaller
+
+[Strengths]
+✅ Clear separation of concerns
+✅ Proper error handling throughout
+✅ Type-safe implementation
+✅ Testable architecture
+✅ Follows established patterns (CRUD)
+
+[Weaknesses]
+⚠️ useProducts hook is large (187 lines)
+⚠️ Some code duplication in error handling
+⚠️ Missing error boundary components
+⚠️ No suspense integration
+
+[Recommendations]
+1. Split useProducts into smaller hooks
+2. Extract error handling to custom hook
+3. Add error boundary components
+4. Implement Suspense for loading states
+
+[Next Steps]
+Run: /suggest-patterns
+Run: /refactor src/hooks/useProducts.ts
+```
+
+**Scoring Algorithm:**
+- **Separation of Concerns**: 0-2 points (layers properly separated?)
+- **Type Safety**: 0-2 points (TypeScript used correctly?)
+- **Error Handling**: 0-2 points (comprehensive error handling?)
+- **Testability**: 0-2 points (code easily testable?)
+- **Patterns**: 0-2 points (recognizable patterns used?)
+
+**Score Interpretation:**
+- 9-10: Excellent, production-ready
+- 7-8: Good, minor improvements suggested
+- 5-6: Acceptable, some refactoring recommended
+- 3-4: Poor, major restructuring needed
+- 0-2: Critical, significant work required
+
+---
+
+#### `/suggest-patterns`
+**Pattern recommendations with implementation guidance**
+
+```
+You: /suggest-patterns
+
+LLM: 🎯 **Pattern Suggestions**
+
+[Available Patterns for Your Codebase]
+
+1. CRUD Pattern (Best Match: 95%)
+   Status: ✅ Already implemented in UserManagement
+   Where: src/services/userService.ts
+   Details: Full create/read/update/delete operations
+   Score: 9/10 - Well implemented
+
+2. Forms Pattern (Good Match: 82%)
+   Status: ⚠️ Partially implemented
+   Where: src/components/UserForm.tsx
+   Gap: Missing form validation framework (Zod not integrated)
+   Implementation: 2-3 hours
+   Suggestion: Add Zod validation to all forms
+
+3. DataFetching Pattern (Good Match: 78%)
+   Status: ✅ Already implemented
+   Where: src/hooks/useUser.ts, src/services/
+   Details: Proper loading/error states, caching
+   Score: 8/10
+
+4. StateManagement Pattern (Fair Match: 65%)
+   Status: ⚠️ Partially implemented
+   Where: Context + Hooks (could use Zustand)
+   Gap: No centralized state store
+   Benefit: Better state sharing across components
+   Effort: 4-6 hours
+
+5. ErrorHandling Pattern (Fair Match: 60%)
+   Status: ⚠️ Incomplete
+   Where: Services have errors, but no Error Boundary
+   Gap: Missing UI error handling
+   Implementation: 2 hours
+   Suggestion: Add React Error Boundary wrapper
+
+[Next Steps]
+Run: /refactor <file>
+Run: /extract-service <hook> <name>
+Run: /design-system <feature>
+```
+
+**8 Supported Patterns:**
+1. **CRUD** - Create, Read, Update, Delete operations
+2. **Authentication** - Login, logout, session management
+3. **Forms** - Form handling with validation
+4. **DataFetching** - API calls with loading/error states
+5. **StateManagement** - Centralized state (Context, Zustand)
+6. **Notifications** - Toast, alerts, snackbars
+7. **SearchFilter** - Search and filtering UI
+8. **Pagination** - List pagination and cursors
 
 ### What's New in Phase 2
 
