@@ -149,13 +149,21 @@ export class CodebaseIndex {
     const fileName = path.basename(filePath).toLowerCase();
     const dirName = path.dirname(filePath).toLowerCase();
 
+    // Priority 1: Classify by directory (most reliable)
     if (dirName.includes('schema')) return 'schema';
-    if (dirName.includes('hook') || fileName.startsWith('use')) return 'hook';
     if (dirName.includes('service') || dirName.includes('api')) return 'service';
-    if (dirName.includes('component') || fileName.endsWith('.tsx')) return 'component';
+    if (dirName.includes('component')) return 'component';
+    if (dirName.includes('hook')) return 'hook';
     if (dirName.includes('util') || dirName.includes('helper')) return 'utility';
     if (dirName.includes('type') || fileName === 'index.ts') return 'types';
     if (dirName.includes('constant')) return 'constant';
+
+    // Priority 2: Classify by file extension (if not in a classified directory)
+    if (fileName.endsWith('.tsx')) return 'component';
+
+    // Priority 3: Classify by naming pattern (only if directory didn't classify it)
+    // Files named useXxx in root/unknown locations are hooks
+    if (fileName.startsWith('use')) return 'hook';
 
     return 'unknown';
   }
