@@ -4,6 +4,58 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [2.0.1] - 2026-02-07
+
+### Added - Phase 3.4 Enhancements & UI/UX
+- **LLM-Based Pattern Detection** - Semantic analysis for `/suggest-patterns`
+  - Replaces keyword matching with LLM semantic understanding
+  - Confidence scoring (0-100%) with reasoning
+  - Only flags files that truly need a pattern (60% threshold)
+  - Graceful fallback to keyword detection if LLM unavailable
+  - **Benefit**: Eliminates false positives, more actionable suggestions
+
+- **CodebaseIndex Auto-Detection** - Supports any project structure
+  - Auto-detects source directories: src → app → components → lib
+  - Falls back to project root if no standard directory
+  - Fixes multi-workspace analysis
+  - Works with Next.js, Create React App, custom structures
+
+- **Smart Chat UI/UX** - Keyboard shortcuts for efficient workflow
+  - **Tab Autocomplete**: Complete commands (`/ref` → `/refactor`)
+  - **Tab Cycling**: Navigate matches if multiple found (`/r` → cycles through options)
+  - **Arrow Up/Down**: Navigate command history (recall previous commands)
+  - **Copy-Pastable Commands**: `/suggest-patterns` shows: `` `/refactor app/page.tsx` ``
+  
+- **GitHub Actions CI/CD** - Automated testing on every PR
+  - Tests run on Node 18.x and 20.x
+  - 273 tests with 100% pass rate
+  - Blocks PRs on test failures
+  - Coverage tracking with Codecov
+
+### Changed
+- **`/refactor <file>`** - Now shows detected architectural patterns
+  - Integrates with PatternDetector for semantic analysis
+  - Displays pattern confidence and reasoning
+  - Aligns with `/suggest-patterns` output
+  
+- **`/suggest-patterns`** - LLM-aware analysis with better UX
+  - LLM semantic detection (not keywords)
+  - Copy-pastable `/refactor` commands in output
+  - Multi-workspace support with selection UI
+
+### Fixed
+- Multi-workspace file resolution (Windows path separators)
+- Node modules parsing errors (skip during CodebaseIndex scan)
+- Pattern detection consistency between `/suggest-patterns` and `/refactor`
+- CodebaseIndex source directory detection
+
+### Improved
+- Performance: 10x faster scans (node_modules excluded)
+- Accuracy: Semantic pattern detection vs keyword matching
+- UX: Keyboard shortcuts for command completion and history
+- Documentation: 273 tests with comprehensive coverage
+- Infrastructure: GitHub Actions CI/CD pipeline
+
 ## [2.0.0] - 2026-02-06
 
 ### Added - Phase 3.3: Context Awareness
