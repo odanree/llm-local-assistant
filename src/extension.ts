@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
 import { Planner } from './planner';
+import GatekeeperValidator from './gatekeeperValidator';
 import { Executor } from './executor';
 import CodebaseIndex from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
@@ -440,6 +441,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // ============================================================================
                 
                 let finalContent = generatedContent;
+                let validationAttempts = 0;
+                const MAX_VALIDATION_ATTEMPTS = 3;
+                const iterationErrors: string[] = [];
+                let loopDetected = false;
+                
                 console.log(`[LLM Assistant] /write validation starting - isCodeFile=${isCodeFile}, fileExtension=${fileExtension}`);
                 
                 if (isCodeFile) {
