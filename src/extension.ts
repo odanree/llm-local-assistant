@@ -1497,11 +1497,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   }
                 }
 
-                // Format suggestions with confidence levels
+                // Format suggestions with confidence levels and copy-pastable commands
                 const suggestionText = suggestions.length > 0 
                   ? suggestions.slice(0, 5).map(s => 
-                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}`
-                    ).join('\n')
+                      `📄 ${s.file} — Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   ℹ️ ${s.reason}\n   \`/refactor ${s.file}\``
+                    ).join('\n\n')
                   : 'All files already follow good patterns!';
 
                 postChatMessage({
