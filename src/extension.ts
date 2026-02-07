@@ -145,7 +145,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /explain <path> — Generate detailed code explanation\n\n` +
           `📝 **Git Integration:**\n` +
           `- /git-commit-msg — Generate commit message from staged changes\n` +
-          `- /git-review [staged|unstaged|all] — Review code changes with AI`,
+          `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
+          `🔍 **Diagnostics:**\n` +
+          `- /check-model — Show configured model and available models on server`,
         type: 'info',
         success: true,
       });
@@ -224,6 +226,56 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 postChatMessage({
                   command: 'addMessage',
                   error: `Planning error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // Check for /check-model command
+            const checkModelMatch = text.match(/^\/check-model/);
+
+            // DIAGNOSTIC: /check-model - Show configured and running models
+            if (checkModelMatch) {
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: 'Checking model configuration...',
+                type: 'info',
+              });
+
+              try {
+                const modelInfo = await llmClient.getModelInfo();
+                
+                let response = `🔍 **Model Configuration**\n\n`;
+                response += `**Endpoint:** \`${modelInfo.endpoint}\`\n\n`;
+                response += `**Configured Model:** \`${modelInfo.configuredModel}\`\n\n`;
+                
+                if (modelInfo.availableModels.length > 0) {
+                  response += `**Available Models on Server:**\n`;
+                  modelInfo.availableModels.forEach(model => {
+                    const isCurrent = model === modelInfo.configuredModel;
+                    response += `- \`${model}\`${isCurrent ? ' ✅ (configured)' : ''}\n`;
+                  });
+                } else if (modelInfo.error) {
+                  response += `**Error:** ${modelInfo.error}\n\n`;
+                  response += `**Troubleshooting:**\n`;
+                  response += `- Check if Ollama is running: \`ollama serve\`\n`;
+                  response += `- Verify endpoint in settings: \`llm-assistant.endpoint\`\n`;
+                  response += `- Pull the model if missing: \`ollama pull ${modelInfo.configuredModel}\`\n`;
+                } else {
+                  response += `**Status:** Server is running but no models found.\n`;
+                  response += `Pull a model first: \`ollama pull ${modelInfo.configuredModel}\`\n`;
+                }
+                
+                postChatMessage({
+                  command: 'addMessage',
+                  text: response,
+                  success: !modelInfo.error,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error checking models: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }
