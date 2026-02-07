@@ -1,5 +1,9 @@
 # LLM Local Assistant - VS Code Extension
 
+[![Tests](https://github.com/odanree/llm-local-assistant/workflows/Test%20&%20Build/badge.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-code/v/odanree.llm-local-assistant)](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant)
+
 A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
 
 **🚀 NEW in v2.0**: Intelligent refactoring framework with architecture analysis, pattern detection, and safe code transformation.
@@ -1211,12 +1215,15 @@ curl -fsSL https://ollama.ai/install.sh | sh
 - **Development**: [docs/DEVELOPER_GUIDE_V1.2.0.md](docs/DEVELOPER_GUIDE_V1.2.0.md) - Setup and dev workflow
 - **Phase Plans**: [docs/PHASE-3.*.md](docs/) - Detailed feature specifications
 - **Testing**: [docs/PHASE-3.4.5-TESTING-QUICKSTART.md](docs/PHASE-3.4.5-TESTING-QUICKSTART.md)
+- **CI/CD**: [.github/CI_CD_SETUP.md](.github/CI_CD_SETUP.md) - GitHub Actions workflow
 
 ### For Contributors - Contributing Code
 - **Code Patterns**: Review `src/*.ts` for style and structure
 - **Test Patterns**: Review `src/*.test.ts` for testing approach
 - **Clean History**: `git log --oneline` shows atomic commits
 - **Setup**: Run `npm install && npm run watch`
+- **Testing**: Run `npm test` (273 tests - all must pass)
+- **CI/CD**: Tests run automatically on every PR via GitHub Actions ✅
 
 ### Documentation Map
 
@@ -1237,12 +1244,13 @@ curl -fsSL https://ollama.ai/install.sh | sh
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 255 |
+| **Tests** | 273 |
 | **Test Pass Rate** | 100% |
 | **TypeScript Strict** | ✅ Yes |
 | **Type Errors** | 0 |
 | **Compilation Errors** | 0 |
 | **Production Blockers** | 0 |
+| **CI/CD** | ✅ GitHub Actions (every PR) |
 | **Commit History** | 50+ atomic |
 | **Versions Released** | 2 (v1.2.5, v2.0) |
 | **Lines of Code** | 1,200+ (v2.0) |

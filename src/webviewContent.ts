@@ -9,6 +9,22 @@ export function getWebviewContent(): string {
     const clear = document.getElementById('clear');
     let tokenBuffer = '';
     let bufferTimeout = null;
+    
+    // Command history & autocomplete
+    let commandHistory = [];
+    let historyIndex = -1;
+    let autocompleteMatches = [];
+    let autocompleteIndex = -1;
+    const availableCommands = [
+      '/refactor',
+      '/extract-service',
+      '/design-system',
+      '/rate-architecture',
+      '/suggest-patterns',
+      '/context',
+      '/check-model',
+      '/read',
+    ];
     function flushTokenBuffer() {
       if (tokenBuffer) {
         const msgs = chat.children;
@@ -29,14 +45,70 @@ export function getWebviewContent(): string {
       const msg = input.value.trim();
       if (msg) {
         chat.innerHTML += '<div class="msg user">' + msg + '</div>';
+        commandHistory.push(msg);
+        historyIndex = commandHistory.length;
         input.value = '';
+        autocompleteMatches = [];
+        autocompleteIndex = -1;
         vscode.postMessage({ command: 'sendMessage', text: msg });
       }
     }
     send.addEventListener('click', sendMessage);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
         sendMessage();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        // Tab: autocomplete or cycle through matches
+        const currentInput = input.value;
+        const cursorPos = input.selectionStart;
+        const beforeCursor = currentInput.substring(0, cursorPos);
+        
+        // Find the current command being typed
+        const lastSlash = beforeCursor.lastIndexOf('/');
+        if (lastSlash !== -1) {
+          const partialCommand = beforeCursor.substring(lastSlash);
+          
+          // First tab: get all matching commands
+          if (autocompleteMatches.length === 0) {
+            autocompleteMatches = availableCommands.filter(cmd => cmd.startsWith(partialCommand));
+            autocompleteIndex = 0;
+          } else {
+            // Subsequent tabs: cycle through matches
+            autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
+          }
+          
+          if (autocompleteMatches.length > 0) {
+            const match = autocompleteMatches[autocompleteIndex];
+            const newInput = beforeCursor.substring(0, lastSlash) + match + currentInput.substring(cursorPos);
+            input.value = newInput;
+            input.setSelectionRange(beforeCursor.substring(0, lastSlash).length + match.length, beforeCursor.substring(0, lastSlash).length + match.length);
+          }
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        // ArrowUp: restore previous command
+        if (historyIndex > 0) {
+          historyIndex--;
+          input.value = commandHistory[historyIndex];
+          setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+        }
+        autocompleteMatches = [];
+        autocompleteIndex = -1;
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        // ArrowDown: go to next command in history
+        if (historyIndex < commandHistory.length - 1) {
+          historyIndex++;
+          input.value = commandHistory[historyIndex];
+          setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+        } else {
+          historyIndex = commandHistory.length;
+          input.value = '';
+        }
+        autocompleteMatches = [];
+        autocompleteIndex = -1;
       }
     });
     clear.addEventListener('click', () => {
