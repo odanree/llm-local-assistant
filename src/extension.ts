@@ -1096,13 +1096,28 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const semanticAnalysis = await featureAnalyzer.analyzeHookSemantically(code);
                 console.log('[Extension] /refactor: Semantic analysis complete - Complexity:', semanticAnalysis.overallComplexity);
                 
+                // NEW: Also check for architectural patterns using LLM
+                console.log('[Extension] /refactor: Checking for architectural patterns...');
+                const patternResult = await patternDetector.detectPatternWithLLM(code, filepath);
+                const shouldShowPattern = patternDetector.shouldFlagPattern(patternResult);
+                
                 // Build detailed report
                 let report = `📊 **Refactoring Analysis: ${filepath}**\n`;
                 report += `📁 **Workspace:** ${workspaceFolder.name}\n\n`;
                 report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
                 
+                // Show pattern if detected
+                if (shouldShowPattern) {
+                  report += `**Architectural Pattern:** ${patternResult.pattern} (${Math.round(patternResult.confidence * 100)}% confidence)\n`;
+                  report += `> ${patternResult.reasoning}\n\n`;
+                }
+                
                 if (semanticAnalysis.issues.length > 0) {
                   report += `**Issues Found:**\n${semanticAnalysis.issues.map(i => `- ${i}`).join('\n')}\n\n`;
+                }
+                
+                if (!semanticAnalysis.issues.length && !shouldShowPattern) {
+                  report += `**Issues Found:**\n- ✅ No major semantic issues detected\n\n`;
                 }
                 
                 if (semanticAnalysis.unusedStates.length > 0) {
