@@ -205,7 +205,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-commit-msg — Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
-          `- /check-model — Show configured model and available models on server`,
+          `- /check-model — Show configured model and available models on server\n\n` +
+          `⚠️ **Disabled in v2.0.3 (Code Generation Limitations):**\n` +
+          `- /plan — Use Cursor, Windsurf, or manual implementation\n` +
+          `- /design-system — Use Cursor, Windsurf, or manual implementation\n` +
+          `- /approve — Tied to disabled /plan and /design-system`,
         type: 'info',
         success: true,
       });
@@ -238,66 +242,32 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
             // AGENT MODE: /plan <task>
+            // DISABLED for v2.0.3: Code generation has infinite loop bugs
+            // Use better tools: Cursor, Windsurf, or manual implementation
             if (planMatch) {
-              const userRequest = planMatch[1].trim();
-              
-              chatPanel?.webview.postMessage({
-                command: 'status',
-                text: `🤔 Analyzing task...`,
-                type: 'info',
+              postChatMessage({
+                command: 'addMessage',
+                error: `/plan is disabled in v2.0.3 due to code generation limitations.
+
+LLM-based code generation has known issues:
+- ❌ Infinite loop in validation (generates same broken code repeatedly)
+- ❌ Can't consistently follow constraints (detects error but regenerates identically)
+- ❌ Incomplete implementations (skeleton code, not working features)
+- ✅ Better tools exist for this task
+
+**Recommended alternatives:**
+1. **Cursor / Windsurf** - Better multi-file context, understands constraints
+2. **Manual implementation** - Now that you understand the pattern needed
+3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
+
+**This extension excels at:**
+- /refactor — Pattern detection & analysis
+- /suggest-patterns — Find architectural patterns
+- /rate-architecture — Score code quality
+- Architecture analysis & recommendations
+
+See /help for available commands.`,
               });
-
-              try {
-                // Update workspace context for multi-workspace support
-                const currentWorkspace = getActiveWorkspace();
-                wsFolder = currentWorkspace;
-                planner = new Planner({
-                  llmClient,
-                  maxSteps: 10,
-                  timeout: 120000,
-                  workspace: wsFolder,
-                  codebaseIndex,
-                });
-                
-                // First: Generate thinking to show reasoning
-                const thinking = await planner.generateThinking(
-                  userRequest,
-                  { messages: llmClient.getHistory() }
-                );
-
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `**My approach:**\n\n${thinking}`,
-                  success: true,
-                });
-
-                // Second: Generate the actual plan
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `Creating detailed plan...`,
-                  type: 'info',
-                });
-
-                const { plan, markdown } = await planner.generatePlan(
-                  userRequest,
-                  { messages: llmClient.getHistory() }
-                );
-                
-                // Store current plan for approval
-                (chatPanel as any)._currentPlan = plan;
-                
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `📋 **Plan Created** (${plan.steps.length} steps)\n\n${markdown}\n\n_Use **/approve** to execute or **/reject** to discard_`,
-                  success: true,
-                });
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Planning error: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
               return;
             }
 
@@ -354,87 +324,17 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /approve command
             const approveMatch = text.match(/^\/approve/);
 
-            // AGENT MODE: /approve - Execute current plan
+            // DISABLED for v2.0.3: /plan and /design-system are disabled
             if (approveMatch) {
-              try {
-                const currentPlan = (chatPanel as any)._currentPlan;
-                if (!currentPlan) {
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    error: 'No plan to approve. Use /plan <task> first.',
-                    success: false,
-                  });
-                  return;
-                }
+              postChatMessage({
+                command: 'addMessage',
+                error: `/approve is disabled because /plan and /design-system are disabled in v2.0.3.
 
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: 'Executing plan...',
-                  type: 'info',
-                });
+Code generation has infinite loop bugs that prevent safe execution.
+Use better tools: Cursor, Windsurf, or manual implementation.
 
-                console.log('[Extension] About to execute plan with', currentPlan.steps.length, 'steps');
-                currentPlan.steps.forEach((step, idx) => {
-                  console.log(`[Extension] Step ${idx + 1}: action=${step.action}, description=${step.description}`);
-                });
-
-                // Update workspace context for multi-workspace support
-                const currentWorkspace = getActiveWorkspace();
-                wsFolder = currentWorkspace;
-                executor = new Executor({
-                  extension: context,
-                  llmClient,
-                  gitClient: wsFolder ? new GitClient(wsFolder) : undefined,
-                  workspace: wsFolder || vscode.Uri.file('/'),
-                  codebaseIndex,
-                  maxRetries: 2,
-                  timeout: 30000,
-                  onProgress: (step: number, total: number, description: string) => {
-                    console.log(`[Executor] Step ${step}/${total}: ${description}`);
-                  },
-                  onMessage: (message: string, type: 'info' | 'error') => {
-                    console.log(`[Executor ${type.toUpperCase()}]`, message);
-                    if (chatPanel) {
-                      chatPanel.webview.postMessage({
-                        command: 'addMessage',
-                        text: message,
-                        success: type === 'info',
-                      });
-                    }
-                  },
-                  onStepOutput: (stepId: number, output: string, isError: boolean) => {
-                    console.log(`[Executor Step ${stepId}]`, output);
-                    if (chatPanel) {
-                      chatPanel.webview.postMessage({
-                        command: 'addMessage',
-                        text: isError ? `❌ ${output}` : output,
-                        success: !isError,
-                      });
-                    }
-                  },
-                });
-
-                const result = await executor.executePlan(currentPlan);
-                
-                // Clear current plan
-                delete (chatPanel as any)._currentPlan;
-                
-                const message = result.success 
-                  ? `✅ **Plan completed successfully**\n\nCompleted ${result.completedSteps} of ${currentPlan.steps.length} steps\n\n💡 *All steps executed successfully (check messages above for retry details)*`
-                  : `⚠️ **Plan execution failed**\n\nError: ${result.error || 'Unknown error'}`;
-                
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  text: message,
-                  success: result.success,
-                });
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
+See /help for available commands.`,
+              });
               return;
             }
 
@@ -1299,51 +1199,32 @@ ${patternResult.reasoning}
             
             // Check for /design-system command
             const designMatch = text.match(/^\/design-system\s+(.+)$/);
+            // DISABLED for v2.0.3: Code generation has infinite loop bugs
+            // Use better tools: Cursor, Windsurf, or manual implementation
             if (designMatch) {
-              const feature = designMatch[1].trim();
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `🎨 Designing system for ${feature}...`,
-                  type: 'info',
-                });
+              postChatMessage({
+                command: 'addMessage',
+                error: `/design-system is disabled in v2.0.3 due to code generation limitations.
 
-                // Update workspace context for multi-workspace support
-                const currentWorkspace = getActiveWorkspace();
-                wsFolder = currentWorkspace;
-                planner = new Planner({
-                  llmClient,
-                  maxSteps: 10,
-                  timeout: 120000,
-                  workspace: wsFolder,
-                  codebaseIndex,
-                });
+LLM-based code generation has known issues:
+- ❌ Infinite loop in validation (generates same broken code repeatedly)
+- ❌ Can't consistently follow constraints (detects error but regenerates identically)
+- ❌ Incomplete implementations (skeleton code, not working features)
+- ✅ Better tools exist for this task
 
-                // Get patterns
-                const patterns = architecturePatterns.getAllPatterns();
-                
-                // Generate plan
-                const designPlan = await planner.generatePlan(
-                  `Design a complete ${feature} feature using best practices. Include schema, service layer, custom hook, and component.`,
-                  { messages: llmClient.getHistory() }
-                );
+**Recommended alternatives:**
+1. **Cursor / Windsurf** - Better multi-file context, understands constraints
+2. **Manual implementation** - Now that you understand the pattern needed
+3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
 
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `🏗️ **System Design: ${feature}**\n\n` +
-                    `${designPlan.markdown}\n\n` +
-                    `Available patterns: ${patterns.map(p => p.name).join(', ')}\n\n` +
-                    `_Use **/approve** to generate all files_`,
-                  success: true,
-                });
+**This extension excels at:**
+- /refactor — Pattern detection & analysis
+- /suggest-patterns — Find architectural patterns
+- /rate-architecture — Score code quality
+- Architecture analysis & recommendations
 
-                (chatPanel as any)._currentPlan = designPlan.plan;
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Design error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
+See /help for available commands.`,
+              });
               return;
             }
 
