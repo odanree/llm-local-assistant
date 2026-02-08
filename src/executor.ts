@@ -63,6 +63,11 @@ export class Executor {
     this.cancelled = false;
     plan.status = 'executing';
 
+    // CRITICAL: Initialize results Map if not already present
+    if (!plan.results) {
+      plan.results = new Map<number, StepResult>();
+    }
+
     // CRITICAL FIX: Use workspace from plan context, not executor config
     // This fixes the "RefactorTest selection not persisting" bug  
     const planWorkspaceUri = plan.workspacePath 
