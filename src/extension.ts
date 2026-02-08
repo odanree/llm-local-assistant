@@ -13,6 +13,7 @@ import { ServiceExtractor } from './serviceExtractor';
 import { RefactoringExecutor } from './refactoringExecutor';
 import { PatternDetector } from './patternDetector';
 import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
+import { Refiner } from './refiner';
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -206,10 +207,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
           `- /check-model — Show configured model and available models on server\n\n` +
-          `⚠️ **Disabled in v2.0.3 (Code Generation Limitations):**\n` +
-          `- /plan — Use Cursor, Windsurf, or manual implementation\n` +
-          `- /design-system — Use Cursor, Windsurf, or manual implementation\n` +
-          `- /approve — Tied to disabled /plan and /design-system`,
+          `⚠️ **Re-enabled in v3.0 (Phase 3 - Differential Prompting):**\n` +
+          `- /plan — Now uses Refiner differential prompting (safer, more reliable)\n` +
+          `- /approve — Acknowledge and approve generated plans\n\n` +
+          `⏳ **Coming Soon (Phase 4):**\n` +
+          `- /design-system — Full architecture generation (pending implementation)`,
         type: 'info',
         success: true,
       });
@@ -241,33 +243,81 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /plan command
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
-            // AGENT MODE: /plan <task>
-            // DISABLED for v2.0.3: Code generation has infinite loop bugs
-            // Use better tools: Cursor, Windsurf, or manual implementation
+            // PHASE 3: /plan command — Re-enabled with Refiner differential prompting
             if (planMatch) {
+              const userRequest = planMatch[1];
+              const wsFolder = vscode.workspace.workspaceFolders?.[0];
+              if (!wsFolder) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: 'No workspace folder open.',
+                  success: false,
+                });
+                return;
+              }
+
               postChatMessage({
                 command: 'addMessage',
-                error: `/plan is disabled in v2.0.3 due to code generation limitations.
-
-LLM-based code generation has known issues:
-- ❌ Infinite loop in validation (generates same broken code repeatedly)
-- ❌ Can't consistently follow constraints (detects error but regenerates identically)
-- ❌ Incomplete implementations (skeleton code, not working features)
-- ✅ Better tools exist for this task
-
-**Recommended alternatives:**
-1. **Cursor / Windsurf** - Better multi-file context, understands constraints
-2. **Manual implementation** - Now that you understand the pattern needed
-3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
-
-**This extension excels at:**
-- /refactor — Pattern detection & analysis
-- /suggest-patterns — Find architectural patterns
-- /rate-architecture — Score code quality
-- Architecture analysis & recommendations
-
-See /help for available commands.`,
+                text: `📋 Generating plan for: "${userRequest}"\n\n(Using Refiner differential prompting — Phase 3)`,
+                type: 'info',
               });
+
+              try {
+                // Create Refiner instance with LLM callbacks
+                const refiner = new Refiner({
+                  projectRoot: wsFolder.uri.fsPath,
+                  maxRetries: 3,
+                  llmCall: async (systemPrompt: string, userMessage: string) => {
+                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                // Generate plan using Refiner
+                const planPrompt = `Create a detailed step-by-step action plan for:
+
+${userRequest}
+
+For each step, provide:
+1. Action type (read/write/run/analyze)
+2. What to do (specific file, command, or analysis)
+3. Expected outcome
+4. Any dependencies
+
+Format as: [Step N] [Action Type]: [Description]`;
+
+                const result = await refiner.generateCode(planPrompt, undefined, undefined);
+
+                if (result.success && result.code) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ Plan generated successfully!\n\n${result.code}`,
+                    success: true,
+                  });
+                } else {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Failed to generate plan: ${result.error || result.explanation}`,
+                    success: false,
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
               return;
             }
 
@@ -324,16 +374,12 @@ See /help for available commands.`,
             // Check for /approve command
             const approveMatch = text.match(/^\/approve/);
 
-            // DISABLED for v2.0.3: /plan and /design-system are disabled
+            // PHASE 3: /approve command — Re-enabled (simple approval for generated plans)
             if (approveMatch) {
               postChatMessage({
                 command: 'addMessage',
-                error: `/approve is disabled because /plan and /design-system are disabled in v2.0.3.
-
-Code generation has infinite loop bugs that prevent safe execution.
-Use better tools: Cursor, Windsurf, or manual implementation.
-
-See /help for available commands.`,
+                text: `✅ Plan approved! You can now:\n1. Review the generated plan\n2. Use /execute to run it\n3. Use /reject to discard it\n\nNote: /execute is not yet implemented. For now, manually review and implement the plan steps.`,
+                success: true,
               });
               return;
             }
