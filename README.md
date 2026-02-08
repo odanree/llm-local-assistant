@@ -315,7 +315,87 @@ Show all available commands.
 /help
 ```
 
+## 📸 Visual Guide (v2.0.3)
+
+### ✅ Pattern Detection & Analysis (Working)
+
+#### `/refactor <file>` - Semantic Analysis
+![Refactor Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-refactor.png)
+
+Shows 5-layer semantic analysis:
+- State management issues
+- Dependency problems  
+- Coupling analysis
+- Data flow inspection
+- Anti-pattern detection
+- Actionable recommendations
+
+#### `/rate-architecture` - Code Quality Scoring
+![Rate Architecture Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-rate-architecture.png)
+
+Architecture scoring (0-10):
+- Overall rating with breakdown
+- Layer-by-layer analysis
+- Strengths and weaknesses
+- Specific recommendations
+
+#### `/suggest-patterns` - Pattern Recommendations
+![Suggest Patterns Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-suggest-patterns.png)
+
+8 design patterns:
+- CRUD, Authentication, Forms
+- DataFetching, StateManagement
+- Notifications, SearchFilter, Pagination
+- Shows which patterns are applicable
+- Implementation guidance
+
+#### `/context show structure` - Project Organization
+![Context Structure Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-context-structure.png)
+
+Visualizes project layout:
+- Files organized by purpose
+- Proper separation of concerns
+- Clear architecture view
+
+#### `/context show patterns` - Pattern Detection
+![Context Patterns Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-context-patterns.png)
+
+Shows detected patterns:
+- Pattern type and count
+- Which files implement which patterns
+- Architecture understanding
+
+### ⚠️ Disabled Features (v2.0.3)
+
+#### ❌ `/plan` - DISABLED (Infinite Loop Bug)
+*Note: Code generation with multi-step planning was disabled due to infinite validation loops.*
+
+**Issue:** Auto-correction creates infinite loop
+- Generates code with missing imports
+- Validator detects error
+- Auto-correction regenerates same broken code
+- Repeats endlessly
+
+**Better alternatives:**
+- Cursor or Windsurf (better multi-file context)
+- Manual implementation (now that you understand the pattern)
+
+#### ❌ `/design-system` - DISABLED (Infinite Loop Bug)
+*Note: Multi-file feature generation was disabled due to infinite validation loops.*
+
+**Same issue as `/plan`** - Auto-correction infinite loop
+
+**Better alternatives:**
+- Cursor or Windsurf (better multi-file context)
+- Compose features manually from `/refactor` recommendations
+
+#### ❌ `/approve` - DISABLED
+*Tied to `/plan` and `/design-system` which are disabled.*
+
+---
+
 ## ⚙️ Configuration
+
 
 ### VS Code Settings
 
