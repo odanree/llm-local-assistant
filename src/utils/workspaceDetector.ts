@@ -31,26 +31,48 @@ export class WorkspaceDetector {
     const workspaces: DetectedWorkspace[] = [];
     const root = this.findProjectRoot(startPath);
 
+    console.log('[WorkspaceDetector] Scanning from:', root);
+    console.log('[WorkspaceDetector] Start path was:', startPath);
+
     // Check immediate children
     try {
       const entries = fs.readdirSync(root, { withFileTypes: true });
+      console.log('[WorkspaceDetector] Found entries:', entries.map(e => e.name));
 
       for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        if (!entry.isDirectory() || entry.name.startsWith('.')) {
+          console.log(`[WorkspaceDetector] Skipping: ${entry.name} (not dir or hidden)`);
+          continue;
+        }
 
         const fullPath = path.join(root, entry.name);
         const workspace = this.analyzeFolder(fullPath, entry.name);
 
-        if (workspace && workspace.confidence > 0.3) {
-          workspaces.push(workspace);
+        if (workspace) {
+          console.log(`[WorkspaceDetector] Detected: ${entry.name}`, {
+            type: workspace.type,
+            confidence: workspace.confidence.toFixed(2),
+            indicators: workspace.indicators,
+          });
+
+          if (workspace.confidence > 0.3) {
+            workspaces.push(workspace);
+          } else {
+            console.log(`[WorkspaceDetector] Filtered out (confidence ${workspace.confidence.toFixed(2)} < 0.3): ${entry.name}`);
+          }
         }
       }
     } catch (err) {
-      console.warn('Failed to scan workspaces:', err);
+      console.warn('[WorkspaceDetector] Scan error:', err);
     }
 
     // Sort by confidence
-    return workspaces.sort((a, b) => b.confidence - a.confidence);
+    workspaces.sort((a, b) => b.confidence - a.confidence);
+    console.log(`[WorkspaceDetector] Final result: ${workspaces.length} workspaces`, 
+      workspaces.map(w => ({ name: w.name, confidence: w.confidence.toFixed(2) }))
+    );
+
+    return workspaces;
   }
 
   /**

@@ -250,6 +250,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               const userRequest = planMatch[1];
               const rootFolder = vscode.workspace.workspaceFolders?.[0];
               
+              console.log('[/plan] Command triggered:', userRequest);
+              console.log('[/plan] Root folder:', rootFolder?.uri.fsPath);
+
               if (!rootFolder) {
                 postChatMessage({
                   command: 'addMessage',
@@ -260,10 +263,13 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               }
 
               // NEW: Detect multiple workspaces (Phase 6)
+              console.log('[/plan] Detecting workspaces from:', rootFolder.uri.fsPath);
               const detectedWorkspaces = WorkspaceDetector.findWorkspaces(rootFolder.uri.fsPath);
+              console.log('[/plan] Detection complete. Found:', detectedWorkspaces.length, 'workspaces');
 
               // If multiple workspaces detected, ask user to select
               if (detectedWorkspaces.length > 1) {
+                console.log('[/plan] Multiple workspaces detected. Showing selection prompt.');
                 const selectionPrompt = WorkspaceDetector.formatForDisplay(detectedWorkspaces);
                 
                 postChatMessage({
@@ -286,6 +292,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 });
                 return;
               }
+
+              console.log('[/plan] Single or no workspace. Proceeding directly.');
 
               // Single workspace: proceed with plan generation
               const wsFolder = detectedWorkspaces.length === 1 
