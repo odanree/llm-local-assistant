@@ -19,7 +19,6 @@ import { WorkspaceDetector } from './utils';
 import * as path from 'path';
 
 let llmClient: LLMClient;
-let planner: Planner;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let architecturePatterns: ArchitecturePatterns;
@@ -289,18 +288,17 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 // Generate plan in selected folder
                 postChatMessage({
                   command: 'addMessage',
-                  text: `📋 Generating plan for: "${userRequest}"\n\n(Using Refiner differential prompting — Phase 3)`,
+                  text: `📋 Generating plan for: "${userRequest}"`,
                   type: 'info',
                 });
 
                 try {
-                  // Create Refiner instance with LLM callbacks
-                  const refiner = new Refiner({
-                    projectRoot: selectedFolder.uri.fsPath,
-                    workspaceName: selectedFolder.name,
-                    maxRetries: 3,
-                    llmCall: async (systemPrompt: string, userMessage: string) => {
-                      const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                  // Use Planner (not Refiner) for planning tasks
+                  // Planner is for non-deterministic intent decomposition
+                  // Refiner is for deterministic code transformation
+                  const planner = new Planner({
+                    llmCall: async (prompt: string) => {
+                      const response = await llmClient.sendMessage(prompt);
                       if (!response.success) {
                         throw new Error(response.error || 'LLM call failed');
                       }
@@ -315,38 +313,27 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     },
                   });
 
-                  // Generate plan using Refiner
-                  const planPrompt = `Create a detailed step-by-step action plan for:
+                  const plan = await planner.generatePlan(userRequest);
+                  
+                  // Store plan for /execute command
+                  (chatPanel as any)._currentPlan = plan;
 
-${userRequest}
+                  // Format plan for display
+                  let planDisplay = plan.steps
+                    .map(
+                      (s) =>
+                        `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
+                        `${s.description}\n` +
+                        (s.targetFile ? `📄 Target: \`${s.targetFile}\`\n` : '') +
+                        `✓ Expected: ${s.expectedOutcome}`
+                    )
+                    .join('\n\n');
 
-For each step, provide:
-1. Action type (read/write/run/analyze)
-2. What to do (specific file, command, or analysis)
-3. Expected outcome
-4. Any dependencies
-
-Format as: [Step N] [Action Type]: [Description]`;
-
-                  const result = await refiner.generateCode(planPrompt, undefined, undefined);
-
-                  if (result.success && result.code) {
-                    // Parse the generated plan into executable format
-                    const parsedPlan = PlanParser.parse(result.code, userRequest);
-                    (chatPanel as any)._currentPlan = parsedPlan;
-
-                    postChatMessage({
-                      command: 'addMessage',
-                      text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
-                      success: true,
-                    });
-                  } else {
-                    postChatMessage({
-                      command: 'addMessage',
-                      error: `Failed to generate plan: ${result.error || result.explanation}`,
-                      success: false,
-                    });
-                  }
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                    success: true,
+                  });
                 } catch (err) {
                   postChatMessage({
                     command: 'addMessage',
@@ -2175,37 +2162,43 @@ ${fileContent}
                   },
                 });
 
-                // Generate plan
-                const planPrompt = `Create a detailed step-by-step action plan for:
+                // Use Planner for planning (not Refiner)
+                const planner = new Planner({
+                  llmCall: async (prompt: string) => {
+                    const response = await llmClient.sendMessage(prompt);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
 
-${pendingPlanRequest}
+                const plan = await planner.generatePlan(pendingPlanRequest);
+                (chatPanel as any)._currentPlan = plan;
 
-For each step, provide:
-1. Action type (read/write/run/analyze)
-2. What to do (specific file, command, or analysis)
-3. Expected outcome
-4. Any dependencies
+                // Format plan for display
+                let planDisplay = plan.steps
+                  .map(
+                    (s) =>
+                      `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
+                      `${s.description}\n` +
+                      (s.targetFile ? `📄 Target: \`${s.targetFile}\`\n` : '') +
+                      `✓ Expected: ${s.expectedOutcome}`
+                  )
+                  .join('\n\n');
 
-Format as: [Step N] [Action Type]: [Description]`;
-
-                const result = await refiner.generateCode(planPrompt, undefined, undefined);
-
-                if (result.success && result.code) {
-                  const parsedPlan = PlanParser.parse(result.code, pendingPlanRequest);
-                  (chatPanel as any)._currentPlan = parsedPlan;
-
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
-                    success: true,
-                  });
-                } else {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Failed to generate plan: ${result.error || result.explanation}`,
-                    success: false,
-                  });
-                }
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `✅ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                  success: true,
+                });
                 
                 // Clear state
                 (chatPanel as any)._planFolders = null;
@@ -2575,15 +2568,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();
 
-  // Initialize Planner and Executor
+  // Initialize Executor (Planner is now created per-command, stateless)
   wsFolder = getActiveWorkspace();
-  planner = new Planner({
-    llmClient,
-    maxSteps: 10,
-    timeout: 120000, // Increased to 120s for longer-running planning operations
-    workspace: wsFolder, // For codebase awareness (Priority 2.2)
-    codebaseIndex, // Phase 3.3.2: For dependency detection and context
-  });
   
   const gitClient = wsFolder ? new GitClient(wsFolder) : undefined;
 

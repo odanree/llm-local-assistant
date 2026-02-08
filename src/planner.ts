@@ -1,92 +1,59 @@
-import { LLMClient, LLMResponse } from './llmClient';
-import CodebaseIndex from './codebaseIndex';
-import * as vscode from 'vscode';
-
 /**
- * Planning module for Phase 2: Agent Loop Foundation
- * Analyzes complex user requests and generates structured action plans
+ * Planner: Non-Deterministic Intent Decomposition
+ *
+ * Role: Take a user request and decompose it into atomic execution steps.
+ * Output: High-level structured plan (not code, not diffs).
+ * Success Metric: Does the sequence make logical sense?
+ *
+ * Key Difference from Refiner:
+ * - Refiner: Deterministic code transformation with validation
+ * - Planner: Non-deterministic brainstorming with user review
+ *
+ * Separation of Concerns:
+ * - Planner doesn't know about diffs, scaffolding, or code syntax
+ * - Refiner doesn't need to understand planning logic
+ * - Executor bridges them by calling Refiner for approved steps
  */
 
-export interface PlanStep {
-  stepId: number;
-  action: 'read' | 'write' | 'suggestwrite' | 'run';
-  path?: string;            // For file operations
-  command?: string;         // For /run operations
-  prompt?: string;          // Optional prompt for write/suggestwrite
-  description: string;      // Human-readable description
-  dependsOn?: number[];     // Step IDs this depends on
-  codebaseContext?: string; // Context from /context for this step (Phase 3.3.2)
+export interface ExecutionStep {
+  stepId?: number; // For executor compatibility
+  stepNumber: number;
+  action: 'read' | 'write' | 'run' | 'analyze' | 'review' | 'suggestwrite';
+  description: string;
+  targetFile?: string;
+  path?: string; // Alternate name for targetFile (for executor)
+  prompt?: string; // For suggestwrite/write actions
+  expectedOutcome: string;
+  dependencies?: number[]; // Step numbers this depends on
+  command?: string; // For run actions
 }
 
-export interface TaskPlan {
-  taskId: string;
-  userRequest: string;
-  generatedAt: Date;
-  steps: PlanStep[];
-  status: 'pending' | 'executing' | 'completed' | 'failed';
-  currentStep: number;
-  results: Map<number, StepResult>;
-}
+// Alias for executor compatibility
+export type PlanStep = ExecutionStep;
 
 export interface StepResult {
   stepId: number;
   success: boolean;
   output?: string;
   error?: string;
-  duration: number;  // milliseconds
+  duration: number;
+}
+
+export interface TaskPlan {
+  taskId: string;
+  userRequest: string;
+  steps: ExecutionStep[];
+  generatedAt: Date;
+  reasoning: string; // Why LLM chose this approach
+  status?: 'pending' | 'executing' | 'completed' | 'failed'; // For executor tracking
+  currentStep?: number; // For executor tracking
+  results?: Map<number, StepResult>; // For executor tracking
 }
 
 export interface PlannerConfig {
-  llmClient: LLMClient;
-  maxSteps?: number;           // Default: 10
-  timeout?: number;            // Default: 30000ms
-  workspace?: vscode.Uri;      // For codebase awareness
-  codebaseIndex?: CodebaseIndex; // Phase 3.3.2: For dependency detection
-  onMessage?: (message: string, type: 'info' | 'error' | 'warn') => void; // For user feedback
+  llmCall: (prompt: string) => Promise<string>;
+  onProgress?: (stage: string, details: string) => void;
 }
-
-export interface ConversationContext {
-  messages: Array<{ role: string; content: string }>;
-}
-
-/**
- * System prompt for LLM to generate structured plans
- */
-const PLAN_SYSTEM_PROMPT = `You generate step-by-step PLANS in JSON format. NOT code.
-
-RESPOND ONLY WITH JSON. NO OTHER TEXT.
-
-✅ VALID ACTIONS FOR PLANS: read, write, run
-
-❌ DO NOT USE: suggestwrite, delete, analyze, inspect, chooseSubfolder, etc.
-
-Example:
-{"steps": [{"stepId": 1, "action": "read", "path": "examples", "description": "Read examples folder"}, {"stepId": 2, "action": "write", "path": "src/MyComponent.js", "prompt": "Create React component based on examples", "description": "Generate component"}]}
-
-STRICT RULES:
-1. RESPOND ONLY WITH JSON - no markdown, no explanation, no code blocks
-2. Action MUST be one of: read, write, run (NOTHING ELSE - NOT suggestwrite)
-3. Return exactly: {"steps": [...]}
-4. Steps: 2-4 maximum (keep plans simple)
-5. Each step MUST have: stepId (number), action (read|write|run), path (except run), description
-6. write steps MUST include prompt field (what to generate)
-7. read steps: path only (read files before improving them)
-8. run steps: command field instead of path (npm test, git log, etc)
-9. Descriptions: SHORT (under 40 chars)
-10. Prompts: CONCISE (under 80 chars)
-11. NO "content", NO code examples, NO extra fields
-12. Typical flow: read → write → run (or similar)
-13. Valid JSON that can be parsed immediately
-14. If multi-turn context provided: maintain consistency with previous steps
-
-🚫 NEVER WRITE TO THESE FILES (READ ONLY):
-- package.json, package-lock.json, yarn.lock, pnpm-lock.yaml
-- tsconfig.json, jsconfig.json
-- .gitignore, .eslintrc, .prettierrc, webpack.config.js
-- Any config files (*.config.js, *.config.ts, .vscode/settings.json)
-
-For "just run X" requests: Use read (if needed) → run. Do NOT add write steps.`;
-
 
 export class Planner {
   private config: PlannerConfig;
@@ -96,670 +63,248 @@ export class Planner {
   }
 
   /**
-   * Generate thinking/reasoning before creating a plan
-   * Shows the LLM's analysis of how to approach the task
-   * Returns natural language explanation of the planned approach
+   * Generate a plan for a user request
+   * 
+   * Key: No retries, no validation logic, no code transformation.
+   * Just decompose the request into steps and return.
    */
-  async generateThinking(userRequest: string, context?: ConversationContext): Promise<string> {
-    const contextStr = context && context.messages.length > 0
-      ? `\n\nPrevious context:\n${context.messages.slice(-4).map(m => 
-          `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
-        ).join('\n')}\n`
-      : '';
+  async generatePlan(userRequest: string): Promise<TaskPlan> {
+    this.config.onProgress?.('Planning', 'Decomposing request into steps...');
 
-    const prompt = `You are an expert code assistant analyzing a task request.
+    const planPrompt = this.buildPlanPrompt(userRequest);
 
-${contextStr}
+    try {
+      const llmResponse = await this.config.llmCall(planPrompt);
 
-User request: "${userRequest}"
-
-Analyze this request and provide your thinking in 2-3 sentences. Explain:
-1. What you need to understand or check first
-2. The main steps you'll take
-3. Any potential issues to watch for
-
-Be concise and direct. Do NOT generate code or detailed plans yet.`;
-
-    const response = await this.config.llmClient.sendMessage(prompt);
-    if (!response.success) {
-      const errorMsg = response.error || 'Unknown error';
-      // Handle timeout errors gracefully
-      if (errorMsg.includes('aborted') || errorMsg.includes('timeout')) {
-        throw new Error(`Planning timeout: The LLM took too long to respond. Try with a shorter request or check your LLM server's performance.`);
+      if (!llmResponse || llmResponse.includes('UNABLE_TO_COMPLETE')) {
+        throw new Error('LLM could not generate a plan for this request');
       }
-      throw new Error(`Failed to generate thinking: ${errorMsg}`);
+
+      // Parse the response into structured steps
+      const steps = this.parseSteps(llmResponse);
+
+      if (!steps || steps.length === 0) {
+        throw new Error('No steps could be extracted from LLM response');
+      }
+
+      const plan: TaskPlan = {
+        taskId: `plan-${Date.now()}`,
+        userRequest,
+        steps,
+        generatedAt: new Date(),
+        reasoning: this.extractReasoning(llmResponse),
+      };
+
+      this.config.onProgress?.('Planning', `Generated ${steps.length} steps`);
+      return plan;
+    } catch (err) {
+      throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-
-    // Clean up the response (remove markdown, formatting)
-    let thinking = response.message || '';
-    thinking = thinking
-      .replace(/^["']|["']$/g, '') // Remove surrounding quotes
-      .replace(/\*\*/g, '')        // Remove bold markers
-      .trim();
-
-    return thinking;
   }
 
   /**
-   * Generate a plan for a complex user request
-   * Optionally uses conversation context for multi-turn awareness
-   * Returns plan + markdown description for user approval
+   * Build the planning prompt
+   * 
+   * Key: Simple, non-technical, doesn't mention diffs/scaffolding/code.
+   * Just asks LLM to decompose the request into steps.
    */
-  async generatePlan(userRequest: string, context?: ConversationContext): Promise<{
-    plan: TaskPlan;
-    markdown: string;
-  }> {
-    // Analyze codebase for context awareness (Priority 2.2)
-    const codebaseContext = await this.analyzeCodebase();
-    
-    const prompt = this.generatePlanPrompt(userRequest, context, codebaseContext);
-    
-    const response = await this.config.llmClient.sendMessage(prompt);
-    if (!response.success) {
-      throw new Error(`Failed to generate plan: ${response.error}`);
-    }
+  private buildPlanPrompt(userRequest: string): string {
+    return `You are a project planning expert. Your job is to decompose a user request into atomic, executable steps.
 
-    // Extract JSON from response (handle various formats)
-    let planData: any;
-    const message = response.message || '';
-    
-    try {
-      // Try to parse as plain JSON first
-      planData = JSON.parse(message);
-    } catch (e) {
-      // Try to extract JSON from response that has text before/after it
-      let jsonStr: string | undefined;
-      
-      // Find the first { and match it with the last }
-      const startIdx = message.indexOf('{');
-      if (startIdx !== -1) {
-        // Find the matching closing brace
-        let braceCount = 0;
-        let endIdx = -1;
-        for (let i = startIdx; i < message.length; i++) {
-          if (message[i] === '{') {braceCount++;}
-          if (message[i] === '}') {
-            braceCount--;
-            if (braceCount === 0) {
-              endIdx = i;
-              break;
-            }
-          }
-        }
-        
-        if (endIdx !== -1) {
-          jsonStr = message.substring(startIdx, endIdx + 1);
-          try {
-            planData = JSON.parse(jsonStr);
-          } catch (parseErr) {
-            console.warn('[Planner] Brace-matched JSON failed to parse:', (parseErr as Error).message);
-            jsonStr = undefined;
-          }
-        }
-      }
-      
-      // If brace matching didn't work, try regex patterns
-      if (!planData) {
-        const patterns = [
-          /```(?:json)?\s*\n?([\s\S]*?)\n?```/,  // Markdown code block
-          /```([\s\S]*?)```/,                      // Generic code block
-        ];
-        
-        for (const pattern of patterns) {
-          const match = message.match(pattern);
-          if (match && match[1]) {
-            jsonStr = match[1].trim();
-            try {
-              planData = JSON.parse(jsonStr);
-              break;
-            } catch {
-              continue;
-            }
-          }
-        }
-      }
-      
-      if (!planData) {
-        // Check if message appears truncated
-        const isTruncated = message.endsWith('fil') || message.endsWith('...') || 
-                           message.match(/[a-z]$/) && message.length > 1000;
-        
-        if (isTruncated) {
-          // RETRY with simplified prompt
-          console.log(`[Planner] Response truncated at ${message.length} bytes. Retrying with simplified prompt...`);
-          this.config.onMessage?.(`⚠️ Initial plan response truncated. Retrying with simplified request...`, 'info');
-          
-          const simplifiedPrompt = this.generateSimplifiedPlanPrompt(userRequest, context);
-          const retryResponse = await this.config.llmClient.sendMessage(simplifiedPrompt);
-          
-          if (!retryResponse.success) {
-            throw new Error(`Failed to generate plan on retry: ${retryResponse.error}`);
-          }
-          
-          // Try to parse retry response
-          try {
-            planData = JSON.parse(retryResponse.message || '');
-          } catch {
-            // Try extraction on retry response too
-            const retryMessage = retryResponse.message || '';
-            const retryStartIdx = retryMessage.indexOf('{');
-            if (retryStartIdx !== -1) {
-              let braceCount = 0;
-              let retryEndIdx = -1;
-              for (let i = retryStartIdx; i < retryMessage.length; i++) {
-                if (retryMessage[i] === '{') {braceCount++;}
-                if (retryMessage[i] === '}') {
-                  braceCount--;
-                  if (braceCount === 0) {
-                    retryEndIdx = i;
-                    break;
-                  }
-                }
-              }
-              if (retryEndIdx !== -1) {
-                const retryJsonStr = retryMessage.substring(retryStartIdx, retryEndIdx + 1);
-                planData = JSON.parse(retryJsonStr);
-              }
-            }
-          }
-          
-          if (!planData) {
-            throw new Error(`Failed to parse plan JSON even after retry. Response truncated at ${message.length} bytes.`);
-          }
-          
-          this.config.onMessage?.(`✅ Plan generated successfully on retry`, 'info');
-        } else {
-          const errorMsg = `Failed to parse plan JSON. Response length: ${message.length}. First 300 chars: ${message.substring(0, 300)}`;
-          throw new Error(errorMsg);
-        }
-      }
-    }
+USER REQUEST:
+${userRequest}
 
-    // Validate plan structure
-    if (!planData.steps || !Array.isArray(planData.steps) || planData.steps.length === 0) {
-      throw new Error('Invalid plan: no steps found');
-    }
+Create a detailed step-by-step plan. For each step, provide:
+1. Action type: read, write, run, analyze, or review
+2. What to do: specific file, command, or analysis
+3. Expected outcome: what will be true after this step
+4. Dependencies: which previous steps it depends on (if any)
 
-    // Valid actions that the executor supports
-    const VALID_ACTIONS = ['read', 'write', 'suggestwrite', 'run'];
-    
-    // Protected files that should never be overwritten by plans
-    const PROTECTED_FILES = [
-      'package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
-      'tsconfig.json', 'jsconfig.json', 
-      '.gitignore', '.eslintrc', '.eslintrc.js', '.eslintrc.json', 
-      '.prettierrc', '.prettierrc.js', '.prettierrc.json',
-      'webpack.config.js', 'vite.config.js', 'vite.config.ts',
-      'rollup.config.js', 'next.config.js',
+OUTPUT FORMAT - Be descriptive and clear:
+
+**Step 1: read**
+- Description: Read the current authentication system
+- Target: src/auth/index.ts
+- Expected outcome: Understand current auth flow
+- Dependencies: None
+
+**Step 2: analyze**
+- Description: Identify where to add remember-me logic
+- Target: auth system analysis
+- Expected outcome: Clear understanding of integration points
+- Dependencies: Step 1
+
+**Step 3: write**
+- Description: Add remember-me checkbox to login form
+- Target: src/components/LoginForm.tsx
+- Expected outcome: Form has remember-me checkbox with state
+- Dependencies: Step 2
+
+Continue for all steps needed to complete the request.
+Be thorough but concise. Focus on the sequence and dependencies.`;
+  }
+
+  /**
+   * Parse LLM response into structured ExecutionStep objects
+   */
+  private parseSteps(responseText: string): ExecutionStep[] {
+    const steps: ExecutionStep[] = [];
+
+    // Look for step patterns: "**Step N:** action"
+    const stepPatterns = [
+      /\*\*Step\s+(\d+):\s*(\w+)\*\*/gi,
+      /Step\s+(\d+):\s*(\w+)/gi,
+      /^\d+\.\s+(\w+)/gim,
     ];
 
-    // Track invalid actions for better error reporting
-    const invalidSteps: any[] = [];
+    let stepMatches: RegExpExecArray | null = null;
+    let currentPattern = 0;
 
-    // Construct TaskPlan - filter out invalid steps
-    const steps: PlanStep[] = planData.steps
-      .filter((s: any) => {
-        const action = (s.action || 'write').toLowerCase();
-        if (!VALID_ACTIONS.includes(action)) {
-          invalidSteps.push({ action: s.action, description: s.description });
-          console.warn(`[Planner] Skipping step with invalid action: ${s.action}`);
-          return false;
-        }
-        
-        // Check if trying to write to protected files
-        if ((action === 'write' || action === 'suggestwrite') && s.path) {
-          const fileName = s.path.split('/').pop() || '';
-          if (PROTECTED_FILES.includes(fileName)) {
-            invalidSteps.push({ 
-              action: s.action, 
-              path: s.path,
-              description: s.description,
-              reason: `Protected file: ${fileName}`
-            });
-            console.warn(`[Planner] Blocked write to protected file: ${s.path}`);
-            return false;
-          }
-          
-          // Also check for config patterns
-          if (fileName.match(/\.(config|rc)\.(js|ts|json)$/) || 
-              fileName.match(/^\..*rc$/) ||
-              s.path.includes('.vscode/settings.json')) {
-            invalidSteps.push({ 
-              action: s.action, 
-              path: s.path,
-              description: s.description,
-              reason: 'Config file'
-            });
-            console.warn(`[Planner] Blocked write to config file: ${s.path}`);
-            return false;
-          }
-        }
-        // Ensure step has required fields
-        if (!s.path && action !== 'run') {
-          console.warn(`[Planner] Skipping step without path: ${s.description}`);
-          return false;
-        }
-        if (!s.command && action === 'run') {
-          console.warn(`[Planner] Skipping run step without command`);
-          return false;
-        }
-        return true;
-      })
-      .map((s: any) => ({
-        stepId: s.stepId || 0,
-        action: (s.action || 'write').toLowerCase() as any,
-        path: s.path,
-        command: s.command,
-        prompt: s.prompt,  // Include prompt for write steps
-        description: s.description || `Step ${s.stepId}`,
-        dependsOn: s.dependsOn,
-      }));
-
-    if (steps.length === 0) {
-      const protectedFileBlocks = invalidSteps.filter(s => s.reason).map(s => s.path);
-      const invalidActionsStr = invalidSteps.filter(s => !s.reason).map(s => s.action).join(', ');
-      
-      let errorMsg = 'No valid steps found after filtering.';
-      if (protectedFileBlocks.length > 0) {
-        errorMsg += ` Blocked writes to protected files: ${protectedFileBlocks.join(', ')}.`;
+    // Try each pattern
+    for (const pattern of stepPatterns) {
+      stepMatches = pattern.exec(responseText);
+      if (stepMatches) {
+        currentPattern = stepPatterns.indexOf(pattern);
+        break;
       }
-      if (invalidActionsStr) {
-        errorMsg += ` Invalid actions used: ${invalidActionsStr}. Valid actions are: read, write, suggestwrite, run`;
-      }
-      
-      throw new Error(errorMsg);
     }
 
-    const plan: TaskPlan = {
-      taskId: `task_${Date.now()}`,
-      userRequest,
-      generatedAt: new Date(),
-      steps: this.addContextToSteps(this.orderStepsByDependencies(steps)), // Phase 3.3.2: Add context & order by dependencies
-      status: 'pending',
-      currentStep: 0,
-      results: new Map(),
-    };
+    if (!stepMatches) {
+      // Fallback: split by "Step" and parse each block
+      const stepBlocks = responseText.split(/\*\*Step\s+\d+:|Step\s+\d+:/i).slice(1);
 
-    const markdown = this.formatPlanAsMarkdown(plan, planData.summary || 'Generated Plan');
+      stepBlocks.forEach((block, index) => {
+        const step = this.parseStepBlock(block, index + 1);
+        if (step) steps.push(step);
+      });
 
-    return { plan, markdown };
+      return steps;
+    }
+
+    // Parse with the matching pattern
+    const pattern = stepPatterns[currentPattern];
+    let match;
+    let stepNumber = 1;
+
+    while ((match = pattern.exec(responseText)) !== null) {
+      const action = (match[2] || 'analyze').toLowerCase() as ExecutionStep['action'];
+      const startIndex = pattern.lastIndex;
+
+      // Find the next step or end of text
+      const nextStepMatch = /(?:\*\*Step\s+\d+:|Step\s+\d+:|\n\d+\.)/i.exec(responseText.substring(startIndex));
+      const endIndex = nextStepMatch ? startIndex + nextStepMatch.index : responseText.length;
+      const stepContent = responseText.substring(startIndex, endIndex);
+
+      const step: ExecutionStep = {
+        stepNumber,
+        stepId: stepNumber,
+        action,
+        description: this.extractDescription(stepContent),
+        targetFile: this.extractTargetFile(stepContent),
+        expectedOutcome: this.extractExpectedOutcome(stepContent),
+        dependencies: this.extractDependencies(stepContent),
+      };
+
+      if (step.description) {
+        steps.push(step);
+        stepNumber++;
+      }
+    }
+
+    return steps;
   }
 
   /**
-   * Refine an existing plan based on feedback (Phase 2.2+)
+   * Parse a single step block (for fallback pattern)
    */
-  async refinePlan(
-    originalPlan: TaskPlan,
-    feedback: string
-  ): Promise<TaskPlan> {
-    const refinementPrompt = `
-Original request: "${originalPlan.userRequest}"
+  private parseStepBlock(block: string, stepNumber: number): ExecutionStep | null {
+    const lines = block.split('\n').filter(l => l.trim());
+    if (lines.length === 0) return null;
 
-Previous plan had ${originalPlan.steps.length} steps.
-Steps completed: ${originalPlan.currentStep}
-
-User feedback: "${feedback}"
-
-Please generate a refined plan that addresses the feedback. Use the same JSON format as before.`;
-
-    const response = await this.config.llmClient.sendMessage(refinementPrompt);
-    if (!response.success) {
-      throw new Error(`Failed to refine plan: ${response.error}`);
-    }
-
-    // Parse refined plan (same as generatePlan)
-    let planData: any;
-    try {
-      planData = JSON.parse(response.message || '');
-    } catch (e) {
-      const jsonMatch = (response.message || '').match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) ||
-                        (response.message || '').match(/(\{[\s\S]*\})/);
-      if (!jsonMatch) {throw new Error('No valid JSON in refined plan');}
-      planData = JSON.parse(jsonMatch[1]);
-    }
-
-    const steps: PlanStep[] = planData.steps.map((s: any) => ({
-      stepId: s.stepId || 0,
-      action: s.action || 'write',
-      path: s.path,
-      command: s.command,
-      prompt: s.prompt,
-      description: s.description || `Step ${s.stepId}`,
-      dependsOn: s.dependsOn,
-    }));
+    // Extract action from first line
+    const firstLine = lines[0];
+    let action: ExecutionStep['action'] = 'analyze';
+    
+    if (firstLine.includes('read')) action = 'read';
+    else if (firstLine.includes('write')) action = 'write';
+    else if (firstLine.includes('run')) action = 'run';
+    else if (firstLine.includes('review')) action = 'review';
 
     return {
-      ...originalPlan,
-      taskId: `task_${Date.now()}`,
-      steps,
-      status: 'pending',
-      currentStep: 0,
-      results: new Map(),
+      stepNumber,
+      stepId: stepNumber,
+      action,
+      description: this.extractDescription(block),
+      targetFile: this.extractTargetFile(block),
+      expectedOutcome: this.extractExpectedOutcome(block),
+      dependencies: this.extractDependencies(block),
     };
   }
 
   /**
-   * Generate LLM prompt for plan generation
-   * Includes conversation context if provided for multi-turn awareness
-   * Includes codebase analysis for intelligent decisions (Priority 2.2)
+   * Extract description from step block
    */
-  private generatePlanPrompt(userRequest: string, context?: ConversationContext, codebaseContext?: string): string {
-    let contextStr = '';
-    if (context && context.messages.length > 0) {
-      const recentMessages = context.messages.slice(-6).map(m => 
-        `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
-      ).join('\n');
-      contextStr = `\n\nPrevious conversation context:\n${recentMessages}\n`;
+  private extractDescription(text: string): string {
+    // Look for "Description:" or "- Description:"
+    const descMatch = text.match(/(?:Description|What to do)[:\s]+([^\n]+)/i);
+    if (descMatch) {
+      return descMatch[1].trim();
     }
-    const codebase = codebaseContext || '';
-    return `${PLAN_SYSTEM_PROMPT}${contextStr}${codebase}\nNew user request: "${userRequest}"\n\nGenerate a step-by-step plan in JSON format.`;
+
+    // Fallback: first non-empty line
+    const lines = text.split('\n').filter(l => l.trim());
+    return lines[0]?.replace(/^[-*]\s+/, '').trim() || '';
   }
 
   /**
-   * Generate simplified plan prompt for retry when response is truncated
-   * Reduces context to get smaller JSON response
+   * Extract target file from step block
    */
-  private generateSimplifiedPlanPrompt(userRequest: string, context?: ConversationContext): string {
-    return `You are a code planning assistant. Create a BRIEF multi-step plan.
-
-User request: "${userRequest}"
-
-Generate a JSON plan with AT MOST 4 steps. Each step should be SHORT and focused.
-
-STRICT FORMAT - ONLY output valid JSON, nothing else:
-{
-  "steps": [
-    {
-      "stepId": 1,
-      "action": "write",
-      "path": "src/types/Schema.ts",
-      "description": "Create schema"
+  private extractTargetFile(text: string): string | undefined {
+    const targetMatch = text.match(/(?:Target|File|Path)[:\s]+([^\n]+)/i);
+    if (targetMatch) {
+      return targetMatch[1].trim();
     }
-  ]
-}
-
-Valid actions: read, write, run, suggestwrite
-
-OUTPUT ONLY THE JSON BLOCK. NO EXPLANATIONS.`;
+    return undefined;
   }
 
   /**
-   * Analyze codebase for awareness (Priority 2.2: Codebase Awareness)
-   * Detects project type, language, and conventions
-   * Returns context string to enhance plan generation
+   * Extract expected outcome from step block
    */
-  private async analyzeCodebase(): Promise<string> {
-    if (!this.config.workspace) {
-      return ''; // No workspace, skip analysis
+  private extractExpectedOutcome(text: string): string {
+    const outcomeMatch = text.match(/Expected\s+(?:outcome|result)[:\s]+([^\n]+)/i);
+    if (outcomeMatch) {
+      return outcomeMatch[1].trim();
     }
-
-    try {
-      const projectRoot = this.config.workspace;
-      const analysis: string[] = [];
-
-      // Check for package.json (Node.js/JavaScript project)
-      try {
-        const pkgPath = vscode.Uri.joinPath(projectRoot, 'package.json');
-        const pkgContent = await vscode.workspace.fs.readFile(pkgPath);
-        const pkgText = new TextDecoder().decode(pkgContent);
-        const pkg = JSON.parse(pkgText);
-        
-        analysis.push(`**Project Type**: Node.js/JavaScript`);
-        if (pkg.name) {analysis.push(`**Name**: ${pkg.name}`);}
-        if (pkg.type) {analysis.push(`**Type**: ${pkg.type}`);}
-        
-        // Detect framework
-        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-        if (deps.react) {analysis.push(`**Framework**: React`);}
-        else if (deps.vue) {analysis.push(`**Framework**: Vue`);}
-        else if (deps.express) {analysis.push(`**Framework**: Express`);}
-        else if (deps.next) {analysis.push(`**Framework**: Next.js`);}
-        
-        // Check for TypeScript
-        if (deps.typescript || pkg.type === 'module') {analysis.push(`**Language**: TypeScript`);}
-      } catch {
-        // Not a Node.js project, continue checking
-      }
-
-      // Check for tsconfig.json (TypeScript)
-      if (analysis.length === 0) {
-        try {
-          const tsconfigPath = vscode.Uri.joinPath(projectRoot, 'tsconfig.json');
-          await vscode.workspace.fs.stat(tsconfigPath);
-          analysis.push(`**Project Type**: TypeScript`);
-        } catch {
-          // Not TypeScript either
-        }
-      }
-
-      // Check for Python project
-      if (analysis.length === 0) {
-        try {
-          const pyPath = vscode.Uri.joinPath(projectRoot, 'pyproject.toml');
-          await vscode.workspace.fs.stat(pyPath);
-          analysis.push(`**Project Type**: Python`);
-        } catch {
-          // Not Python
-        }
-      }
-
-      // Check for src/ or lib/ structure
-      try {
-        const srcPath = vscode.Uri.joinPath(projectRoot, 'src');
-        await vscode.workspace.fs.stat(srcPath);
-        analysis.push(`**Structure**: src/ directory exists`);
-      } catch {
-        try {
-          const libPath = vscode.Uri.joinPath(projectRoot, 'lib');
-          await vscode.workspace.fs.stat(libPath);
-          analysis.push(`**Structure**: lib/ directory exists`);
-        } catch {
-          // Neither exists
-        }
-      }
-
-      // Check for test directory
-      try {
-        const testPath = vscode.Uri.joinPath(projectRoot, 'test');
-        await vscode.workspace.fs.stat(testPath);
-        analysis.push(`**Testing**: test/ directory exists`);
-      } catch {
-        try {
-          const specPath = vscode.Uri.joinPath(projectRoot, '__tests__');
-          await vscode.workspace.fs.stat(specPath);
-          analysis.push(`**Testing**: __tests__/ directory exists`);
-        } catch {
-          // No test directory found
-        }
-      }
-
-      if (analysis.length === 0) {
-        return ''; // Couldn't determine project type
-      }
-
-      return `\n\nCodebase context:\n${analysis.join('\n')}\n`;
-    } catch (error) {
-      // Analysis failed, continue without it
-      return '';
-    }
+    return 'Step completed';
   }
 
   /**
-   * Phase 3.3.2: Detect dependencies between plan steps
-   * Analyzes what files each step creates/uses to determine order
+   * Extract dependencies from step block
    */
-  private detectStepDependencies(steps: PlanStep[]): PlanStep[] {
-    if (!this.config.codebaseIndex) {
-      return steps; // No codebase index, return as-is
+  private extractDependencies(text: string): number[] | undefined {
+    const depsMatch = text.match(/Dependencies?[:\s]+(?:Step\s+)?(\d+(?:\s*,\s*\d+)*)/i);
+    if (depsMatch) {
+      return depsMatch[1]
+        .split(',')
+        .map(n => parseInt(n.trim(), 10))
+        .filter(n => !isNaN(n));
     }
-
-    const stepsWithDeps = steps.map(step => ({ ...step, dependsOn: [] as number[] }));
-
-    // For each step, check if it depends on files created by earlier steps
-    for (let i = 0; i < stepsWithDeps.length; i++) {
-      const currentStep = stepsWithDeps[i];
-      
-      // If this is a write step, check what it might import
-      if (currentStep.action === 'write' && currentStep.path) {
-        // Get similar files to understand the pattern
-        const dir = currentStep.path.split('/')[0];
-        const pattern = currentStep.path.split('/').pop()?.split('.')[0] || '';
-
-        // Find files this might depend on (e.g., hooks depend on schemas)
-        const schemaDependencies = stepsWithDeps.filter((s, idx) => 
-          idx < i && 
-          s.action === 'write' && 
-          s.path?.includes('schema')
-        );
-
-        const serviceDependencies = stepsWithDeps.filter((s, idx) =>
-          idx < i &&
-          s.action === 'write' &&
-          s.path?.includes('service')
-        );
-
-        // Hooks typically depend on schemas and services
-        if (dir.includes('hook')) {
-          currentStep.dependsOn = [
-            ...schemaDependencies.map(s => s.stepId),
-            ...serviceDependencies.map(s => s.stepId),
-          ];
-        }
-
-        // Services might depend on schemas
-        if (dir.includes('service')) {
-          currentStep.dependsOn = schemaDependencies.map(s => s.stepId);
-        }
-
-        // Components depend on hooks
-        if (dir.includes('component')) {
-          const hookDependencies = stepsWithDeps.filter((s, idx) =>
-            idx < i &&
-            s.action === 'write' &&
-            s.path?.includes('hook')
-          );
-          currentStep.dependsOn = hookDependencies.map(s => s.stepId);
-        }
-      }
-    }
-
-    return stepsWithDeps;
+    return undefined;
   }
 
   /**
-   * Phase 3.3.2: Order steps by dependencies (topological sort)
-   * Ensures files are created in dependency order
+   * Extract high-level reasoning from LLM response
+   * (For user understanding of why this plan was chosen)
    */
-  private orderStepsByDependencies(steps: PlanStep[]): PlanStep[] {
-    const stepsWithDeps = this.detectStepDependencies(steps);
-    const sorted: PlanStep[] = [];
-    const visited = new Set<number>();
-
-    const visit = (stepId: number) => {
-      if (visited.has(stepId)) return;
-      visited.add(stepId);
-
-      const step = stepsWithDeps.find(s => s.stepId === stepId);
-      if (!step) return;
-
-      // Visit dependencies first
-      step.dependsOn?.forEach(depId => visit(depId));
-
-      // Then add this step
-      sorted.push(step);
-    };
-
-    // Visit all steps
-    stepsWithDeps.forEach(step => visit(step.stepId));
-
-    // Renumber steps 1-N in new order
-    return sorted.map((step, idx) => ({
-      ...step,
-      stepId: idx + 1,
-    }));
-  }
-
-  /**
-   * Phase 3.3.2: Generate codebase context for a specific step
-   * Shows similar files and patterns to help LLM generate consistent code
-   */
-  private generateStepContext(step: PlanStep, allSteps: PlanStep[]): string {
-    if (!this.config.codebaseIndex) {
-      return '';
+  private extractReasoning(text: string): string {
+    // Look for reasoning section
+    const reasoningMatch = text.match(/(?:Reasoning|Approach|Strategy)[:\s]+([^\n]+(?:\n(?!\*\*Step)[^\n]*)*)/i);
+    if (reasoningMatch) {
+      return reasoningMatch[1].trim();
     }
 
-    const context: string[] = [];
-
-    if (step.action === 'write' && step.path) {
-      const pathParts = step.path.split('/');
-      const filename = pathParts[pathParts.length - 1];
-      const purpose = pathParts[0]; // src/schemas/user.ts → schemas
-
-      // Find similar files
-      const similarFiles = this.config.codebaseIndex
-        .getFilesByPurpose(purpose.replace('s', '')) // schemas → schema
-        .slice(0, 2);
-
-      if (similarFiles.length > 0) {
-        context.push(`**Similar existing files:**`);
-        similarFiles.forEach(f => {
-          context.push(`- ${f.path} (patterns: ${f.patterns.join(', ')})`);
-        });
-      }
-
-      // Show dependency info
-      const deps = allSteps.filter(s => s.stepId !== step.stepId && s.action === 'write');
-      if (deps.length > 0) {
-        context.push(`\n**Files created in this plan before this step:**`);
-        deps.forEach(d => {
-          context.push(`- ${d.path}`);
-        });
-      }
-
-      // Show patterns used in project
-      const patterns = this.config.codebaseIndex.getPatterns();
-      const usedPatterns = Object.entries(patterns)
-        .filter(([_, info]) => info.count > 0)
-        .map(([pattern, _]) => pattern);
-
-      if (usedPatterns.length > 0) {
-        context.push(`\n**Patterns used in this project:**`);
-        context.push(usedPatterns.join(', '));
-      }
-    }
-
-    return context.length > 0 ? `\n\n${context.join('\n')}` : '';
-  }
-
-  /**
-   * Phase 3.3.2: Enhance plan steps with codebase context
-   */
-  private addContextToSteps(steps: PlanStep[]): PlanStep[] {
-    return steps.map(step => ({
-      ...step,
-      codebaseContext: this.generateStepContext(step, steps),
-    }));
-  }
-
-  /**
-   * Format plan as markdown for display to user
-   */
-  private formatPlanAsMarkdown(plan: TaskPlan, summary: string): string {
-    let md = `## 📋 Plan: ${summary}\n\n`;
-    md += `**Steps**: ${plan.steps.length} | **Estimated time**: ~${Math.max(30, plan.steps.length * 10)}s\n\n`;
-
-    plan.steps.forEach((step) => {
-      md += `### Step ${step.stepId}: ${step.description}\n`;
-      md += `**Action**: \`${step.action}\``;
-      if (step.path) {md += ` | **Path**: \`${step.path}\``;}
-      if (step.command) {md += ` | **Command**: \`${step.command}\``;}
-      md += '\n';
-      if (step.prompt) {md += `**Prompt**: "${step.prompt}"\n`;}
-      md += '\n';
-    });
-
-    md += `---\n\n**Approve this plan?** Reply with \`/approve\` to proceed or \`/reject\` to cancel.`;
-
-    return md;
+    // Fallback: return first paragraph
+    const lines = text.split('\n\n')[0];
+    return lines || 'Plan generated based on user request';
   }
 }
