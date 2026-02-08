@@ -822,6 +822,21 @@ export class Executor {
       };
     }
 
+    // INTERCEPTOR: Detect Manual Steps (Fix 2: Postel's Law)
+    // If path is missing but description mentions manual verification,
+    // treat as human instruction, not executable step
+    if (!step.path && /manual|verify|check|browser|test|visually/i.test(step.description)) {
+      console.log(`[Executor] Intercepted manual step: "${step.description}"`);
+      return {
+        stepId: step.stepId,
+        success: true,
+        output: `📝 MANUAL STEP: ${step.description}`,
+        duration: 0,
+        timestamp: Date.now(),
+        requiresManualVerification: true,
+      };
+    }
+
     // VALIDATOR GATE 1: Check step schema (basic validation)
     try {
       const validatedStep = validateExecutionStep(step);

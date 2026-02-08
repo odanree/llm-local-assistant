@@ -5,6 +5,12 @@
  * Rejects malformed paths BEFORE they create garbage files.
  * 
  * Danh's principle: Fail-fast on path validation, not after file corruption.
+ * 
+ * NEW: Postel's Law Implementation
+ * "Be conservative in what you do, be liberal in what you accept from others"
+ * - Reject invalid paths (conservative output)
+ * - Clean & normalize LLM output (liberal input acceptance)
+ * - Strip trailing prose, ellipses, quotes automatically
  */
 
 import path from 'path';
@@ -129,18 +135,35 @@ export class PathSanitizer {
   /**
    * Sanitize a path by removing/fixing common issues
    * 
+   * Danh's Postel's Law Implementation:
+   * - Conservative: Reject invalid paths
+   * - Liberal: Clean & normalize LLM output automatically
+   * 
    * This is more aggressive than validate() — it tries to fix instead of just rejecting.
-   * Danh's enhancement: Replace common placeholders with actual workspace root.
    */
   static sanitizePath(rawPath: string, workspace?: string): string {
-    let sanitized = rawPath.trim();
+    if (!rawPath) {
+      throw new Error('Cannot sanitize empty path');
+    }
 
-    // Remove common description patterns
-    sanitized = sanitized.replace(/contains.*JSX.*code/i, '');
-    sanitized = sanitized.replace(/for.*form.*component/i, '');
-    sanitized = sanitized.replace(/^(description|path|file):\s*/i, '');
+    let clean = rawPath.trim();
 
-    // NEW: Replace common placeholders with actual workspace root
+    // 1. Strip common LLM "trailing prose" (Qwen 7b quirk)
+    // Remove ellipses at end (models love adding "...")
+    clean = clean.replace(/\.{2,}$/, '');
+    
+    // Remove accidental quotes or backticks (markdown escaping artifacts)
+    clean = clean.replace(/[`"']/g, '');
+    
+    // Remove trailing commas or semicolons (artifact from lists)
+    clean = clean.replace(/[,;]$/, '');
+
+    // 2. Remove common description patterns
+    clean = clean.replace(/contains.*JSX.*code/i, '');
+    clean = clean.replace(/for.*form.*component/i, '');
+    clean = clean.replace(/^(description|path|file):\s*/i, '');
+
+    // 3. Normalize common placeholders (The /path/to/ fix)
     const placeholders = [
       { pattern: /^\/path\/to\//i, replace: 'src/' },
       { pattern: /^your-project\//i, replace: '' },
@@ -151,31 +174,35 @@ export class PathSanitizer {
     ];
 
     for (const { pattern, replace } of placeholders) {
-      if (pattern.test(sanitized)) {
-        sanitized = sanitized.replace(pattern, replace);
+      if (pattern.test(clean)) {
+        clean = clean.replace(pattern, replace);
       }
     }
 
+    // 4. Final validation gate
+    // If it still has spaces or is too long, it's definitely a description
+    if (clean.includes(' ') || clean.length > 100) {
+      throw new Error(
+        `CRITICAL: Path is too descriptive after cleaning: "${clean}". ` +
+        `Original input: "${rawPath}"`
+      );
+    }
+
     // If empty after cleaning, it was definitely a description
-    if (sanitized.length === 0) {
+    if (clean.length === 0) {
       throw new Error(`Cannot sanitize path: input was pure description "${rawPath}"`);
     }
 
-    // Take first valid component if multiple paths
-    if (sanitized.includes(',')) {
-      const parts = sanitized.split(',').map(p => p.trim());
-      sanitized = parts[0]; // Take first
+    // Take first valid component if multiple paths remain
+    if (clean.includes(',')) {
+      const parts = clean.split(',').map(p => p.trim());
+      clean = parts[0]; // Take first
     }
 
     // Normalize path separators
-    sanitized = sanitized.replace(/\\/g, '/');
+    clean = clean.replace(/\\/g, '/');
 
-    // Ensure relative path if workspace provided
-    if (workspace && !sanitized.startsWith('/')) {
-      // Already relative, good
-    }
-
-    return sanitized;
+    return clean;
   }
 
   /**
