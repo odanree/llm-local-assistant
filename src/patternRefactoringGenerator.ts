@@ -110,6 +110,20 @@ Solution:
 
       const refactoredCode = codeMatch[1];
 
+      // VALIDATION: Check for broken imports (files that don't exist)
+      const brokenImports = this.detectBrokenImports(refactoredCode, code);
+      if (brokenImports.length > 0) {
+        return {
+          originalCode: code,
+          refactoredCode: code,
+          pattern,
+          changes: [],
+          explanation: 'Refactoring would create broken imports',
+          success: false,
+          error: `This refactoring would create imports that don't exist:\n\n${brokenImports.map(i => `- ${i}`).join('\n')}\n\nThe tool can only modify existing files, not create new ones.\n\nRecommendation: Apply this pattern manually or use a full IDE refactoring tool.`,
+        };
+      }
+
       // Extract changes explanation from response
       const changesMatch = response.message.match(/## Changes\n([\s\S]*?)(?:##|$)/);
       const explanation = response.message;
@@ -278,6 +292,48 @@ Detailed explanation of how the pattern was applied while maintaining all origin
     };
 
     return guidelines[pattern] || `Apply the ${pattern} pattern appropriately to this code while preserving all existing functionality and components.`;
+  }
+
+  /**
+   * Detect imports in refactored code that don't exist in original
+   * These are "broken imports" that would cause build failures
+   */
+  private detectBrokenImports(refactoredCode: string, originalCode: string): string[] {
+    const importRegex = /import\s+(?:{[^}]*}|\w+(?:\s*,\s*{[^}]*})?)\s+from\s+['"]([^'"]+)['"]/g;
+    
+    const refactoredImports: string[] = [];
+    let match;
+    
+    while ((match = importRegex.exec(refactoredCode)) !== null) {
+      if (!refactoredImports.includes(match[1])) {
+        refactoredImports.push(match[1]);
+      }
+    }
+    
+    const originalImports: string[] = [];
+    const origImportRegex = /import\s+(?:{[^}]*}|\w+(?:\s*,\s*{[^}]*})?)\s+from\s+['"]([^'"]+)['"]/g;
+    
+    while ((match = origImportRegex.exec(originalCode)) !== null) {
+      if (!originalImports.includes(match[1])) {
+        originalImports.push(match[1]);
+      }
+    }
+    
+    const brokenImports: string[] = [];
+    
+    for (const importPath of refactoredImports) {
+      // Skip node_modules and external packages
+      if (!importPath.startsWith('.') && !importPath.startsWith('@')) {
+        continue;
+      }
+      
+      // If it's a relative import not in original, it's probably broken
+      if (importPath.startsWith('.') && !originalImports.includes(importPath)) {
+        brokenImports.push(importPath);
+      }
+    }
+    
+    return brokenImports;
   }
 
   /**

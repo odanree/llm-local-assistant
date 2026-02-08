@@ -143,5 +143,68 @@ function createItem(item: any) {
       expect(result.success).toBe(false);
       expect(result.error).toContain('not supported yet');
     });
+
+    it('should detect broken imports in refactored code', async () => {
+      const originalCode = "'use client'; import { useState } from 'react';";
+      
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: `
+\`\`\`typescript
+'use client';
+import { useTasksContext } from './TasksProvider';
+
+export function Component() {
+  const { tasks } = useTasksContext();
+  return <div>{tasks.length}</div>;
+}
+\`\`\`
+
+## Changes
+- Extracted to context
+`,
+      });
+
+      const result = await generator.generateRefactoredCode(originalCode, 'CRUD', 'components/Tasks.tsx');
+
+      // Should detect that ./TasksProvider doesn't exist in original
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('would create imports');
+      expect(result.error).toContain('./TasksProvider');
+    });
+
+    it('should allow refactoring that only uses existing imports', async () => {
+      const originalCode = `'use client';
+import { useState } from 'react';
+const [items, setItems] = useState([]);`;
+      
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: `
+\`\`\`typescript
+'use client';
+import { useState } from 'react';
+
+function useItems() {
+  const [items, setItems] = useState([]);
+  return { items, setItems };
+}
+
+export function Component() {
+  const { items } = useItems();
+  return <div>{items.length}</div>;
+}
+\`\`\`
+
+## Changes
+- Extracted to custom hook
+`,
+      });
+
+      const result = await generator.generateRefactoredCode(originalCode, 'CRUD', 'components/Items.tsx');
+
+      // Should succeed because all imports are from 'react' which exists in original
+      expect(result.success).toBe(true);
+    });
   });
 });
