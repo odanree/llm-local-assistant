@@ -91,6 +91,23 @@ export class Executor {
     const startTime = Date.now();
 
     for (const step of plan.steps) {
+      // CRITICAL FIX #1: Validate strict serialization - one file per step
+      if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
+        if (step.path.includes(',')) {
+          const error = `SCHEMA VIOLATION: Step ${step.stepId} has multiple paths in one step: "${step.path}". ` +
+            `Each step must target EXACTLY ONE file. Create separate steps for each file.`;
+          this.config.onMessage?.(error, 'error');
+          plan.results?.set(step.stepId, {
+            success: false,
+            stepId: step.stepId,
+            output: '',
+            error,
+            duration: 0,
+          });
+          continue;
+        }
+      }
+
       // Check for pause/cancel
       while (this.paused && !this.cancelled) {
         await new Promise(r => setTimeout(r, 100));

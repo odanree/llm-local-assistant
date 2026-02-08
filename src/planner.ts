@@ -183,6 +183,44 @@ OUTPUT FORMAT - Be VERY specific and clear:
 - Dependencies: Step 2
 
 ========================================
+CRITICAL CONSTRAINT FOR 'write' STEPS - READ CAREFULLY:
+========================================
+
+Each 'write' step creates EXACTLY ONE file.
+
+You are STRICTLY FORBIDDEN from:
+- ❌ Including multiple file paths in a single step
+- ❌ Using commas to list multiple files
+- ❌ Creating multiple files in one step
+
+INVALID EXAMPLES (DO NOT DO THIS):
+❌ **Step 2: write**
+- Path: ProductPage.tsx, SearchFilter.tsx
+- Description: Create multiple files
+[THIS IS WRONG - MULTIPLE FILES IN ONE STEP]
+
+❌ **Step 3: write**
+- Path: src/components/ProductPage.tsx, src/pages/Details.tsx
+[THIS IS WRONG - COMMA-SEPARATED PATHS FORBIDDEN]
+
+VALID EXAMPLES (DO THIS):
+✅ **Step 2: write**
+- Path: src/components/ProductPage.tsx
+- Description: Create product page component
+
+✅ **Step 3: write**
+- Path: src/pages/SearchFilter.tsx
+- Description: Create search filter component
+
+REMEMBER:
+- ONE file per 'write' step
+- NO commas in Path
+- NO multiple paths
+- Create separate steps for each file
+
+If you need to create 3 files, output 3 separate 'write' steps.
+
+========================================
 CRITICAL CONSTRAINT FOR 'run' STEPS - READ CAREFULLY:
 ========================================
 
