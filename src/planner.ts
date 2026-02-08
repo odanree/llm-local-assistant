@@ -182,10 +182,44 @@ OUTPUT FORMAT - Be VERY specific and clear:
 - Expected outcome: All tests pass
 - Dependencies: Step 2
 
-CRITICAL FOR RUN STEPS:
-- Always specify the actual shell command (e.g., "npm test", "npm run build", "pytest", etc.)
-- Do NOT say "run the tests" without the command
-- Include the full command that can be executed directly
+========================================
+CRITICAL CONSTRAINT FOR 'run' STEPS - READ CAREFULLY:
+========================================
+
+If your step's action is 'run', the 'command' field is MANDATORY.
+
+You are STRICTLY FORBIDDEN from generating a 'run' step without a valid shell command.
+
+INVALID EXAMPLES (DO NOT DO THIS):
+❌ **Step 2: run**
+- Description: Run tests
+- [No Command field] ← THIS IS WRONG - YOU MUST INCLUDE COMMAND
+
+❌ **Step 2: run**
+- Description: Run the tests to verify
+- Command: [empty or missing] ← THIS IS WRONG - COMMAND CANNOT BE EMPTY
+
+VALID EXAMPLES (DO THIS):
+✅ **Step 2: run**
+- Description: Run tests to verify changes
+- Command: npm test
+
+✅ **Step 4: run**
+- Description: Run linting checks
+- Command: npm run lint
+
+✅ **Step 6: run**
+- Description: Build the project for production
+- Command: npm run build
+
+REMEMBER:
+- Every 'run' step MUST have a Command field
+- The Command field MUST NOT be empty
+- The Command field MUST be a valid shell command
+- Examples: npm test, npm run build, npm run lint, pytest, yarn build, etc.
+
+If you cannot determine the exact command, do NOT output a run step.
+Output a different step type instead (read, write, delete).
 
 Continue for all steps needed to complete the request.
 Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
