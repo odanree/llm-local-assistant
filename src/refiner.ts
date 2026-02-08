@@ -17,6 +17,7 @@ import { SimpleFixer, RetryContext, ContextBuilder, DiffGenerator } from './util
 
 export interface RefinerConfig {
   projectRoot: string;
+  workspaceName?: string; // NEW: explicit workspace name
   maxRetries?: number; // Default: 3
   llmCall: (systemPrompt: string, userMessage: string) => Promise<string>;
   onProgress?: (stage: string, details: string) => void;
@@ -170,39 +171,61 @@ export class Refiner {
   }
 
   /**
-   * Build system prompt with context injections
+   * Build system prompt with STRICT schema enforcement (Danh's feedback)
+   * - Explicit workspace context injection
+   * - Negative constraints (what NOT to do)
+   * - Grammar-constrained output requirement
    */
   private buildSystemPrompt(projectContext: any, existingCode?: string): string {
-    let systemPrompt = `You are an expert code generator.
+    let systemPrompt = `You are an autonomous code generation agent.
 
-## Project Context
-${projectContext.frameworks.length > 0 ? `Frameworks: ${projectContext.frameworks.join(', ')}` : ''}
-${projectContext.dependencies.length > 0 ? `Available packages: ${projectContext.dependencies.join(', ')}` : ''}
+## CRITICAL: WORKSPACE CONTEXT
+Target Workspace: ${this.config.workspaceName || 'default'}
+Root Path: ${this.config.projectRoot}
 
-## Code Generation Rules
-1. Generate ONLY the code needed, not full files
-2. If modifying existing code, provide clear Search & Replace pairs
-3. Include necessary imports — check available packages above
-4. Use TypeScript/JSX when appropriate
-5. Avoid external dependencies not in the available packages list
+## STRICT SCHEMA ENFORCEMENT
+You are FORBIDDEN from:
+- ❌ Providing advice, conversational filler, or markdown explanations
+- ❌ Prefixing your response with "Sure!", "Here's", or similar phrases
+- ❌ Including commentary outside the required format
+- ❌ Generating pseudo-code or incomplete patterns
 
-## Response Format
-For modifications, use this format:
+Your output must STRICTLY follow ONE of these formats:
+
+**Format 1: Search & Replace (for modifications)**
 \`\`\`
 Search:
-[original code]
+[exact original code to replace]
 
 Replace:
 [replacement code]
 \`\`\`
 
-For new code, provide a clean code block with imports.
+**Format 2: Code Block (for new code)**
+\`\`\`tsx
+[complete, compilable code with all imports]
+\`\`\`
 
-## Important
-- Do NOT generate pseudo-code or incomplete patterns
-- Do NOT use packages that aren't in the available list
-- Do NOT create incomplete handlers or orphaned functions
-- If unsure, ask for clarification rather than guessing`;
+## Project Context
+${projectContext.frameworks.length > 0 ? `Frameworks: ${projectContext.frameworks.join(', ')}` : 'No frameworks detected'}
+${projectContext.dependencies.length > 0 ? `Available packages: ${projectContext.dependencies.join(', ')}` : 'No dependencies detected'}
+
+## Code Generation Rules
+1. Generate ONLY the code needed, not full files
+2. If modifying existing code, use Search & Replace format
+3. Include necessary imports — check available packages above
+4. Use TypeScript/JSX when appropriate
+5. Do NOT use packages not in the available list
+6. Do NOT generate orphaned functions or incomplete handlers
+7. Output must be parseable by code validators
+
+## If You Cannot Complete Task
+Return ONLY this:
+\`\`\`
+UNABLE_TO_COMPLETE
+\`\`\`
+
+And nothing else. No explanation.`;
 
     if (existingCode) {
       systemPrompt += `\n\n## Existing Code Context\n\`\`\`\n${existingCode.substring(0, 1000)}\n\`\`\``;

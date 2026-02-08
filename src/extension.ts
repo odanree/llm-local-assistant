@@ -267,6 +267,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 // Create Refiner instance with LLM callbacks
                 const refiner = new Refiner({
                   projectRoot: wsFolder.uri.fsPath,
+                  workspaceName: wsFolder.name,
                   maxRetries: 3,
                   llmCall: async (systemPrompt: string, userMessage: string) => {
                     const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
@@ -1328,6 +1329,7 @@ ${patternResult.reasoning}
                 // Create Refiner instance with LLM callbacks
                 const refiner = new Refiner({
                   projectRoot: wsFolder.uri.fsPath,
+                  workspaceName: wsFolder.name,
                   maxRetries: 3,
                   llmCall: async (systemPrompt: string, userMessage: string) => {
                     const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);

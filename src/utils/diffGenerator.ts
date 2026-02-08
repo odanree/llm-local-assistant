@@ -28,11 +28,23 @@ export interface DiffGeneratorResult {
 export class DiffGenerator {
   /**
    * Parse LLM response text into structured diffs
-   * Handles multiple formats: markdown code blocks, plain text, search-replace patterns
+   * IMPROVED: Handles edge cases like "Sure!" prefix before code (Danh's feedback)
    */
   static parse(response: string): DiffGeneratorResult {
     const parseErrors: string[] = [];
     const diffs: DiffBlock[] = [];
+
+    // **NEW: Regex Guard to strip conversational filler (Danh's feedback)**
+    // Remove common LLM prefixes like "Sure!", "Here's", "Of course!", etc.
+    let cleanedResponse = response;
+    const fillerPatterns = [
+      /^(Sure!?|Here(?:'s|'s)?|Of course!?|Certainly!?|Absolutely!?)[:\s]+/i,
+      /^(Here's the|Here is|Let me|I'?ll)[^]*?\n/,
+    ];
+    
+    for (const pattern of fillerPatterns) {
+      cleanedResponse = cleanedResponse.replace(pattern, '');
+    }
 
     // Strategy: Try multiple parsing strategies in order of specificity
     // 1. Markdown code blocks with language hints
@@ -41,28 +53,28 @@ export class DiffGenerator {
     // 4. Fallback: treat entire response as guidance (low confidence)
 
     // **Strategy 1: Extract markdown code blocks**
-    const codeBlockDiffs = this.parseMarkdownBlocks(response);
+    const codeBlockDiffs = this.parseMarkdownBlocks(cleanedResponse);
     if (codeBlockDiffs.length > 0) {
       diffs.push(...codeBlockDiffs);
     }
 
     // **Strategy 2: Find explicit search-replace patterns**
     // Look for "Search:" / "Replace:" or "FROM:" / "TO:" patterns
-    const searchReplaceDiffs = this.parseSearchReplacePatterns(response);
+    const searchReplaceDiffs = this.parseSearchReplacePatterns(cleanedResponse);
     if (searchReplaceDiffs.length > 0) {
       diffs.push(...searchReplaceDiffs);
     }
 
     // **Strategy 3: Detect inline replacements**
     // "Change X to Y", "Replace line 5 with ...", etc.
-    const inlineDiffs = this.parseInlineReplacements(response);
+    const inlineDiffs = this.parseInlineReplacements(cleanedResponse);
     if (inlineDiffs.length > 0) {
       diffs.push(...inlineDiffs);
     }
 
     // **Strategy 4: Heuristic detection of changes**
     // Look for common diff indicators (-, +, @@, etc.)
-    const heuristicDiffs = this.parseHeuristicDiffs(response);
+    const heuristicDiffs = this.parseHeuristicDiffs(cleanedResponse);
     if (heuristicDiffs.length > 0) {
       diffs.push(...heuristicDiffs);
     }
