@@ -3,6 +3,7 @@
  * Phase 5: Code Continuity
  * Phase 6: Multi-Workspace Support
  * Phase 6.5: Runtime Generation Mode Detection
+ * Phase 7: Lean Parser for qwen2.5-coder:7b
  * 
  * Core components for the new architecture:
  * 1. SimpleFixer - Deterministic fixes for common errors
@@ -12,6 +13,7 @@
  * 5. VirtualFileState - Maintain document state across plan execution steps
  * 6. WorkspaceDetector - Detect multiple workspaces and prompt user
  * 7. GenerationModeDetector - Runtime detection of generation mode (diff vs scaffold)
+ * 8. LeanParser - Parse lean prompt output (Danh's optimization for 7B models)
  */
 
 export { SimpleFixer, type FixResult, type FixAction } from './simpleFixer';
@@ -21,3 +23,4 @@ export { DiffGenerator, type DiffBlock, type DiffGeneratorResult } from './diffG
 export { VirtualFileState, type FileEdit } from './virtualFileState';
 export { WorkspaceDetector, type DetectedWorkspace } from './workspaceDetector';
 export { GenerationModeDetector, type GenerationModeResult } from './generationModeDetector';
+export { parseLeanOutput, validateLeanOutput } from './leanParser';

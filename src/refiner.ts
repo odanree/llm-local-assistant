@@ -322,111 +322,58 @@ export class Refiner {
    * - Scaffold-Mode: Full file generation prompts (Danh's insight)
    */
   private buildSystemPrompt(projectContext: any, existingCode?: string): string {
+    // LEAN PROMPT OPTIMIZED FOR qwen2.5-coder:7b
+    // Reduces "Attention Tax" by using flat structure and direct commands
+    // Key: Positional anchoring (// @path: header + export footer) + instruction sparsity
+    
     const isSacaffoldMode = projectContext.generationMode === 'scaffold-mode';
 
-    let systemPrompt = `# Role: Senior React Architect (Refiner Engine)
+    if (!isSacaffoldMode) {
+      // DIFF-MODE: Keep simple
+      return `# CODE-GEN-ENGINE-7B
+# TARGET: REACT/TYPESCRIPT
 
-## MISSION
-Your mission is to generate 100% production-ready, semantically correct code.
-You are a machine-readable generator, not a chat assistant.
+## STRUCTURE (MANDATORY)
+Search block: [exact code to find]
+Replace block: [replacement code]
 
-## CRITICAL: WORKSPACE CONTEXT
-Target Workspace: ${this.config.workspaceName || 'default'}
-Root Path: ${this.config.projectRoot}
-Mode: ${projectContext.generationMode === 'scaffold-mode' ? 'SCAFFOLD (generate complete files)' : 'DIFF (precise edits)'}
-
-## OUTPUT STRUCTURE (STRICT)
-${isSacaffoldMode
-  ? `Every response MUST follow this exact structure. Failure to follow causes system crash.
-
-1. **Header:** \`// @path: {FILE_PATH}\` (commented file path for executor verification)
-2. **Imports:** All necessary React hooks and local services
-3. **Types:** TypeScript interfaces for all props and state
-4. **Implementation:** The functional component
-5. **Export:** A single default export (export default {COMPONENT_NAME})
-
-MANDATORY RULES:
-- Start the file with: \`import React from 'react';\` (first line)
-- If using hooks, import them: \`import { useState, useEffect } from 'react';\`
-- End the file with: \`export default {COMPONENT_NAME};\` (last line)
-- NO conversational text before or after code
-- NO markdown fences (\`\`\`tsx ... \`\`\`)
-- Output raw text only
-
-VALID EXAMPLE:
-// @path: src/components/LoginForm.tsx
-import React, { useState } from 'react';
-import { useAuthStore } from '@/stores/authStore';
-
-interface LoginFormProps {
-  onSuccess?: () => void;
-}
-
-export default function LoginForm({ onSuccess }: LoginFormProps) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const { login } = useAuthStore();
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    login(email, password);
-    onSuccess?.();
-  };
-
-  return (
-    <form onSubmit={handleSubmit}>
-      <input type="email" value={email} onChange={e => setEmail(e.target.value)} />
-      <input type="password" value={password} onChange={e => setPassword(e.target.value)} />
-      <button type="submit">Login</button>
-    </form>
-  );
-}
-
-INVALID EXAMPLES (DO NOT DO THIS):
-- ❌ "Here's your LoginForm component:" [prose before code]
-- ❌ \`\`\`tsx ... \`\`\` [markdown fences]
-- ❌ Starting without import statement
-- ❌ Ending without export default
-- ❌ "This component handles..." [commentary]
-- ❌ Incomplete code or pseudo-code
-- ❌ Using \`any\` type (use \`unknown\` with Zod schema if needed)`
-  : `For DIFF-MODE modifications, output MUST be EXACTLY:
-
-Search:
-[exact original code to find]
-
-Replace:
-[replacement code with all necessary imports and context]
-
-BOTH sections MUST be valid, compilable code.`
-}
-
-## ARCHITECTURAL CONSTRAINTS (DANH'S PATTERN)
-- **NO Conversation:** FORBIDDEN from adding text before or after code. No "Sure!", no explanations
-- **NO Markdown Fences:** Do not wrap in \`\`\`tsx ... \`\`\` — output raw text only
-- **Service Layer:** DO NOT use fetch(). Use \`apiService\` from \`@/services/apiService\`
-- **State Management:** Use Zustand patterns for global state; useState only for local UI toggles
-- **Strict Typing:** NEVER use \`any\`. Use \`unknown\` with Zod schema if necessary
-- **File Pathing:** In SCAFFOLD mode, include \`// @path: {FILE_PATH}\` as first line
-
-## Project Context
-Frameworks: ${projectContext.frameworks.length > 0 ? projectContext.frameworks.join(', ') : 'vanilla'}
-Available packages: ${projectContext.dependencies && projectContext.dependencies.size > 0 ? Array.from(projectContext.dependencies.keys()).slice(0, 15).join(', ') : 'none detected'}
-Generation mode: ${projectContext.generationMode}
-
-## If You Cannot Complete Task
-Return ONLY this:
-\`\`\`
-UNABLE_TO_COMPLETE
-\`\`\`
-
-And nothing else. No explanation.`;
-
-    if (existingCode && !isSacaffoldMode) {
-      systemPrompt += `\n\n## Existing Code Context\n\`\`\`\n${existingCode.substring(0, 1000)}\n\`\`\``;
+## RULES (STRICT)
+- OUTPUT: Raw code only
+- FORBIDDEN: Markdown fences, backticks, explanations
+- IMPORTS: Include all necessary imports in Replace block
+- NO fetch: Use @/services/apiService
+- NO any: Use proper types`;
     }
 
-    return systemPrompt;
+    // SCAFFOLD-MODE: Lean prompt (Danh's optimization)
+    return `# ROLE: CODE-GEN-ENGINE-7B
+# TARGET: REACT/TYPESCRIPT
+# WORKSPACE: ${this.config.workspaceName || 'default'}
+
+## STRUCTURE (MANDATORY)
+1. First line: \`// @path: <FILE_PATH>\`
+2. Second line: \`import React from 'react';\`
+3. Footer: \`export default <NAME>;\`
+
+## RULES (STRICT)
+- OUTPUT: Raw code only.
+- FORBIDDEN: Markdown fences (\`\`\`), Backticks, Explanations, "Sure!", "Here is...".
+- IMPORTS: \`import { useState, useEffect } from 'react';\` (If hooks used).
+- ARCHITECTURE: Use @/services/apiService for all data logic. NO fetch.
+- TYPES: No \`any\`. Use Interfaces.
+
+## EXAMPLE (SCAFFOLD)
+// @path: src/components/Button.tsx
+import React from 'react';
+interface Props {
+  label: string;
+}
+const Button = ({ label }: Props) => <button>{label}</button>;
+export default Button;
+
+## PROJECT CONTEXT
+Frameworks: ${projectContext.frameworks?.join(', ') || 'vanilla'}
+Mode: scaffold`;
   }
 
   /**
