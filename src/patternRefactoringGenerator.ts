@@ -33,6 +33,27 @@ export class PatternRefactoringGenerator {
     filepath: string
   ): Promise<RefactoringResult> {
     try {
+      // Check if pattern requires creating new files (too complex for single-file refactoring)
+      const patternsThatNeedNewFiles = ['StateManagement', 'Forms', 'Notifications'];
+      if (patternsThatNeedNewFiles.includes(pattern)) {
+        return {
+          originalCode: code,
+          refactoredCode: code,
+          pattern,
+          changes: [],
+          explanation: `The ${pattern} pattern typically requires creating new utility files or hooks that this tool cannot generate.`,
+          success: false,
+          error: `Refactoring for ${pattern} pattern is not supported yet. This pattern requires:
+- Creating new hook files (useForms, useNotifications, etc.)
+- Creating utility modules
+- Coordinating changes across multiple files
+
+Current limitation: This tool can only modify existing files, not create new ones.
+
+Recommendation: This pattern is best applied manually or with a full IDE refactoring workflow.`,
+        };
+      }
+
       // Check if this is a server component being refactored with a client-only pattern
       const isServer = isServerComponent(code);
       const forbiddenPatterns = ['Authentication', 'Forms', 'StateManagement', 'Notifications', 'SearchFilter'];
