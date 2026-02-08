@@ -30,6 +30,7 @@ let chatHistory: Array<{ role: string; content: string; type?: string }> = []; /
 let helpShown = false; // Track if help message was shown on first open
 let messageHandlerAttached = false; // Track if message handler is already attached
 let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
+let wsFolder: vscode.Uri | undefined; // Current workspace folder context
 
 /**
  * Find the workspace folder that contains a given file path
@@ -204,7 +205,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-commit-msg — Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
-          `- /check-model — Show configured model and available models on server`,
+          `- /check-model — Show configured model and available models on server\n\n` +
+          `⚠️ **Disabled in v2.0.3 (Code Generation Limitations):**\n` +
+          `- /plan — Use Cursor, Windsurf, or manual implementation\n` +
+          `- /design-system — Use Cursor, Windsurf, or manual implementation\n` +
+          `- /approve — Tied to disabled /plan and /design-system`,
         type: 'info',
         success: true,
       });
@@ -237,55 +242,32 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
             // AGENT MODE: /plan <task>
+            // DISABLED for v2.0.3: Code generation has infinite loop bugs
+            // Use better tools: Cursor, Windsurf, or manual implementation
             if (planMatch) {
-              const userRequest = planMatch[1].trim();
-              
-              chatPanel?.webview.postMessage({
-                command: 'status',
-                text: `🤔 Analyzing task...`,
-                type: 'info',
+              postChatMessage({
+                command: 'addMessage',
+                error: `/plan is disabled in v2.0.3 due to code generation limitations.
+
+LLM-based code generation has known issues:
+- ❌ Infinite loop in validation (generates same broken code repeatedly)
+- ❌ Can't consistently follow constraints (detects error but regenerates identically)
+- ❌ Incomplete implementations (skeleton code, not working features)
+- ✅ Better tools exist for this task
+
+**Recommended alternatives:**
+1. **Cursor / Windsurf** - Better multi-file context, understands constraints
+2. **Manual implementation** - Now that you understand the pattern needed
+3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
+
+**This extension excels at:**
+- /refactor — Pattern detection & analysis
+- /suggest-patterns — Find architectural patterns
+- /rate-architecture — Score code quality
+- Architecture analysis & recommendations
+
+See /help for available commands.`,
               });
-
-              try {
-                // First: Generate thinking to show reasoning
-                const thinking = await planner.generateThinking(
-                  userRequest,
-                  { messages: llmClient.getHistory() }
-                );
-
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `**My approach:**\n\n${thinking}`,
-                  success: true,
-                });
-
-                // Second: Generate the actual plan
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `Creating detailed plan...`,
-                  type: 'info',
-                });
-
-                const { plan, markdown } = await planner.generatePlan(
-                  userRequest,
-                  { messages: llmClient.getHistory() }
-                );
-                
-                // Store current plan for approval
-                (chatPanel as any)._currentPlan = plan;
-                
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `📋 **Plan Created** (${plan.steps.length} steps)\n\n${markdown}\n\n_Use **/approve** to execute or **/reject** to discard_`,
-                  success: true,
-                });
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Planning error: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
               return;
             }
 
@@ -342,51 +324,17 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /approve command
             const approveMatch = text.match(/^\/approve/);
 
-            // AGENT MODE: /approve - Execute current plan
+            // DISABLED for v2.0.3: /plan and /design-system are disabled
             if (approveMatch) {
-              try {
-                const currentPlan = (chatPanel as any)._currentPlan;
-                if (!currentPlan) {
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    error: 'No plan to approve. Use /plan <task> first.',
-                    success: false,
-                  });
-                  return;
-                }
+              postChatMessage({
+                command: 'addMessage',
+                error: `/approve is disabled because /plan and /design-system are disabled in v2.0.3.
 
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: 'Executing plan...',
-                  type: 'info',
-                });
+Code generation has infinite loop bugs that prevent safe execution.
+Use better tools: Cursor, Windsurf, or manual implementation.
 
-                console.log('[Extension] About to execute plan with', currentPlan.steps.length, 'steps');
-                currentPlan.steps.forEach((step, idx) => {
-                  console.log(`[Extension] Step ${idx + 1}: action=${step.action}, description=${step.description}`);
-                });
-
-                const result = await executor.executePlan(currentPlan);
-                
-                // Clear current plan
-                delete (chatPanel as any)._currentPlan;
-                
-                const message = result.success 
-                  ? `✅ **Plan completed successfully**\n\nCompleted ${result.completedSteps} of ${currentPlan.steps.length} steps\n\n💡 *All steps executed successfully (check messages above for retry details)*`
-                  : `⚠️ **Plan execution failed**\n\nError: ${result.error || 'Unknown error'}`;
-                
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  text: message,
-                  success: result.success,
-                });
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
+See /help for available commands.`,
+              });
               return;
             }
 
@@ -1149,14 +1097,19 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }).join('\n')
                   }\n\n`;
                 }
+
+                // Check if file is already a service (prevent circular extraction suggestions)
+                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
                 
-                if (semanticAnalysis.couplingProblems.length > 0) {
+                // Only show coupling problems if file is NOT a service
+                // (API-in-component is expected in service files)
+                if (semanticAnalysis.couplingProblems.length > 0 && !isAlreadyService) {
                   report += `**Coupling Problems:**\n${
                     semanticAnalysis.couplingProblems.map(c => `- ${c.type}: ${c.suggestion}`).join('\n')
                   }\n\n`;
                 }
                 
-                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   report += `**Suggested Extractions:**\n${
                     semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
                   }\n\n`;
@@ -1191,6 +1144,9 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
                   });
                   report += `\n`;
+                } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
+                  // File is a service - show architectural guidance instead of extraction suggestions
+                  report += `**ℹ️ Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
                 }
                 
                 postChatMessage({
@@ -1199,38 +1155,37 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   success: true,
                 });
 
-                // If there are suggested extractions, show buttons to apply them
-                if (semanticAnalysis.suggestedExtractions.length > 0) {
-                  // Store analysis for extraction buttons
-                  (chatPanel as any)._currentRefactorData = {
-                    filepath,
-                    code,
-                    analysis: semanticAnalysis,
-                  };
-
+                // If there are suggested extractions, show them as recommendations
+                // BUT: Extraction generation is incomplete and unreliable
+                // Show suggestions but don't offer automated extraction
+                if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   postChatMessage({
-                    command: 'question',
-                    question: `Would you like to extract a service?`,
-                    options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
+                    command: 'addMessage',
+                    text: `💡 **Recommended Extractions:**\n${
+                      semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
+                    }\n\n**Note:** Code extraction requires understanding component context and business logic that automated tools can't reliably handle. Please apply these extractions manually using your IDE's refactoring tools or Cursor/Windsurf.`,
+                    success: true,
                   });
                 }
 
                 // If pattern detected and confidence high, offer to refactor to apply pattern
+                // BUT: Refactoring generation is unreliable - we only offer pattern detection
+                // Users can apply patterns manually using their IDE or other tools
+                
                 if (shouldShowPattern && patternResult.confidence > 0.7) {
-                  // Store refactoring context
-                  (chatPanel as any)._currentRefactorContext = {
-                    filepath,
-                    code,
-                    pattern: patternResult.pattern,
-                    confidence: patternResult.confidence,
-                    workspace: workspaceFolder,
-                  };
-
+                  // Instead of offering refactoring, just inform the user about the detected pattern
                   postChatMessage({
-                    command: 'question',
-                    question: `Would you like me to refactor this file to apply the **${patternResult.pattern}** pattern?`,
-                    options: [`🔧 Refactor to Apply Pattern`, `📋 Show Preview`, `❌ Skip`],
+                    command: 'addMessage',
+                    text: `✅ **Pattern Detected: ${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)
+
+The analysis suggests this file implements or could benefit from the **${patternResult.pattern}** pattern.
+
+${patternResult.reasoning}
+
+**Note:** Automatic refactoring is disabled to ensure code quality and prevent incomplete or broken changes. Please apply this pattern manually using your IDE's refactoring tools or Cursor/Windsurf, which have better multi-file support.`,
+                    success: true,
                   });
+                  return;
                 }
               } catch (err) {
                 postChatMessage({
@@ -1241,93 +1196,35 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               return;
             }
 
-            // Check for /extract-service command
-            const extractMatch = text.match(/^\/extract-service\s+(\S+)\s+(.+)$/);
-            if (extractMatch) {
-              const hookFile = extractMatch[1].trim();
-              const serviceName = extractMatch[2].trim();
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `🔄 Extracting service from ${hookFile}...`,
-                  type: 'info',
-                });
-
-                // Find the correct workspace folder for this file
-                const workspaceFolder = await findWorkspaceFolderForFile(hookFile);
-                if (!workspaceFolder) {
-                  throw new Error('No workspace folder open');
-                }
-
-                const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, hookFile);
-                const fileData = await vscode.workspace.fs.readFile(fileUri);
-                const code = new TextDecoder().decode(fileData);
-
-                // Extract service using LLM-based extraction
-                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName);
-                
-                // Store extraction data for when user clicks a button
-                (chatPanel as any)._currentExtraction = {
-                  extraction,
-                  hookFile,
-                  serviceName,
-                  code,
-                };
-
-                // Show extraction preview with action buttons in the UI
-                postChatMessage({
-                  command: 'question',
-                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
-                  options: [
-                    'Execute',
-                    'Cancel',
-                  ],
-                });
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Extract error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
-              return;
-            }
-
+            
             // Check for /design-system command
             const designMatch = text.match(/^\/design-system\s+(.+)$/);
+            // DISABLED for v2.0.3: Code generation has infinite loop bugs
+            // Use better tools: Cursor, Windsurf, or manual implementation
             if (designMatch) {
-              const feature = designMatch[1].trim();
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `🎨 Designing system for ${feature}...`,
-                  type: 'info',
-                });
+              postChatMessage({
+                command: 'addMessage',
+                error: `/design-system is disabled in v2.0.3 due to code generation limitations.
 
-                // Get patterns
-                const patterns = architecturePatterns.getAllPatterns();
-                
-                // Generate plan
-                const designPlan = await planner.generatePlan(
-                  `Design a complete ${feature} feature using best practices. Include schema, service layer, custom hook, and component.`,
-                  { messages: llmClient.getHistory() }
-                );
+LLM-based code generation has known issues:
+- ❌ Infinite loop in validation (generates same broken code repeatedly)
+- ❌ Can't consistently follow constraints (detects error but regenerates identically)
+- ❌ Incomplete implementations (skeleton code, not working features)
+- ✅ Better tools exist for this task
 
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `🏗️ **System Design: ${feature}**\n\n` +
-                    `${designPlan.markdown}\n\n` +
-                    `Available patterns: ${patterns.map(p => p.name).join(', ')}\n\n` +
-                    `_Use **/approve** to generate all files_`,
-                  success: true,
-                });
+**Recommended alternatives:**
+1. **Cursor / Windsurf** - Better multi-file context, understands constraints
+2. **Manual implementation** - Now that you understand the pattern needed
+3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
 
-                (chatPanel as any)._currentPlan = designPlan.plan;
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Design error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
+**This extension excels at:**
+- /refactor — Pattern detection & analysis
+- /suggest-patterns — Find architectural patterns
+- /rate-architecture — Score code quality
+- Architecture analysis & recommendations
+
+See /help for available commands.`,
+              });
               return;
             }
 
@@ -2064,82 +1961,9 @@ ${fileContent}
               }
             }
             
-            // Check if this is an extraction action response
-            const extractionData = (chatPanel as any)._currentExtraction;
-            if (extractionData && ['Execute', 'Cancel'].includes(answer)) {
-              const { extraction, hookFile, serviceName, code } = extractionData;
-              
-              try {
-                if (answer === 'Execute') {
-                  chatPanel?.webview.postMessage({
-                    command: 'status',
-                    text: `✏️ Executing extraction...`,
-                    type: 'info',
-                  });
-
-                  const { extraction, hookFile, serviceName, code } = extractionData;
-
-                  try {
-                    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-                    if (!workspaceFolder) {
-                      throw new Error('No workspace folder open');
-                    }
-
-                    // Write service file to src/services/ directory
-                    const serviceDir = vscode.Uri.joinPath(workspaceFolder.uri, 'src', 'services');
-                    try {
-                      await vscode.workspace.fs.createDirectory(serviceDir);
-                    } catch (e) {
-                      // Directory might already exist
-                    }
-
-                    const serviceFilePath = vscode.Uri.joinPath(serviceDir, `${serviceName}.ts`);
-                    await vscode.workspace.fs.writeFile(
-                      serviceFilePath,
-                      new TextEncoder().encode(extraction.extractedCode)
-                    );
-
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: `✅ **Service Extraction Successful**\n\n` +
-                        `**New Service File:** src/services/${serviceName}.ts\n` +
-                        `**Updated Hook:** ${hookFile}\n\n` +
-                        `The API logic has been extracted to a pure service layer (no React hooks).\n\n` +
-                        `**Next Steps:**\n` +
-                        `1. Update your hook to import from the new service\n` +
-                        `2. Run tests to verify functionality\n` +
-                        `3. Remove duplicate logic from the original hook`,
-                      success: true,
-                    });
-                  } catch (err) {
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
-                    });
-                  }
-                } else if (answer === 'Cancel') {
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    text: `⏭️ **Extraction cancelled**`,
-                    success: true,
-                  });
-                }
-                
-                // Clear extraction data
-                (chatPanel as any)._currentExtraction = null;
-                break;
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Extract action error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                break;
-              }
-            }
-            
             // Handle pattern refactoring answers
             const refactorContext = (chatPanel as any)._currentRefactorContext;
-            if (refactorContext && answer === '🔧 Refactor to Apply Pattern') {
+            if (refactorContext && answer === '🔧 Refactor Now') {
               const { filepath, code, pattern, workspace } = refactorContext;
               
               try {
@@ -2199,7 +2023,7 @@ ${fileContent}
             }
 
             // Handle "Show Preview" for refactoring
-            if (refactorContext && answer === '👁️ Show Full Preview') {
+            if (refactorContext && answer === '📋 Show Preview') {
               const { code, pattern } = refactorContext;
               
               try {
@@ -2313,75 +2137,6 @@ ${fileContent}
               }
             }
             
-            // Check if this is a refactor extraction button click
-            const refactorData = (chatPanel as any)._currentRefactorData;
-            if (refactorData && answer.startsWith('Extract: ')) {
-              const extractionName = answer.replace('Extract: ', '');
-              const { filepath, code } = refactorData;
-              
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `🔄 Extracting ${extractionName}...`,
-                  type: 'info',
-                });
-
-                // Generate service name from extraction suggestion
-                // e.g., "Extract API logic to useApi hook" -> "useApi"
-                let serviceName = '';
-                
-                // First try: match 'to <serviceName>' pattern
-                const toMatch = extractionName.match(/\bto\s+(\w+)/i);
-                if (toMatch && toMatch[1]) {
-                  serviceName = toMatch[1];
-                }
-                
-                // Second try: match camelCase starting with 'use'
-                if (!serviceName) {
-                  const useMatch = extractionName.match(/\b(use\w+)\b/i);
-                  if (useMatch && useMatch[1]) {
-                    serviceName = useMatch[1];
-                  }
-                }
-                
-                // Fallback
-                if (!serviceName) {
-                  serviceName = extractionName.split(' ')[0];
-                }
-
-                // Extract service using LLM-based extraction with semantic analysis
-                const analysis = refactorData.analysis;
-                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName, analysis);
-                
-                // Store extraction data for when user chooses action
-                (chatPanel as any)._currentExtraction = {
-                  extraction,
-                  hookFile: filepath,
-                  serviceName,
-                  code,
-                };
-
-                // Show extraction preview with action buttons
-                postChatMessage({
-                  command: 'question',
-                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
-                  options: [
-                    'Execute',
-                    'Cancel',
-                  ],
-                });
-                
-                // Clear refactor data
-                (chatPanel as any)._currentRefactorData = null;
-                break;
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Refactor extraction error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                break;
-              }
-            }
             
             // Regular question answer (not extraction)
             if (pendingQuestionResolve) {
@@ -2462,6 +2217,7 @@ async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): P
       
       // Only flag if we should (high confidence + not "None")
       if (patternDetector.shouldFlagPattern(detectionResult)) {
+        // File itself contains the pattern logic (or needs the pattern applied)
         suggestions.push({
           file: file.path || '',
           pattern: detectionResult.pattern,
@@ -2498,6 +2254,24 @@ async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): P
 }
 
 /**
+ * Get the active workspace folder, preferring the workspace of the active editor
+ * Falls back to the first workspace if no editor is active
+ */
+function getActiveWorkspace(): vscode.Uri | undefined {
+  // First: Try to get workspace from active editor
+  const activeEditor = vscode.window.activeTextEditor;
+  if (activeEditor) {
+    const editorUri = activeEditor.document.uri;
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(editorUri);
+    if (workspaceFolder) {
+      return workspaceFolder.uri;
+    }
+  }
+  // Fallback: Return first workspace
+  return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+
+/**
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext) {
@@ -2515,9 +2289,10 @@ export async function activate(context: vscode.ExtensionContext) {
   llmClient = new LLMClient(config);
 
   // Get workspace folder for codebase awareness
-  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+  wsFolder = getActiveWorkspace();
 
   // Initialize Planner and Executor
+  wsFolder = getActiveWorkspace();
   planner = new Planner({
     llmClient,
     maxSteps: 10,
