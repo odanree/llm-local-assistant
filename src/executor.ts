@@ -123,7 +123,7 @@ export class Executor {
         // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
         if (!autoFixAttempted && result.error) {
           this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${this.MAX_VALIDATION_ITERATIONS})...`, 'info');
-          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS);
+          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS, planWorkspaceUri);
           if (fixedResult && fixedResult.success) {
             result = fixedResult;
             autoFixAttempted = true;
@@ -569,7 +569,13 @@ export class Executor {
    * Automatically attempts to fix failures without manual intervention
    * Returns null if no auto-fix is possible, or a fixed StepResult if successful
    */
-  private async attemptAutoFix(step: PlanStep, error: string, startTime: number, maxIterations: number = 3): Promise<StepResult | null> {
+  private async attemptAutoFix(
+    step: PlanStep,
+    error: string,
+    startTime: number,
+    maxIterations: number = 3,
+    workspace?: vscode.Uri
+  ): Promise<StepResult | null> {
     // Pattern 1: File not found on read → Try reading parent directory (walk up until exists)
     if (step.action === 'read' && error.includes('ENOENT') && step.path) {
       let currentPath = step.path;
@@ -646,7 +652,7 @@ export class Executor {
         const fixedCommand = step.command.replace(cmdBase, alt);
         const fixedStep: PlanStep = { ...step, command: fixedCommand };
         try {
-          return await this.executeRun(fixedStep, startTime);
+          return await this.executeRun(fixedStep, startTime, workspace);
         } catch {
           // Try next alternative
           continue;
@@ -823,7 +829,7 @@ export class Executor {
               timestamp: Date.now(),
             };
           }
-          result = await this.executeRun(clarifiedStep || step, startTime);
+          result = await this.executeRun(clarifiedStep || step, startTime, stepWorkspace);
           break;
         case 'delete':
           // Delete not yet implemented - return with helpful error
@@ -1449,12 +1455,19 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
   /**
    * Execute /run step: Run shell command
    */
-  private async executeRun(step: PlanStep, startTime: number): Promise<StepResult> {
+  private async executeRun(
+    step: PlanStep,
+    startTime: number,
+    workspace?: vscode.Uri
+  ): Promise<StepResult> {
     if (!step.command) {
       throw new Error('Run step requires command');
     }
 
     const command = step.command; // TypeScript type narrowing
+
+    // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
+    const workspaceUri = workspace || this.config.workspace;
 
     return new Promise<StepResult>((resolve) => {
       // Build environment with full PATH, explicitly including homebrew paths
@@ -1482,7 +1495,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       // Use login shell (-l) to source shell configuration
       const child = cp.spawn('/bin/bash', ['-l', '-c', command], {
-        cwd: this.config.workspace.fsPath,
+        cwd: workspaceUri.fsPath,
         env: env,
         stdio: 'pipe',
       });
