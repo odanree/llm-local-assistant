@@ -238,8 +238,13 @@ Output only the plan. No explanations.`;
 
     // Look for step patterns: "**Step N:** action"
     const stepPatterns = [
+      // Qwen format: **[Step 1] ACTION** (highest priority - what Qwen actually outputs)
+      /\*\*\[Step\s+(\d+)\]\s*(\w+)\*\*/gi,
+      // Standard format: **Step 1: ACTION**
       /\*\*Step\s+(\d+):\s*(\w+)\*\*/gi,
+      // Minimal format: Step 1: ACTION
       /Step\s+(\d+):\s*(\w+)/gi,
+      // Numbered list format: 1. ACTION
       /^\d+\.\s+(\w+)/gim,
     ];
 
@@ -256,8 +261,8 @@ Output only the plan. No explanations.`;
     }
 
     if (!stepMatches) {
-      // Fallback: split by "Step" and parse each block
-      const stepBlocks = responseText.split(/\*\*Step\s+\d+:|Step\s+\d+:/i).slice(1);
+      // Fallback: split by "Step" and parse each block (handles Qwen and standard formats)
+      const stepBlocks = responseText.split(/\*\*\[?Step\s+\d+\]?:|Step\s+\d+:/i).slice(1);
 
       stepBlocks.forEach((block, index) => {
         const step = this.parseStepBlock(block, index + 1);
