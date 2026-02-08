@@ -1106,18 +1106,22 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 report += `📁 **Workspace:** ${workspaceFolder.name}\n\n`;
                 report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
                 
-                // Show pattern if detected
+                // Show pattern if detected (always prioritize pattern recommendations)
                 if (shouldShowPattern) {
                   report += `**Architectural Pattern:** ${patternResult.pattern} (${Math.round(patternResult.confidence * 100)}% confidence)\n`;
-                  report += `> ${patternResult.reasoning}\n\n`;
+                  report += `> ${patternResult.reasoning}\n`;
+                  report += `ℹ️ This file could benefit from the **${patternResult.pattern}** pattern\n\n`;
                 }
                 
                 if (semanticAnalysis.issues.length > 0) {
                   report += `**Issues Found:**\n${semanticAnalysis.issues.map(i => `- ${i}`).join('\n')}\n\n`;
                 }
                 
+                // Only show "no issues" if we didn't detect a pattern requiring improvement
                 if (!semanticAnalysis.issues.length && !shouldShowPattern) {
                   report += `**Issues Found:**\n- ✅ No major semantic issues detected\n\n`;
+                } else if (!semanticAnalysis.issues.length && shouldShowPattern) {
+                  // Pattern detected but no specific issues - that's fine, pattern is the recommendation
                 }
                 
                 if (semanticAnalysis.unusedStates.length > 0) {
