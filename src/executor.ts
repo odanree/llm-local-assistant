@@ -63,6 +63,22 @@ export class Executor {
     this.cancelled = false;
     plan.status = 'executing';
 
+    // CRITICAL FIX: Use workspace from plan context, not executor config
+    // This fixes the "RefactorTest selection not persisting" bug  
+    const planWorkspaceUri = plan.workspacePath 
+      ? vscode.Uri.file(plan.workspacePath)
+      : this.config.workspace;
+
+    if (plan.workspacePath) {
+      console.log(
+        `[Executor] Using workspace from plan: "${plan.workspaceName}" at ${plan.workspacePath}`
+      );
+    } else {
+      console.log(
+        `[Executor] No workspace in plan, using default: ${this.config.workspace.fsPath}`
+      );
+    }
+
     // Clear LLM conversation history to avoid context pollution from planning phase
     // This clears the LLM's internal context, NOT the chat UI history
     this.config.llmClient.clearHistory();
@@ -94,7 +110,7 @@ export class Executor {
       const maxRetries = this.config.maxRetries || 2;
 
       while (retries <= maxRetries) {
-        result = await this.executeStep(plan, step.stepId);
+        result = await this.executeStep(plan, step.stepId, planWorkspaceUri);
 
         if (result.success) {
           // Success! Show retry info if retries happened
@@ -742,7 +758,12 @@ export class Executor {
   /**
    * Execute a single step
    */
-  async executeStep(plan: TaskPlan, stepId: number): Promise<StepResult> {
+  async executeStep(
+    plan: TaskPlan,
+    stepId: number,
+    planWorkspaceUri?: vscode.Uri
+  ): Promise<StepResult> {
+    const stepWorkspace = planWorkspaceUri || this.config.workspace;
     const step = plan.steps.find(s => s.stepId === stepId);
     if (!step) {
       return {
@@ -782,10 +803,10 @@ export class Executor {
       
       switch (step.action) {
         case 'read':
-          result = await this.executeRead(step, startTime);
+          result = await this.executeRead(step, startTime, stepWorkspace);
           break;
         case 'write':
-          result = await this.executeWrite(step, startTime);
+          result = await this.executeWrite(step, startTime, stepWorkspace);
           break;
         case 'run':
           // Ask clarification before running potentially long commands
@@ -844,12 +865,18 @@ export class Executor {
    * Execute /read step: Read file from workspace
    * Handles both individual files and directory structures (including globs like examples/**)
    */
-  private async executeRead(step: PlanStep, startTime: number): Promise<StepResult> {
+  private async executeRead(
+    step: PlanStep,
+    startTime: number,
+    workspace?: vscode.Uri
+  ): Promise<StepResult> {
     if (!step.path) {
       throw new Error('Read step requires path');
     }
 
-    const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
+    // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
+    const workspaceUri = workspace || this.config.workspace;
+    const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
     try {
       // Check if path contains glob pattern
       if (step.path.includes('**') || step.path.includes('*')) {
@@ -1021,10 +1048,17 @@ export class Executor {
    * Execute /write step: Generate content and write to file
    * Streams generated content back to callback
    */
-  private async executeWrite(step: PlanStep, startTime: number): Promise<StepResult> {
+  private async executeWrite(
+    step: PlanStep,
+    startTime: number,
+    workspace?: vscode.Uri
+  ): Promise<StepResult> {
     if (!step.path) {
       throw new Error('Write step requires path');
     }
+
+    // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
+    const workspaceUri = workspace || this.config.workspace;
 
     // Check if this is a risky write operation that warrants confirmation
     if (this.shouldAskForWrite(step.path)) {
@@ -1092,7 +1126,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       throw new Error(response.error || 'LLM request failed');
     }
 
-    const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
+    const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
     
     try {
       // Extract content and clean up if it's code

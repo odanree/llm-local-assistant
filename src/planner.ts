@@ -37,6 +37,8 @@ export { StepResult };
 /**
  * TaskPlan: The output from the Planner
  * Compatible with Executor expectations
+ * 
+ * CRITICAL: Includes workspace context so Executor knows where to create files
  */
 export interface TaskPlan {
   taskId: string;
@@ -47,6 +49,10 @@ export interface TaskPlan {
   status?: 'pending' | 'executing' | 'completed' | 'failed'; // For executor tracking
   currentStep?: number; // For executor tracking
   results?: Map<number, StepResult>; // For executor tracking
+  
+  /** CRITICAL: Workspace context (prevents file routing bug) */
+  workspacePath?: string; // Absolute path to selected workspace
+  workspaceName?: string; // Display name of workspace (e.g., "RefactorTest")
 }
 
 /**
@@ -75,10 +81,16 @@ export class Planner {
   /**
    * Generate a plan for a user request
    * 
+   * CRITICAL: Now accepts workspace context to avoid file routing bugs
+   * 
    * Key: No retries, no validation logic, no code transformation.
    * Just decompose the request into steps and return.
    */
-  async generatePlan(userRequest: string): Promise<TaskPlan> {
+  async generatePlan(
+    userRequest: string,
+    workspacePath?: string,
+    workspaceName?: string
+  ): Promise<TaskPlan> {
     this.config.onProgress?.('Planning', 'Decomposing request into steps...');
 
     const planPrompt = this.buildPlanPrompt(userRequest);
@@ -103,6 +115,8 @@ export class Planner {
         steps,
         generatedAt: new Date(),
         reasoning: this.extractReasoning(llmResponse),
+        workspacePath, // CRITICAL: Carry workspace context forward
+        workspaceName, // CRITICAL: Display name for logging/debugging
       };
 
       this.config.onProgress?.('Planning', `Generated ${steps.length} steps`);
