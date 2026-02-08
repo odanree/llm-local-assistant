@@ -111,6 +111,58 @@ export class Refiner {
 
       if (!diffResult.isValid) {
         // No diffs found, might be guidance-only or malformed
+        
+        // **NEW: Check if this is a minimal project where diffs won't work**
+        // Before retrying, detect if we should switch to scaffold mode
+        const hasSrc = GenerationModeDetector.hasSourceDirectory(this.config.projectRoot);
+        const isMinimalProject = !projectContext.hasPackageJson || projectContext.frameworks.length === 0;
+        
+        console.log(`[Refiner] Diff parse failed. Minimal project: ${isMinimalProject}, has src: ${hasSrc}`);
+
+        // If it's a minimal project and we've tried diff mode, switch to scaffold
+        if (isMinimalProject && projectContext.generationMode === 'diff-mode' && attempt === 1) {
+          console.log('[Refiner] Minimal project detected. Switching to SCAFFOLD-MODE immediately.');
+          this.config.onProgress?.('Mode Switch', 'Minimal project detected. Switching to scaffold mode...');
+
+          const scaffoldPrompt = GenerationModeDetector.generateModePrompt('scaffold-mode');
+          const scaffoldRequest = userRequest + scaffoldPrompt + this.context.generateAvoidancePrompt();
+
+          this.context.recordAttempt(
+            llmResponse,
+            'Minimal project: switching to scaffold mode',
+            'mode-switch-immediate'
+          );
+
+          // Try scaffold mode immediately
+          try {
+            llmResponse = await this.config.llmCall(
+              this.buildSystemPrompt(projectContext, existingCode),
+              scaffoldRequest
+            );
+            this.context.recordAttempt(llmResponse, undefined, 'LLM generation (scaffold)');
+
+            // Apply SimpleFixer
+            const fixResult = SimpleFixer.fix(llmResponse);
+            if (fixResult.fixed) {
+              appliedFixes.push(...fixResult.fixes.map((f) => f.description));
+              llmResponse = fixResult.code;
+            }
+
+            // Return success with scaffold-generated code
+            return {
+              success: true,
+              code: llmResponse,
+              explanation: `Generated complete scaffolding (minimal project detected).`,
+              attempts: 1,
+              appliedFixes,
+            };
+          } catch (err) {
+            console.warn('[Refiner] Scaffold mode attempt failed:', err);
+            // Fall through to retry logic
+          }
+        }
+
+        // Standard retry logic
         if (attempt < maxRetries) {
           this.context.recordAttempt(
             llmResponse,
@@ -119,13 +171,39 @@ export class Refiner {
           );
           continue; // Retry
         } else {
-          return {
-            success: false,
-            explanation: `Could not parse code from LLM response after ${attempt} attempts`,
-            attempts: attempt,
-            appliedFixes,
-            error: diffResult.explanation,
-          };
+          // **Last-chance fallback: Try scaffold mode before giving up completely**
+          console.log('[Refiner] All diff attempts failed. Last-chance: trying scaffold mode...');
+          this.config.onProgress?.('Final Attempt', 'Trying scaffolding as last-chance fallback...');
+
+          const scaffoldPrompt = GenerationModeDetector.generateModePrompt('scaffold-mode');
+          const lastChanceRequest = userRequest + scaffoldPrompt + 
+            '\n\nFINAL ATTEMPT: Generate complete, self-contained code. Do not use Search/Replace patterns.';
+
+          try {
+            const scaffoldResponse = await this.config.llmCall(
+              this.buildSystemPrompt(projectContext, existingCode),
+              lastChanceRequest
+            );
+
+            // Try to use scaffolded response as-is
+            return {
+              success: true,
+              code: scaffoldResponse,
+              explanation: `Generated via last-chance scaffold fallback. (Original diff mode failed after ${attempt} attempts)`,
+              attempts: attempt + 1,
+              appliedFixes,
+            };
+          } catch (err) {
+            console.warn('[Refiner] Last-chance scaffold also failed:', err);
+            // Now we can truly give up
+            return {
+              success: false,
+              explanation: `Could not generate code after ${attempt} diff attempts + 1 scaffold attempt. This project may need more context (package.json, framework setup).`,
+              attempts: attempt + 1,
+              appliedFixes,
+              error: `Diff parsing failed: ${diffResult.explanation}. Last-chance scaffold also failed.`,
+            };
+          }
         }
       }
 
