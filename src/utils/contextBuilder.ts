@@ -18,6 +18,12 @@ export interface ProjectContext {
   frameworks: string[];
   detectedPatterns: string[];
   summary: string;
+  // NEW: Context quality metrics (Danh's feedback)
+  hasPackageJson: boolean;
+  hasFrameworks: boolean;
+  contextQuality: 'rich' | 'minimal' | 'insufficient'; // rich: full context, minimal: test-like, insufficient: no structure
+  generationMode: 'diff-mode' | 'scaffold-mode'; // diff-mode: edit existing, scaffold-mode: generate full files
+  suggestedStrategy: string;
 }
 
 export class ContextBuilder {
@@ -32,11 +38,18 @@ export class ContextBuilder {
       frameworks: [],
       detectedPatterns: [],
       summary: '',
+      // NEW: Context quality metrics
+      hasPackageJson: false,
+      hasFrameworks: false,
+      contextQuality: 'insufficient',
+      generationMode: 'scaffold-mode',
+      suggestedStrategy: '',
     };
 
     // Step 1: Read package.json
     const packageJsonPath = path.join(projectPath, 'package.json');
-    if (fs.existsSync(packageJsonPath)) {
+    context.hasPackageJson = fs.existsSync(packageJsonPath);
+    if (context.hasPackageJson) {
       try {
         const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 
@@ -60,6 +73,7 @@ export class ContextBuilder {
 
     // Step 2: Detect frameworks
     context.frameworks = this.detectFrameworks(context.dependencies);
+    context.hasFrameworks = context.frameworks.length > 0;
 
     // Step 3: Scan for common imports in source files
     context.commonImports = this.scanCommonImports(projectPath);
@@ -67,7 +81,13 @@ export class ContextBuilder {
     // Step 4: Detect patterns (e.g., React, TypeScript, etc.)
     context.detectedPatterns = this.detectPatterns(projectPath, context);
 
-    // Step 5: Generate summary for LLM injection
+    // Step 5: Determine context quality and generation mode (NEW)
+    const qualityResult = this.assessContextQuality(context);
+    context.contextQuality = qualityResult.quality;
+    context.generationMode = qualityResult.generationMode;
+    context.suggestedStrategy = qualityResult.suggestedStrategy;
+
+    // Step 6: Generate summary for LLM injection
     context.summary = this.generateSummary(context);
 
     return context;
@@ -190,6 +210,45 @@ export class ContextBuilder {
     }
 
     return patterns;
+  }
+
+  /**
+   * Assess context quality and determine generation mode (NEW - Danh's feedback)
+   * Rich context (has package.json + frameworks) → Diff Mode
+   * Minimal context (test-like structure) → Scaffold Mode
+   * Insufficient context → Warn user, suggest explicit file paths
+   */
+  private static assessContextQuality(
+    context: ProjectContext,
+  ): { quality: 'rich' | 'minimal' | 'insufficient'; generationMode: 'diff-mode' | 'scaffold-mode'; suggestedStrategy: string } {
+    const depCount = context.dependencies.size + context.devDependencies.size;
+    const frameworkCount = context.frameworks.length;
+
+    // Rich context: Full project with clear structure
+    if (context.hasPackageJson && frameworkCount > 0 && depCount > 5) {
+      return {
+        quality: 'rich',
+        generationMode: 'diff-mode',
+        suggestedStrategy: 'Use diff-based edits. LLM will map changes to existing file structure.',
+      };
+    }
+
+    // Minimal context: Test-like structure (few files, no clear structure)
+    if (!context.hasPackageJson || (depCount === 0 && frameworkCount === 0)) {
+      return {
+        quality: 'insufficient',
+        generationMode: 'scaffold-mode',
+        suggestedStrategy:
+          'Context is insufficient (no package.json or frameworks detected). Generate complete files and user will place them manually.',
+      };
+    }
+
+    // Default: Minimal context (some dependencies but not clear structure)
+    return {
+      quality: 'minimal',
+      generationMode: 'scaffold-mode',
+      suggestedStrategy: 'Limited project context. Generate complete files rather than diffs.',
+    };
   }
 
   /**

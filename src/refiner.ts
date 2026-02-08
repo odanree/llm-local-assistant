@@ -172,16 +172,22 @@ export class Refiner {
 
   /**
    * Build system prompt with STRICT schema enforcement (Danh's feedback)
-   * - Explicit workspace context injection
-   * - Negative constraints (what NOT to do)
-   * - Grammar-constrained output requirement
+   * Aware of context quality and generation mode
+   * - Diff-Mode: Minimal, focused prompts for structured edits
+   * - Scaffold-Mode: Full file generation prompts (Danh's insight)
    */
   private buildSystemPrompt(projectContext: any, existingCode?: string): string {
+    const isSacaffoldMode = projectContext.generationMode === 'scaffold-mode';
+
     let systemPrompt = `You are an autonomous code generation agent.
 
 ## CRITICAL: WORKSPACE CONTEXT
 Target Workspace: ${this.config.workspaceName || 'default'}
 Root Path: ${this.config.projectRoot}
+
+## CONTEXT QUALITY & GENERATION MODE
+${projectContext.generationMode === 'diff-mode' ? '**Mode: DIFF-MODE** — Project has clear structure, use precise edits' : '**Mode: SCAFFOLD-MODE** — Limited context, generate complete files for user to place'}
+${projectContext.suggestedStrategy || ''}
 
 ## STRICT SCHEMA ENFORCEMENT
 You are FORBIDDEN from:
@@ -189,6 +195,20 @@ You are FORBIDDEN from:
 - ❌ Prefixing your response with "Sure!", "Here's", or similar phrases
 - ❌ Including commentary outside the required format
 - ❌ Generating pseudo-code or incomplete patterns
+
+${isSacaffoldMode
+  ? `## SCAFFOLD-MODE: Generate Complete Files
+
+Your output must be a complete, compilable file with all imports.
+Format:
+\`\`\`tsx
+[imports]
+[full component/logic]
+\`\`\`
+
+The user will place this file in the correct location.
+Focus on generating COMPLETE, WORKING code, not diffs.`
+  : `## DIFF-MODE: Precise Edits for Existing Structure
 
 Your output must STRICTLY follow ONE of these formats:
 
@@ -204,20 +224,19 @@ Replace:
 **Format 2: Code Block (for new code)**
 \`\`\`tsx
 [complete, compilable code with all imports]
-\`\`\`
+\`\`\``
+}
 
 ## Project Context
 ${projectContext.frameworks.length > 0 ? `Frameworks: ${projectContext.frameworks.join(', ')}` : 'No frameworks detected'}
-${projectContext.dependencies.length > 0 ? `Available packages: ${projectContext.dependencies.join(', ')}` : 'No dependencies detected'}
+${projectContext.dependencies && projectContext.dependencies.size > 0 ? `Available packages: ${Array.from(projectContext.dependencies.keys()).join(', ')}` : 'No dependencies detected'}
 
 ## Code Generation Rules
-1. Generate ONLY the code needed, not full files
-2. If modifying existing code, use Search & Replace format
-3. Include necessary imports — check available packages above
-4. Use TypeScript/JSX when appropriate
-5. Do NOT use packages not in the available list
-6. Do NOT generate orphaned functions or incomplete handlers
-7. Output must be parseable by code validators
+1. ${isSacaffoldMode ? 'Generate COMPLETE, WORKING code' : 'Generate ONLY the code needed'}
+2. Include necessary imports — check available packages above
+3. Use TypeScript/JSX when appropriate
+4. Do NOT use packages not in the available list
+${!isSacaffoldMode ? '5. If modifying existing code, use Search & Replace format' : ''}
 
 ## If You Cannot Complete Task
 Return ONLY this:
@@ -227,7 +246,7 @@ UNABLE_TO_COMPLETE
 
 And nothing else. No explanation.`;
 
-    if (existingCode) {
+    if (existingCode && !isSacaffoldMode) {
       systemPrompt += `\n\n## Existing Code Context\n\`\`\`\n${existingCode.substring(0, 1000)}\n\`\`\``;
     }
 
