@@ -53,45 +53,74 @@ export class CodebaseIndex {
 
   /**
    * Scan project directory and index all TypeScript files
-   * Auto-detects source directory (src, app, components, etc.)
+   * Auto-detects source directories (src, app, components, etc.)
+   * Also scans project root for files not in a src directory
    */
   async scan(srcDir?: string): Promise<void> {
-    let scanRoot = srcDir;
+    let scanDirs: string[] = [];
 
-    // If no explicit dir provided, auto-detect source directory
-    if (!scanRoot) {
-      scanRoot = this.autoDetectSourceDir();
+    // If no explicit dir provided, auto-detect source directories
+    if (!srcDir) {
+      scanDirs = this.autoDetectSourceDirs();
+    } else {
+      scanDirs = [srcDir];
     }
 
-    if (!scanRoot || !fs.existsSync(scanRoot)) {
-      console.log(`[CodebaseIndex] Scan root not found: ${srcDir || scanRoot}`);
+    if (scanDirs.length === 0) {
+      console.log(`[CodebaseIndex] No source directories found`);
       return;
     }
 
-    console.log(`[CodebaseIndex] Scanning from: ${scanRoot}`);
-    this.scanDirectory(scanRoot);
+    console.log(`[CodebaseIndex] Scanning from: ${scanDirs.join(', ')}`);
+    
+    // Scan all directories
+    for (const dir of scanDirs) {
+      if (fs.existsSync(dir)) {
+        this.scanDirectory(dir);
+      }
+    }
+    
     this.extractDependencies();
     this.detectPatterns();
   }
 
   /**
-   * Auto-detect source directory in project
+   * Auto-detect source directories in project
    * Looks for common patterns: src/, app/, components/, lib/
+   * Also includes project root if it has component files
+   * Returns array of directories to scan (both src AND root)
    */
-  private autoDetectSourceDir(): string | null {
+  private autoDetectSourceDirs(): string[] {
+    const dirs: string[] = [];
     const commonSourceDirs = ['src', 'app', 'components', 'lib', 'source', 'code'];
 
+    // Check for standard source directories
     for (const dir of commonSourceDirs) {
       const fullPath = path.join(this.projectRoot, dir);
       if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-        console.log(`[CodebaseIndex] Auto-detected source dir: ${dir}`);
-        return fullPath;
+        console.log(`[CodebaseIndex] Found source dir: ${dir}`);
+        dirs.push(fullPath);
       }
     }
 
-    // If no common source dir found, scan project root
-    console.log(`[CodebaseIndex] No source directory found, scanning project root`);
-    return this.projectRoot;
+    // Always include project root if it has TypeScript files
+    const rootFiles = fs.readdirSync(this.projectRoot).filter(f => 
+      (f.endsWith('.tsx') || f.endsWith('.ts') || f.endsWith('.jsx') || f.endsWith('.js')) &&
+      !f.startsWith('.')
+    );
+    
+    if (rootFiles.length > 0) {
+      console.log(`[CodebaseIndex] Found ${rootFiles.length} files at project root`);
+      dirs.push(this.projectRoot);
+    }
+
+    // If no directories found, default to project root
+    if (dirs.length === 0) {
+      console.log(`[CodebaseIndex] No source directories found, using project root`);
+      dirs.push(this.projectRoot);
+    }
+
+    return dirs;
   }
 
   /**
