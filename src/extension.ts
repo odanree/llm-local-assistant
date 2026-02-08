@@ -14,6 +14,7 @@ import { RefactoringExecutor } from './refactoringExecutor';
 import { PatternDetector } from './patternDetector';
 import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
 import { Refiner } from './refiner';
+import { PlanParser } from './planParser';
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -184,7 +185,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
         text: `**Agent Mode Commands:**\n\n` +
           `🤖 **Planning & Execution:**\n` +
           `- /plan <task> — Create a multi-step action plan\n` +
-          `- /approve — Execute the current plan\n` +
+          `- /execute — Execute the current plan step-by-step\n` +
+          `- /approve — Acknowledge and approve the plan\n` +
           `- /reject — Discard the current plan\n\n` +
           `📚 **Codebase Context:**\n` +
           `- /context show structure — Show project file organization\n` +
@@ -298,9 +300,13 @@ Format as: [Step N] [Action Type]: [Description]`;
                 const result = await refiner.generateCode(planPrompt, undefined, undefined);
 
                 if (result.success && result.code) {
+                  // Parse the generated plan into executable format
+                  const parsedPlan = PlanParser.parse(result.code, userRequest);
+                  (chatPanel as any)._currentPlan = parsedPlan;
+
                   postChatMessage({
                     command: 'addMessage',
-                    text: `✅ Plan generated successfully!\n\n${result.code}`,
+                    text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
                     success: true,
                   });
                 } else {
@@ -373,13 +379,67 @@ Format as: [Step N] [Action Type]: [Description]`;
             // Check for /approve command
             const approveMatch = text.match(/^\/approve/);
 
-            // PHASE 3: /approve command — Re-enabled (simple approval for generated plans)
+            // PHASE 4: /approve command — Acknowledge approved plans
             if (approveMatch) {
               postChatMessage({
                 command: 'addMessage',
-                text: `✅ Plan approved! You can now:\n1. Review the generated plan\n2. Use /execute to run it\n3. Use /reject to discard it\n\nNote: /execute is not yet implemented. For now, manually review and implement the plan steps.`,
+                text: `✅ Plan approved! Use \`/execute\` to run the steps, or \`/reject\` to discard it.`,
                 success: true,
               });
+              return;
+            }
+
+            // Check for /execute command
+            const executeMatch = text.match(/^\/execute/);
+
+            // PHASE 4: /execute command — Execute the current plan step-by-step
+            if (executeMatch) {
+              const currentPlan = (chatPanel as any)._currentPlan;
+              if (!currentPlan) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: 'No plan to execute. Use /plan <task> to generate one first.',
+                  success: false,
+                });
+                return;
+              }
+
+              postChatMessage({
+                command: 'addMessage',
+                text: `⚙️ Executing plan: "${currentPlan.taskDescription}"\n\nRunning ${currentPlan.steps.length} steps...`,
+                type: 'info',
+              });
+
+              try {
+                executor.executePlan(currentPlan).then((result) => {
+                  if (result.success) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      text: `✅ Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
+                      success: true,
+                    });
+                    delete (chatPanel as any)._currentPlan;
+                  } else {
+                    postChatMessage({
+                      command: 'addMessage',
+                      error: `Plan execution failed: ${result.error || 'Unknown error'}`,
+                      success: false,
+                    });
+                  }
+                }).catch((err) => {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+                    success: false,
+                  });
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error starting execution: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
               return;
             }
 
