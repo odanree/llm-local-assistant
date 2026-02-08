@@ -2642,6 +2642,22 @@ export async function activate(context: vscode.ExtensionContext) {
   architecturePatterns = new ArchitecturePatterns();
   patternDetector = new PatternDetector(llmClient);
   patternRefactoringGenerator = new PatternRefactoringGenerator(llmClient);
+
+  // CRITICAL FIX (Issue #2): Listen for workspace folder changes
+  // Update executor config globally when user selects a different folder
+  // This prevents stale workspace state in RetryContext
+  const workspaceFolderListener = vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+      const newWorkspace = vscode.workspace.workspaceFolders[0].uri;
+      // Update executor config with new workspace
+      // This ensures this.config.workspace is always current
+      if (executor) {
+        executor['config'].workspace = newWorkspace;
+        console.log(`[Extension] Workspace changed to: ${newWorkspace.fsPath}`);
+      }
+    }
+  });
+  context.subscriptions.push(workspaceFolderListener);
   featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
   serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
