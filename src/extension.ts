@@ -1098,8 +1098,16 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 
                 // NEW: Also check for architectural patterns using LLM
                 console.log('[Extension] /refactor: Checking for architectural patterns...');
-                const patternResult = await patternDetector.detectPatternWithLLM(code, filepath);
-                const shouldShowPattern = patternDetector.shouldFlagPattern(patternResult);
+                let patternResult: any = { pattern: 'None', confidence: 0, reasoning: '', suggestedImprovements: [] };
+                let shouldShowPattern = false;
+                try {
+                  patternResult = await patternDetector.detectPatternWithLLM(code, filepath);
+                  shouldShowPattern = patternDetector.shouldFlagPattern(patternResult);
+                  console.log('[Extension] /refactor: Pattern detected:', patternResult.pattern, 'Confidence:', patternResult.confidence, 'Should show:', shouldShowPattern);
+                } catch (patternErr) {
+                  console.log('[Extension] /refactor: Pattern detection failed:', patternErr);
+                  // Continue without pattern (fallback gracefully)
+                }
                 
                 // Build detailed report
                 let report = `📊 **Refactoring Analysis: ${filepath}**\n`;
