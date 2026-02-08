@@ -26,6 +26,8 @@ export class PathSanitizer {
    * Validate a path string before filesystem operations
    * 
    * Returns ValidationReport so Executor can decide: fail fast or retry
+   * 
+   * ✅ SENIOR FIX: "Angrier" Executor with strict path rules
    */
   static validatePath(
     rawPath: string | undefined,
@@ -53,6 +55,32 @@ export class PathSanitizer {
       );
     }
 
+    // ✅ FIX 1: STRICT "NO-SPACE" RULE (Danh's Senior Fix)
+    // File paths should almost never have multiple spaces in web projects
+    // If more than 1 space, it's a sentence (description), not a path
+    const spaceCount = (trimmedPath.match(/ /g) || []).length;
+    if (spaceCount > 1) {
+      return createValidationReport(
+        false,
+        `PATH_VIOLATION: Path contains ${spaceCount} spaces (looks like a sentence): "${trimmedPath}". ` +
+        `Web project paths should be kebab-case or camelCase, not sentences.`,
+        [ViolationCodes.PATH_INVALID],
+        { action: context?.action, targetFile: rawPath }
+      );
+    }
+
+    // ✅ FIX 2: STRICT EXTENSION REQUIREMENT (Danh's Senior Fix)
+    // MUST have a file extension in web projects
+    if (!trimmedPath.includes('.')) {
+      return createValidationReport(
+        false,
+        `PATH_VIOLATION: Path has no file extension: "${trimmedPath}". ` +
+        `Web project paths MUST include extension (.tsx, .ts, .js, .json, etc.).`,
+        [ViolationCodes.PATH_INVALID],
+        { action: context?.action, targetFile: rawPath }
+      );
+    }
+
     // Guard 2: Path is not a description/sentence
     // Heuristics:
     // - Contains "contains", "has", "with", "for the" (sentence patterns)
@@ -70,8 +98,7 @@ export class PathSanitizer {
 
     const isDescription =
       trimmedPath.length > 100 || // Too long for a path
-      descriptionPatterns.some(p => p.test(trimmedPath)) ||
-      trimmedPath.split(/\s+/).length > 3; // Multiple words (3+ spaces)
+      descriptionPatterns.some(p => p.test(trimmedPath));
 
     if (isDescription) {
       return createValidationReport(
@@ -109,9 +136,13 @@ export class PathSanitizer {
     const hasValidExtension = validExtensions.some(ext => trimmedPath.endsWith(ext));
 
     if (!hasValidExtension) {
-      // Warning, not critical (some paths might not need extension)
-      // But log it for debugging
-      console.warn(`[PathSanitizer] Path has no standard extension: "${trimmedPath}"`);
+      return createValidationReport(
+        false,
+        `PATH_VIOLATION: Path has invalid extension: "${trimmedPath}". ` +
+        `Valid extensions: .tsx, .ts, .jsx, .js, .json, .css, .scss, .html`,
+        [ViolationCodes.PATH_INVALID],
+        { action: context?.action, targetFile: rawPath }
+      );
     }
 
     // Guard 6: Path starts with valid directory (src/, app/, components/, etc.)
@@ -120,7 +151,13 @@ export class PathSanitizer {
                           !trimmedPath.includes('/'); // Allow single-file paths
 
     if (!hasValidPrefix) {
-      console.warn(`[PathSanitizer] Path doesn't start with common directory: "${trimmedPath}"`);
+      return createValidationReport(
+        false,
+        `PATH_VIOLATION: Path doesn't start with recognized directory: "${trimmedPath}". ` +
+        `Use: src/, app/, components/, pages/, utils/, styles/, public/, ./, or ../`,
+        [ViolationCodes.PATH_INVALID],
+        { action: context?.action, targetFile: rawPath }
+      );
     }
 
     // If all guards passed, return success

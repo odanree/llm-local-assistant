@@ -1016,9 +1016,13 @@ export class Executor {
    * Runs BEFORE any normalization or sanitization.
    * Enforces state-aware constraints based on workspace conditions.
    * 
+   * ✅ SENIOR FIX: "Angrier" Executor with strict path rules
+   * 
    * Purpose: Catch unrecoverable contract violations early
    * - READ operations on greenfield (empty) workspaces
    * - Paths with critical formatting issues (ellipses)
+   * - Paths with multiple spaces (sentences, not paths)
+   * - Paths without extensions
    * - Action mismatches with workspace state
    */
   private preFlightCheck(step: PlanStep, workspaceExists: boolean): void {
@@ -1027,6 +1031,28 @@ export class Executor {
       throw new Error(
         `GREENFIELD_VIOLATION: Cannot READ from "${step.path}" in empty workspace. ` +
         `First step must WRITE or INIT files. Are you missing a WRITE step?`
+      );
+    }
+
+    // ✅ FIX 1: STRICT "NO-SPACE" RULE (Danh's Senior Fix)
+    // Multiple spaces indicate sentence/description, not a valid path
+    if (step.path) {
+      const spaceCount = (step.path.match(/ /g) || []).length;
+      if (spaceCount > 1) {
+        throw new Error(
+          `PATH_VIOLATION: Path "${step.path}" contains ${spaceCount} spaces. ` +
+          `This looks like a sentence, not a file path. ` +
+          `Use kebab-case or camelCase instead: src/components/my-component.tsx`
+        );
+      }
+    }
+
+    // ✅ FIX 2: STRICT EXTENSION REQUIREMENT (Danh's Senior Fix)
+    // Web project paths MUST have file extensions
+    if (step.path && !step.path.includes('.')) {
+      throw new Error(
+        `PATH_VIOLATION: Path "${step.path}" has no file extension. ` +
+        `Web project paths MUST include extension (.tsx, .ts, .js, .json, etc.).`
       );
     }
 
