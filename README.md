@@ -320,7 +320,6 @@ Show all available commands.
 ### ✅ Pattern Detection & Analysis (Working)
 
 #### `/refactor <file>` - Semantic Analysis
-![Refactor Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-refactor.png)
 
 Shows 5-layer semantic analysis:
 - State management issues
@@ -330,8 +329,24 @@ Shows 5-layer semantic analysis:
 - Anti-pattern detection
 - Actionable recommendations
 
+**Example Output:**
+```
+🔍 **Semantic Analysis** (hooks/useUser.ts)
+
+[5-Layer Analysis]
+✅ State Management: 3 states, well-organized
+⚠️ Dependencies: Missing useCallback on fetchUser
+⚠️ Coupling: Tight to AuthContext
+⚠️ Anti-patterns: Direct API call (should extract)
+⚠️ Data Flow: Incomplete error handling
+
+[Recommendations]
+1. Extract API logic to service layer (95% confidence)
+2. Add useCallback optimization (88% confidence)
+3. Improve error handling patterns (92% confidence)
+```
+
 #### `/rate-architecture` - Code Quality Scoring
-![Rate Architecture Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-rate-architecture.png)
 
 Architecture scoring (0-10):
 - Overall rating with breakdown
@@ -339,8 +354,27 @@ Architecture scoring (0-10):
 - Strengths and weaknesses
 - Specific recommendations
 
+**Example Output:**
+```
+📊 **Architecture Rating: 9/10** ⭐⭐⭐⭐⭐
+
+[Layer Breakdown]
+├─ Schema Layer (types/): 9/10
+├─ Service Layer (services/): 8/10
+├─ Hook Layer (hooks/): 9/10
+└─ Component Layer (components/): 8/10
+
+[Strengths]
+✅ Clear separation of concerns
+✅ Proper error handling
+✅ Type-safe implementation
+
+[Recommendations]
+⚠️ Some hooks are large (150+ lines)
+⚠️ Missing error boundary components
+```
+
 #### `/suggest-patterns` - Pattern Recommendations
-![Suggest Patterns Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-suggest-patterns.png)
 
 8 design patterns:
 - CRUD, Authentication, Forms
@@ -349,21 +383,69 @@ Architecture scoring (0-10):
 - Shows which patterns are applicable
 - Implementation guidance
 
+**Example Output:**
+```
+🎯 **Available Patterns**
+
+1. CRUD Pattern (95% match) ✅ Already implemented
+   Where: src/services/userService.ts
+   
+2. Forms Pattern (82% match) ⚠️ Partially implemented
+   Gap: Missing form validation framework
+   
+3. DataFetching Pattern (78% match) ✅ Already implemented
+   Where: src/hooks/useUser.ts
+
+[5-8 more patterns...]
+```
+
 #### `/context show structure` - Project Organization
-![Context Structure Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-context-structure.png)
 
 Visualizes project layout:
 - Files organized by purpose
 - Proper separation of concerns
 - Clear architecture view
 
+**Example Output:**
+```
+📁 Project Structure
+
+schemas/
+├─ User.ts
+├─ Post.ts
+└─ Comment.ts
+
+services/
+├─ userService.ts
+├─ postService.ts
+
+hooks/
+├─ useUser.ts
+├─ usePost.ts
+
+components/
+├─ UserProfile.tsx
+├─ PostList.tsx
+
+Overall: 12 files organized in 4 layers
+```
+
 #### `/context show patterns` - Pattern Detection
-![Context Patterns Command](https://github.com/odanree/llm-local-assistant/raw/main/assets/v2-context-patterns.png)
 
 Shows detected patterns:
 - Pattern type and count
 - Which files implement which patterns
 - Architecture understanding
+
+**Example Output:**
+```
+🎯 Detected Patterns
+
+Zod Schema: 3 files
+React Component: 3 files
+Custom Hook: 3 files
+API Service: 3 files
+```
 
 ### ⚠️ Disabled Features (v2.0.3)
 
