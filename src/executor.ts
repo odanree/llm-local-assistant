@@ -7,6 +7,7 @@ import { GitClient } from './gitClient';
 import CodebaseIndex from './codebaseIndex';
 import { ArchitectureValidator } from './architectureValidator';
 import { TaskPlan, PlanStep, StepResult } from './planner';
+import { validateExecutionStep } from './types/executor';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -749,6 +750,23 @@ export class Executor {
         success: false,
         error: `Step ${stepId} not found in plan`,
         duration: 0,
+        timestamp: Date.now(),
+      };
+    }
+
+    // VALIDATOR GATE: Fail fast if step is malformed (Danh's recommendation)
+    // This prevents "reading 'set'" crashes and other state-loss issues
+    try {
+      const validatedStep = validateExecutionStep(step);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Executor] Schema Violation for Step ${stepId}:`, errorMsg);
+      return {
+        stepId,
+        success: false,
+        error: errorMsg,
+        duration: 0,
+        timestamp: Date.now(),
       };
     }
 
@@ -769,9 +787,6 @@ export class Executor {
         case 'write':
           result = await this.executeWrite(step, startTime);
           break;
-        case 'suggestwrite':
-          result = await this.executeSuggestWrite(step, startTime);
-          break;
         case 'run':
           // Ask clarification before running potentially long commands
           console.log(`[Executor] About to ask clarification for run command: ${(step as any).command}`);
@@ -784,12 +799,26 @@ export class Executor {
               success: true,
               output: `Skipped: ${step.description}`,
               duration: Date.now() - startTime,
+              timestamp: Date.now(),
             };
           }
           result = await this.executeRun(clarifiedStep || step, startTime);
           break;
+        case 'delete':
+          // Delete not yet implemented - return with helpful error
+          return {
+            stepId,
+            success: false,
+            error: `Delete action not yet implemented. Please implement executeDelete() method.`,
+            duration: 0,
+            timestamp: Date.now(),
+          };
         default:
-          throw new Error(`Unknown action: ${step.action}`);
+          // This should never happen if validator gate works
+          throw new Error(
+            `Schema Violation: Unknown action "${step.action}". ` +
+            `Valid actions: read, write, run, delete`
+          );
       }
 
       // Emit step completion

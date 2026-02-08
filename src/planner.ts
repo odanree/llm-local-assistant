@@ -13,32 +13,31 @@
  * - Planner doesn't know about diffs, scaffolding, or code syntax
  * - Refiner doesn't need to understand planning logic
  * - Executor bridges them by calling Refiner for approved steps
+ *
+ * CRITICAL: Planner is constrained to Executor's action types.
+ * - Valid actions: read, write, run, delete
+ * - Invalid actions: analyze, review, suggestwrite (do these in planning, not execution)
+ * - Schema enforcement: Prevents Interface Drift between modules
  */
 
-export interface ExecutionStep {
-  stepId?: number; // For executor compatibility
-  stepNumber: number;
-  action: 'read' | 'write' | 'run' | 'analyze' | 'review' | 'suggestwrite';
-  description: string;
-  targetFile?: string;
-  path?: string; // Alternate name for targetFile (for executor)
-  prompt?: string; // For suggestwrite/write actions
-  expectedOutcome: string;
-  dependencies?: number[]; // Step numbers this depends on
-  command?: string; // For run actions
-}
+import {
+  ActionType,
+  ActionTypeString,
+  ExecutionStep as SharedExecutionStep,
+  StepResult,
+  validateExecutionStep,
+  assertValidActionType,
+} from './types/executor';
 
-// Alias for executor compatibility
-export type PlanStep = ExecutionStep;
+/**
+ * Re-export StepResult for backward compatibility with executor imports
+ */
+export { StepResult };
 
-export interface StepResult {
-  stepId: number;
-  success: boolean;
-  output?: string;
-  error?: string;
-  duration: number;
-}
-
+/**
+ * TaskPlan: The output from the Planner
+ * Compatible with Executor expectations
+ */
 export interface TaskPlan {
   taskId: string;
   userRequest: string;
@@ -49,6 +48,17 @@ export interface TaskPlan {
   currentStep?: number; // For executor tracking
   results?: Map<number, StepResult>; // For executor tracking
 }
+
+/**
+ * ExecutionStep: Local extension with additional Planner-specific fields
+ * Inherits contract from shared SharedExecutionStep
+ */
+export interface ExecutionStep extends SharedExecutionStep {
+  targetFile?: string; // Alternate name for path (for backward compatibility)
+}
+
+// Alias for executor compatibility
+export type PlanStep = ExecutionStep;
 
 export interface PlannerConfig {
   llmCall: (prompt: string) => Promise<string>;
@@ -105,18 +115,35 @@ export class Planner {
   /**
    * Build the planning prompt
    * 
-   * Key: Simple, non-technical, doesn't mention diffs/scaffolding/code.
-   * Just asks LLM to decompose the request into steps.
+   * CRITICAL: Constraint added to prevent Interface Drift
+   * - Tell LLM only 4 action types exist
+   * - Tell LLM to do ANALYZE/REVIEW itself, not output as steps
+   * - Schema enforcement at prompt level
    */
   private buildPlanPrompt(userRequest: string): string {
     return `You are a project planning expert. Your job is to decompose a user request into atomic, executable steps.
 
+IMPORTANT CONSTRAINT - You can ONLY output steps with these actions:
+- read: Read a file or directory
+- write: Write or modify a file
+- run: Execute a shell command or npm script
+- delete: Delete a file or directory
+
+You CANNOT output steps for:
+- analyze: Do your own analysis BEFORE creating the plan, don't output it as a step
+- review: Review code yourself, don't ask the Executor to do it
+- suggestwrite: Write actual code, don't suggest
+
+If a request requires analysis or review, do it yourself first, then output only executable (read/write/run/delete) steps.
+
 USER REQUEST:
 ${userRequest}
 
-Create a detailed step-by-step plan. For each step, provide:
-1. Action type: read, write, run, analyze, or review
-2. What to do: specific file, command, or analysis
+Create a detailed step-by-step plan using ONLY the allowed actions above.
+
+For each step, provide:
+1. Action type: read, write, run, or delete (ONLY these)
+2. What to do: specific file, command, or path
 3. Expected outcome: what will be true after this step
 4. Dependencies: which previous steps it depends on (if any)
 
@@ -124,24 +151,24 @@ OUTPUT FORMAT - Be descriptive and clear:
 
 **Step 1: read**
 - Description: Read the current authentication system
-- Target: src/auth/index.ts
+- Path: src/auth/index.ts
 - Expected outcome: Understand current auth flow
 - Dependencies: None
 
-**Step 2: analyze**
-- Description: Identify where to add remember-me logic
-- Target: auth system analysis
-- Expected outcome: Clear understanding of integration points
+**Step 2: write**
+- Description: Add remember-me checkbox to login form
+- Path: src/components/LoginForm.tsx
+- Expected outcome: Form has remember-me checkbox with state
 - Dependencies: Step 1
 
-**Step 3: write**
-- Description: Add remember-me checkbox to login form
-- Target: src/components/LoginForm.tsx
-- Expected outcome: Form has remember-me checkbox with state
+**Step 3: run**
+- Description: Run tests to verify changes
+- Command: npm test
+- Expected outcome: All tests pass
 - Dependencies: Step 2
 
 Continue for all steps needed to complete the request.
-Be thorough but concise. Focus on the sequence and dependencies.`;
+Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
   }
 
   /**
@@ -187,7 +214,26 @@ Be thorough but concise. Focus on the sequence and dependencies.`;
     let stepNumber = 1;
 
     while ((match = pattern.exec(responseText)) !== null) {
-      const action = (match[2] || 'analyze').toLowerCase() as ExecutionStep['action'];
+      let action = (match[2] || 'read').toLowerCase();
+      
+      // SCHEMA ENFORCEMENT: Validate action against allowed types
+      try {
+        assertValidActionType(action);
+      } catch (err) {
+        // If action is invalid (like 'analyze' or 'review'), map to closest valid action
+        if (['analyze', 'review'].includes(action)) {
+          console.warn(`Warning: Action "${action}" is not executable. Planner should do this analysis itself.`);
+          // Skip this step since it shouldn't have been output
+          continue;
+        }
+        if (action === 'suggestwrite') {
+          console.warn(`Warning: Action "suggestwrite" should be "write". Correcting...`);
+          action = 'write';
+        }
+        // For unknown actions, skip
+        action = 'read'; // Default fallback
+      }
+
       const startIndex = pattern.lastIndex;
 
       // Find the next step or end of text
@@ -198,9 +244,10 @@ Be thorough but concise. Focus on the sequence and dependencies.`;
       const step: ExecutionStep = {
         stepNumber,
         stepId: stepNumber,
-        action,
+        action: action as ActionTypeString,
         description: this.extractDescription(stepContent),
-        targetFile: this.extractTargetFile(stepContent),
+        path: this.extractTargetFile(stepContent),
+        targetFile: this.extractTargetFile(stepContent), // For backward compat
         expectedOutcome: this.extractExpectedOutcome(stepContent),
         dependencies: this.extractDependencies(stepContent),
       };
@@ -223,19 +270,22 @@ Be thorough but concise. Focus on the sequence and dependencies.`;
 
     // Extract action from first line
     const firstLine = lines[0];
-    let action: ExecutionStep['action'] = 'analyze';
+    let action = 'read'; // Default to read
     
-    if (firstLine.includes('read')) action = 'read';
-    else if (firstLine.includes('write')) action = 'write';
+    if (firstLine.includes('write')) action = 'write';
     else if (firstLine.includes('run')) action = 'run';
-    else if (firstLine.includes('review')) action = 'review';
+    else if (firstLine.includes('delete')) action = 'delete';
+    else if (firstLine.includes('read')) action = 'read';
+    // Note: If it says 'analyze' or 'review', we default to 'read' 
+    // (schema enforcement: these should not appear in step output)
 
     return {
       stepNumber,
       stepId: stepNumber,
-      action,
+      action: action as ActionTypeString,
       description: this.extractDescription(block),
-      targetFile: this.extractTargetFile(block),
+      path: this.extractTargetFile(block),
+      targetFile: this.extractTargetFile(block), // For backward compat
       expectedOutcome: this.extractExpectedOutcome(block),
       dependencies: this.extractDependencies(block),
     };

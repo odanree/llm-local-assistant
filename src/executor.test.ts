@@ -175,7 +175,7 @@ describe('Executor', () => {
       const result = await executor.executeStep(plan, 1);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('not yet implemented');
+      expect(result.error).toContain('Schema Violation');
     });
 
     it('should emit onStepOutput callback during execution', async () => {
@@ -245,7 +245,7 @@ describe('Executor', () => {
       const result = await executor.executeStep(plan, 1);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Unknown action');
+      expect(result.error).toContain('Schema Violation');
     });
 
     it('should handle LLM failure during write', async () => {
