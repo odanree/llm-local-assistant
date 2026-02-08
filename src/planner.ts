@@ -342,15 +342,35 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
   /**
    * Extract command from step block (for 'run' actions)
    * Looks for "Command:" or "Run:" patterns
+   * Falls back to inferring common test/build commands from description
    */
   private extractCommand(text: string): string | undefined {
-    // Try "Command: npm test"
+    // Try explicit "Command: npm test" or "Run: npm test"
     const cmdMatch = text.match(/(?:Command|Run)[:\s]+([^\n]+)/i);
     if (cmdMatch) {
       const cmd = cmdMatch[1].trim();
       // Remove trailing punctuation
       return cmd.replace(/[.;,]*$/, '');
     }
+
+    // Fallback: Infer from description if it mentions common commands
+    if (text.toLowerCase().includes('test')) {
+      return 'npm test'; // Most common pattern
+    }
+    if (text.toLowerCase().includes('build')) {
+      return 'npm run build';
+    }
+    if (text.toLowerCase().includes('lint')) {
+      return 'npm run lint';
+    }
+    if (text.toLowerCase().includes('format')) {
+      return 'npm run format';
+    }
+    if (text.toLowerCase().includes('dev') || text.toLowerCase().includes('start')) {
+      return 'npm run dev';
+    }
+
+    // No command found or inferred
     return undefined;
   }
 
