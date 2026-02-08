@@ -233,4 +233,116 @@ And nothing else. No explanation.`;
 
     return systemPrompt;
   }
+
+  /**
+   * Generate code for a single step with complete previous code context
+   * PHASE 5: Code Continuity - maintains document state across steps
+   * 
+   * Instead of isolated snapshots, this provides the LLM with the actual
+   * current state and asks it to apply precise edits.
+   */
+  async generateStepCode(
+    stepNumber: number,
+    stepDescription: string,
+    targetFile: string,
+    previousCode: string,
+  ): Promise<RefinerResult> {
+    const maxRetries = this.config.maxRetries || 3;
+    let attempt = 0;
+    const appliedFixes: string[] = [];
+
+    // Build system prompt with Code Continuity focus
+    const systemPrompt = this.buildStepSystemPrompt(stepNumber, targetFile, previousCode);
+
+    while (attempt < maxRetries) {
+      attempt++;
+      this.config.onProgress?.('Step Generation', `Attempt ${attempt}/${maxRetries}`);
+
+      try {
+        // Call LLM with full code context
+        const response = await this.config.llmCall(systemPrompt, stepDescription);
+
+        // Try SimpleFixer first
+        const fixedResponse = SimpleFixer.fix(response);
+        if (fixedResponse.fixes.length > 0) {
+          appliedFixes.push(...fixedResponse.fixes.map(f => f.description));
+          this.config.onProgress?.('SimpleFixer', `Applied ${fixedResponse.fixes.length} fixes`);
+        }
+
+        // Parse into diffs
+        const diffResult = DiffGenerator.parse(fixedResponse.code);
+
+        // For step-based execution, apply diffs to previous code
+        let resultCode = previousCode;
+        for (const diff of diffResult.diffs) {
+          if (diff.original && diff.replacement) {
+            resultCode = resultCode.replace(diff.original, diff.replacement);
+          }
+        }
+
+        return {
+          success: true,
+          code: resultCode,
+          diffs: diffResult.diffs,
+          explanation: `Step ${stepNumber} generated successfully. ${appliedFixes.length} automatic fixes applied.`,
+          attempts: attempt,
+          appliedFixes,
+        };
+      } catch (err) {
+        this.config.onProgress?.('Step Generation Error', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    return {
+      success: false,
+      explanation: `Failed to generate Step ${stepNumber} code after ${attempt} attempts`,
+      attempts: attempt,
+      appliedFixes,
+      error: `Max retries (${maxRetries}) exceeded`,
+    };
+  }
+
+  /**
+   * Build system prompt for step-by-step execution
+   * PHASE 5: Enforces Code Continuity constraints
+   */
+  private buildStepSystemPrompt(stepNumber: number, targetFile: string, previousCode: string): string {
+    return `You are an autonomous code generation agent executing Step ${stepNumber} of a plan.
+
+## CRITICAL: CODE CONTINUITY
+
+Your task: Modify the existing code to implement Step ${stepNumber}.
+
+Current File State:
+\`\`\`tsx
+${previousCode}
+\`\`\`
+
+## STRICT CONSTRAINTS
+- You MUST modify ONLY what's necessary for this step
+- Use Search & Replace format:
+  \`\`\`
+  Search:
+  [exact code to replace]
+  
+  Replace:
+  [new code]
+  \`\`\`
+- OR use full component with \`// ... existing code\` markers
+- Ensure ALL imports are present
+- Do NOT generate broken partial snippets
+- If you add a hook (useState, useEffect, etc), it must be imported
+- Do NOT remove existing code from previous steps
+- If you cannot complete this step safely, return ONLY:
+  \`\`\`
+  UNABLE_TO_COMPLETE
+  \`\`\`
+
+## Focus
+- Complete this ONE step correctly
+- Maintain scaffolding from previous steps
+- Ensure the result is syntactically valid TypeScript/React
+`;
+  }
 }
+
