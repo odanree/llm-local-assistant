@@ -77,7 +77,22 @@ Don't force a pattern just because of coincidental keywords.`;
         return this.fallbackKeywordDetection(code);
       }
 
-      const result = JSON.parse(jsonMatch[0]);
+      let result;
+      try {
+        // Try direct parse first
+        result = JSON.parse(jsonMatch[0]);
+      } catch (parseError) {
+        // If direct parse fails, try sanitizing escape sequences
+        try {
+          const sanitized = jsonMatch[0]
+            .replace(/\\x([0-9a-f]{2})/gi, '') // Remove hex escapes
+            .replace(/\\u([0-9a-f]{4})/gi, '\\u$1') // Keep unicode escapes
+            .replace(/[\x00-\x1F\x7F]/g, ''); // Remove control characters
+          result = JSON.parse(sanitized);
+        } catch (sanitizeError) {
+          return this.fallbackKeywordDetection(code);
+        }
+      }
       
       return {
         pattern: result.pattern || 'None',
