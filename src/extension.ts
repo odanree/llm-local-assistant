@@ -245,91 +245,76 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /plan command
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
-            // PHASE 6: /plan command — With multi-workspace detection
+            // PHASE 6: /plan command — With multi-folder workspace detection
             if (planMatch) {
               const userRequest = planMatch[1];
-              const rootFolder = vscode.workspace.workspaceFolders?.[0];
               
               console.log('[/plan] Command triggered:', userRequest);
-              console.log('[/plan] Root folder:', rootFolder?.uri.fsPath);
-
-              if (!rootFolder) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: 'No workspace folder open.',
-                  success: false,
-                });
-                return;
-              }
-
-              // NEW: Detect multiple workspaces (Phase 6)
-              console.log('[/plan] Detecting workspaces from:', rootFolder.uri.fsPath);
-              const detectedWorkspaces = WorkspaceDetector.findWorkspaces(rootFolder.uri.fsPath);
-              console.log('[/plan] Detection complete. Found:', detectedWorkspaces.length, 'workspaces');
-
-              // If multiple workspaces detected, ask user to select
-              if (detectedWorkspaces.length > 1) {
-                console.log('[/plan] Multiple workspaces detected. Showing selection prompt.');
-                const selectionPrompt = WorkspaceDetector.formatForDisplay(detectedWorkspaces);
-                
-                postChatMessage({
-                  command: 'addMessage',
-                  text: selectionPrompt,
-                  type: 'info',
-                });
-
-                // Store state for workspace selection
-                (chatPanel as any)._pendingPlanRequest = {
-                  userRequest,
-                  detectedWorkspaces,
-                  timestamp: Date.now(),
-                };
-
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `Please respond with a number (1-${detectedWorkspaces.length}) or "new" to continue.`,
-                  type: 'info',
-                });
-                return;
-              }
-
-              console.log('[/plan] Single or no workspace. Proceeding directly.');
-
-              // Single workspace: proceed with plan generation
-              const wsFolder = detectedWorkspaces.length === 1 
-                ? { uri: vscode.Uri.file(detectedWorkspaces[0].path), name: detectedWorkspaces[0].name }
-                : rootFolder;
-
-              postChatMessage({
-                command: 'addMessage',
-                text: `📋 Generating plan for: "${userRequest}"\n\n(Using Refiner differential prompting — Phase 3)`,
-                type: 'info',
-              });
 
               try {
-                // Create Refiner instance with LLM callbacks
-                const refiner = new Refiner({
-                  projectRoot: wsFolder.uri.fsPath,
-                  workspaceName: wsFolder.name,
-                  maxRetries: 3,
-                  llmCall: async (systemPrompt: string, userMessage: string) => {
-                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
-                    if (!response.success) {
-                      throw new Error(response.error || 'LLM call failed');
-                    }
-                    return response.message || '';
-                  },
-                  onProgress: (stage: string, details: string) => {
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: `⟳ ${stage}: ${details}`,
-                      type: 'info',
-                    });
-                  },
+                // Check if VS Code has multiple folders open (multi-folder workspace)
+                const folders = vscode.workspace.workspaceFolders;
+                console.log('[/plan] Folders in workspace:', folders?.length || 0);
+
+                // If multiple folders, ask user which one
+                if (folders && folders.length > 1) {
+                  console.log('[/plan] Multiple folders detected. Showing selection prompt.');
+                  postChatMessage({
+                    command: 'question',
+                    question: `📁 **Multiple folders detected.** Which project should I create the plan for?`,
+                    options: folders.map(f => f.name),
+                  });
+                  
+                  // Store for handling the answer
+                  (chatPanel as any)._planFolders = folders;
+                  (chatPanel as any)._pendingPlanRequest = userRequest;
+                  return;
+                }
+
+                // Single folder or use default
+                const selectedFolder = folders?.[0];
+                if (!selectedFolder) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: 'No workspace folder open.',
+                    success: false,
+                  });
+                  return;
+                }
+
+                console.log('[/plan] Single folder. Proceeding with:', selectedFolder.name);
+
+                // Generate plan in selected folder
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `📋 Generating plan for: "${userRequest}"\n\n(Using Refiner differential prompting — Phase 3)`,
+                  type: 'info',
                 });
 
-                // Generate plan using Refiner
-                const planPrompt = `Create a detailed step-by-step action plan for:
+                try {
+                  // Create Refiner instance with LLM callbacks
+                  const refiner = new Refiner({
+                    projectRoot: selectedFolder.uri.fsPath,
+                    workspaceName: selectedFolder.name,
+                    maxRetries: 3,
+                    llmCall: async (systemPrompt: string, userMessage: string) => {
+                      const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                      if (!response.success) {
+                        throw new Error(response.error || 'LLM call failed');
+                      }
+                      return response.message || '';
+                    },
+                    onProgress: (stage: string, details: string) => {
+                      chatPanel?.webview.postMessage({
+                        command: 'addMessage',
+                        text: `⟳ ${stage}: ${details}`,
+                        type: 'info',
+                      });
+                    },
+                  });
+
+                  // Generate plan using Refiner
+                  const planPrompt = `Create a detailed step-by-step action plan for:
 
 ${userRequest}
 
@@ -341,142 +326,36 @@ For each step, provide:
 
 Format as: [Step N] [Action Type]: [Description]`;
 
-                const result = await refiner.generateCode(planPrompt, undefined, undefined);
+                  const result = await refiner.generateCode(planPrompt, undefined, undefined);
 
-                if (result.success && result.code) {
-                  // Parse the generated plan into executable format
-                  const parsedPlan = PlanParser.parse(result.code, userRequest);
-                  (chatPanel as any)._currentPlan = parsedPlan;
+                  if (result.success && result.code) {
+                    // Parse the generated plan into executable format
+                    const parsedPlan = PlanParser.parse(result.code, userRequest);
+                    (chatPanel as any)._currentPlan = parsedPlan;
 
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
-                    success: true,
-                  });
-                } else {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Failed to generate plan: ${result.error || result.explanation}`,
-                    success: false,
-                  });
-                }
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
-              return;
-            }
-
-            // PHASE 6: Handle workspace selection response (1-6 or "new")
-            const workspaceSelection = text.match(/^(new|\d+)$/i);
-            const pendingPlan = (chatPanel as any)._pendingPlanRequest;
-            
-            if (workspaceSelection && pendingPlan) {
-              const selection = workspaceSelection[1].toLowerCase();
-              const rootFolder = vscode.workspace.workspaceFolders?.[0];
-
-              if (!rootFolder) {
-                delete (chatPanel as any)._pendingPlanRequest;
-                postChatMessage({
-                  command: 'addMessage',
-                  error: 'Workspace error. Please try /plan again.',
-                  success: false,
-                });
-                return;
-              }
-
-              let selectedWorkspace: any = null;
-              let wsFolder: { uri: vscode.Uri; name: string };
-
-              if (selection === 'new') {
-                // Create new ./src folder
-                const srcPath = path.join(rootFolder.uri.fsPath, 'src');
-                wsFolder = { uri: vscode.Uri.file(srcPath), name: 'src (new)' };
-              } else {
-                const index = parseInt(selection, 10);
-                selectedWorkspace = WorkspaceDetector.getWorkspaceByIndex(pendingPlan.detectedWorkspaces, index);
-                
-                if (!selectedWorkspace) {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Invalid selection. Please choose 1-${pendingPlan.detectedWorkspaces.length} or "new".`,
-                    success: false,
-                  });
-                  return;
-                }
-
-                wsFolder = { uri: vscode.Uri.file(selectedWorkspace.path), name: selectedWorkspace.name };
-              }
-
-              // Clear pending request
-              delete (chatPanel as any)._pendingPlanRequest;
-
-              postChatMessage({
-                command: 'addMessage',
-                text: `✅ Using workspace: **${wsFolder.name}**\n\n📋 Generating plan for: "${pendingPlan.userRequest}"`,
-                type: 'info',
-              });
-
-              try {
-                // Create Refiner instance with selected workspace
-                const refiner = new Refiner({
-                  projectRoot: wsFolder.uri.fsPath,
-                  workspaceName: wsFolder.name,
-                  maxRetries: 3,
-                  llmCall: async (systemPrompt: string, userMessage: string) => {
-                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
-                    if (!response.success) {
-                      throw new Error(response.error || 'LLM call failed');
-                    }
-                    return response.message || '';
-                  },
-                  onProgress: (stage: string, details: string) => {
-                    chatPanel?.webview.postMessage({
+                    postChatMessage({
                       command: 'addMessage',
-                      text: `⟳ ${stage}: ${details}`,
-                      type: 'info',
+                      text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                      success: true,
                     });
-                  },
-                });
-
-                // Generate plan
-                const planPrompt = `Create a detailed step-by-step action plan for:
-
-${pendingPlan.userRequest}
-
-For each step, provide:
-1. Action type (read/write/run/analyze)
-2. What to do (specific file, command, or analysis)
-3. Expected outcome
-4. Any dependencies
-
-Format as: [Step N] [Action Type]: [Description]`;
-
-                const result = await refiner.generateCode(planPrompt, undefined, undefined);
-
-                if (result.success && result.code) {
-                  const parsedPlan = PlanParser.parse(result.code, pendingPlan.userRequest);
-                  (chatPanel as any)._currentPlan = parsedPlan;
-
+                  } else {
+                    postChatMessage({
+                      command: 'addMessage',
+                      error: `Failed to generate plan: ${result.error || result.explanation}`,
+                      success: false,
+                    });
+                  }
+                } catch (err) {
                   postChatMessage({
                     command: 'addMessage',
-                    text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
-                    success: true,
-                  });
-                } else {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Failed to generate plan: ${result.error || result.explanation}`,
+                    error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
                     success: false,
                   });
                 }
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
-                  error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
+                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }
@@ -2252,6 +2131,92 @@ ${fileContent}
                   error: `Rating error: ${err instanceof Error ? err.message : String(err)}`,
                 });
                 (chatPanel as any)._rateArchitectureWorkspaces = null;
+                break;
+              }
+            }
+
+            // Handle /plan folder selection
+            const planFolders = (chatPanel as any)._planFolders;
+            const pendingPlanRequest = (chatPanel as any)._pendingPlanRequest;
+            
+            if (planFolders && pendingPlanRequest && planFolders.some((f: any) => f.name === answer)) {
+              try {
+                console.log('[/plan] Folder selected:', answer);
+                
+                // Find the selected folder
+                const selectedFolder = planFolders.find((f: any) => f.name === answer);
+                
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `✅ Using folder: **${selectedFolder.name}**\n\n📋 Generating plan for: "${pendingPlanRequest}"`,
+                  type: 'info',
+                });
+
+                // Create Refiner instance with selected folder
+                const refiner = new Refiner({
+                  projectRoot: selectedFolder.uri.fsPath,
+                  workspaceName: selectedFolder.name,
+                  maxRetries: 3,
+                  llmCall: async (systemPrompt: string, userMessage: string) => {
+                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                // Generate plan
+                const planPrompt = `Create a detailed step-by-step action plan for:
+
+${pendingPlanRequest}
+
+For each step, provide:
+1. Action type (read/write/run/analyze)
+2. What to do (specific file, command, or analysis)
+3. Expected outcome
+4. Any dependencies
+
+Format as: [Step N] [Action Type]: [Description]`;
+
+                const result = await refiner.generateCode(planPrompt, undefined, undefined);
+
+                if (result.success && result.code) {
+                  const parsedPlan = PlanParser.parse(result.code, pendingPlanRequest);
+                  (chatPanel as any)._currentPlan = parsedPlan;
+
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                    success: true,
+                  });
+                } else {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Failed to generate plan: ${result.error || result.explanation}`,
+                    success: false,
+                  });
+                }
+                
+                // Clear state
+                (chatPanel as any)._planFolders = null;
+                (chatPanel as any)._pendingPlanRequest = null;
+                break;
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+                (chatPanel as any)._planFolders = null;
+                (chatPanel as any)._pendingPlanRequest = null;
                 break;
               }
             }
