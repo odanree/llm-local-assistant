@@ -8,6 +8,8 @@ import CodebaseIndex from './codebaseIndex';
 import { ArchitectureValidator } from './architectureValidator';
 import { TaskPlan, PlanStep, StepResult } from './planner';
 import { validateExecutionStep } from './types/executor';
+import { PathSanitizer } from './utils/pathSanitizer';
+import { ValidationReport, formatValidationReportForLLM } from './types/validation';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -91,41 +93,36 @@ export class Executor {
     const startTime = Date.now();
 
     for (const step of plan.steps) {
-      // CRITICAL FIX #1: Path Guard - Validate strict serialization (One Step, One File)
-      // This implements Danh's "One Step, One Effect" principle
+      // CRITICAL FIX: Strict Path Guard - Circuit Breaker for Invalid Paths
+      // This implements Danh's senior architecture: fail-fast before filesystem corruption
       if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
-        // Check for comma-separated paths (multi-file hallucination)
-        if (step.path.includes(',')) {
-          const error = `PATH GUARD VIOLATION: Step ${step.stepId} contains comma-separated paths: "${step.path}". ` +
-            `This violates the "One Step, One File" contract. Each step must target EXACTLY ONE file. ` +
-            `Create separate steps for each file.`;
-          this.config.onMessage?.(error, 'error');
+        // Use PathSanitizer for comprehensive validation
+        const pathValidation = PathSanitizer.validatePath(step.path, {
+          workspace: this.config.workspace.fsPath,
+          action: step.action,
+        });
+
+        if (!pathValidation.success) {
+          // Aggressive Feedback: Machine-readable validation report
+          const feedbackMessage = formatValidationReportForLLM(pathValidation);
+          const errorMessage = `❌ PATH VALIDATION FAILED (Step ${step.stepId}):\n${feedbackMessage}`;
+          
+          this.config.onMessage?.(errorMessage, 'error');
+          
           plan.results?.set(step.stepId, {
             success: false,
             stepId: step.stepId,
             output: '',
-            error,
+            error: errorMessage,
             duration: 0,
           });
-          continue;
-        }
-        
-        // Check for suspicious space-separated paths (another common hallucination pattern)
-        // But allow spaces in file names (e.g., "My File.tsx")
-        // Only reject if it looks like multiple paths separated by spaces
-        const pathTrimmed = step.path.trim();
-        if (pathTrimmed.match(/\s+src\//) || pathTrimmed.match(/\.tsx\s+\w/) || 
-            pathTrimmed.split(/\s+/).filter(p => p.endsWith('.tsx') || p.endsWith('.ts')).length > 1) {
-          const error = `PATH GUARD VIOLATION: Step ${step.stepId} contains multiple file paths in one step: "${step.path}". ` +
-            `This violates the "One Step, One File" contract. Create separate steps for each file.`;
-          this.config.onMessage?.(error, 'error');
-          plan.results?.set(step.stepId, {
-            success: false,
-            stepId: step.stepId,
-            output: '',
-            error,
-            duration: 0,
-          });
+          
+          // Store validation report for RetryContext (Danh's "Aggressive Feedback")
+          if (step.stepId && pathValidation.instruction) {
+            // This will be picked up by RetryContext in the next retry
+            console.log(`[Executor] Path validation failed for step ${step.stepId}. Instruction for LLM:\n${pathValidation.instruction}`);
+          }
+          
           continue;
         }
       }
