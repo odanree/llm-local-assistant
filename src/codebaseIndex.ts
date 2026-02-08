@@ -77,6 +77,7 @@ export class CodebaseIndex {
   /**
    * Auto-detect source directory in project
    * Looks for common patterns: src/, app/, components/, lib/
+   * If src exists but is mostly services, also include project root
    */
   private autoDetectSourceDir(): string | null {
     const commonSourceDirs = ['src', 'app', 'components', 'lib', 'source', 'code'];
@@ -84,13 +85,24 @@ export class CodebaseIndex {
     for (const dir of commonSourceDirs) {
       const fullPath = path.join(this.projectRoot, dir);
       if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-        console.log(`[CodebaseIndex] Auto-detected source dir: ${dir}`);
-        return fullPath;
+        // Check if source dir has any non-service files
+        // If it's mostly services (extracted code), also include root
+        const files = fs.readdirSync(fullPath).filter(f => f.endsWith('.tsx') || f.endsWith('.ts'));
+        const isServiceDir = files.length > 0 && files.every(f => 
+          f.includes('service') || f.includes('hook') || f.includes('provider') || f.includes('store')
+        );
+        
+        if (!isServiceDir) {
+          // src/ has real components, use it
+          console.log(`[CodebaseIndex] Auto-detected source dir: ${dir}`);
+          return fullPath;
+        }
+        // else: src/ is mostly services, continue to check root
       }
     }
 
-    // If no common source dir found, scan project root
-    console.log(`[CodebaseIndex] No source directory found, scanning project root`);
+    // If no common source dir found, or src was just services, scan project root
+    console.log(`[CodebaseIndex] Scanning project root for components`);
     return this.projectRoot;
   }
 
