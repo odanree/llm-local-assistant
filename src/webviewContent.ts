@@ -154,6 +154,32 @@ export function getWebviewContent(): string {
         } else if (msg.text) {
           div.textContent = msg.text;
         }
+        
+        // Add buttons if options are provided
+        if (msg.options && msg.options.length > 0) {
+          const buttonContainer = document.createElement('div');
+          buttonContainer.className = 'question-buttons';
+          buttonContainer.style.marginTop = '12px';
+          
+          msg.options.forEach((option) => {
+            const btn = document.createElement('button');
+            btn.className = 'question-btn';
+            btn.textContent = option;
+            btn.onclick = () => {
+              input.value = option.replace('Execute: ', '');
+              input.focus();
+              // Disable all buttons
+              Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
+                b.disabled = true;
+                b.style.opacity = '0.5';
+              });
+            };
+            buttonContainer.appendChild(btn);
+          });
+          
+          div.appendChild(buttonContainer);
+        }
+        
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
       } else if (msg.command === 'status') {
