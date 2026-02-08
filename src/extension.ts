@@ -1226,13 +1226,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     workspace: workspaceFolder,
                   };
 
-                  // Format: command | button label
+                  // Format like /suggest-patterns: "Execute: /refactor ..."
                   const commandCode = `/refactor ${filepath}`;
                   postChatMessage({
                     command: 'question',
                     question: `Pattern detected: **${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)`,
                     options: [
-                      `${commandCode} | 🔧 Refactor Now`,
+                      `Execute: ${commandCode}`,
                       `📋 Show Preview`,
                       `❌ Skip`,
                     ],

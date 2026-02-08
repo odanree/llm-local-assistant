@@ -199,36 +199,38 @@ export function getWebviewContent(): string {
         buttonContainer.className = 'question-buttons';
         
         msg.options.forEach((option, idx) => {
-          // Check if option has command code (starts with /)
-          const hasCommand = option.includes('/refactor');
+          // Check if option starts with "Execute: " (special handling for command buttons)
+          const isExecuteButton = option.startsWith('Execute: ');
           
-          if (hasCommand) {
+          if (isExecuteButton) {
             // Create row with command + button
             const row = document.createElement('div');
             row.className = 'command-row';
             
-            // Extract command and button label
-            const parts = option.split('|');
-            const command = parts[0].trim();
-            const buttonLabel = parts[1]?.trim() || '🔧 Refactor';
+            // Extract command from "Execute: /refactor ..."
+            const command = option.substring('Execute: '.length);
             
             // Command code (left side, copyable)
             const code = document.createElement('code');
             code.style.fontFamily = 'monospace';
             code.style.marginRight = '8px';
-            code.style.backgroundColor = 'var(--vscode-editor-background)';
+            code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
             code.style.padding = '4px 8px';
             code.style.borderRadius = '3px';
+            code.style.userSelect = 'all';
+            code.style.cursor = 'text';
             code.textContent = command;
             row.appendChild(code);
             
             // Button (right side)
             const btn = document.createElement('button');
             btn.className = 'question-btn command-btn';
-            btn.textContent = buttonLabel;
+            btn.textContent = '▶ Execute';
             btn.onclick = () => {
-              console.log('[Webview] User clicked option:', buttonLabel);
-              vscode.postMessage({ command: 'answerQuestion', answer: buttonLabel });
+              console.log('[Webview] User clicked execute button for:', command);
+              input.value = command;
+              input.focus();
+              // Don't disable - let user click other buttons too
             };
             row.appendChild(btn);
             
