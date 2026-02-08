@@ -24,6 +24,10 @@ export interface ProjectContext {
   contextQuality: 'rich' | 'minimal' | 'insufficient'; // rich: full context, minimal: test-like, insufficient: no structure
   generationMode: 'diff-mode' | 'scaffold-mode'; // diff-mode: edit existing, scaffold-mode: generate full files
   suggestedStrategy: string;
+  // CONTEXT-AWARE PLANNING: Test infrastructure detection
+  hasTests: boolean; // Has jest/vitest/pytest configured
+  testFramework: 'jest' | 'vitest' | 'pytest' | 'unknown' | 'none';
+  hasTestFiles: boolean; // Has test files (*.test.ts, *.test.tsx, etc.)
 }
 
 export class ContextBuilder {
@@ -44,6 +48,10 @@ export class ContextBuilder {
       contextQuality: 'insufficient',
       generationMode: 'scaffold-mode',
       suggestedStrategy: '',
+      // CONTEXT-AWARE PLANNING: Initialize test detection
+      hasTests: false,
+      testFramework: 'none',
+      hasTestFiles: false,
     };
 
     // Step 1: Read package.json
@@ -66,8 +74,33 @@ export class ContextBuilder {
             context.devDependencies.set(name, version as string);
           }
         }
+
+        // CONTEXT-AWARE PLANNING: Detect test framework
+        if (packageJson.devDependencies) {
+          if (packageJson.devDependencies.jest) {
+            context.testFramework = 'jest';
+            context.hasTests = true;
+          } else if (packageJson.devDependencies.vitest) {
+            context.testFramework = 'vitest';
+            context.hasTests = true;
+          }
+        }
+        if (packageJson.dependencies) {
+          if (packageJson.dependencies.pytest) {
+            context.testFramework = 'pytest';
+            context.hasTests = true;
+          }
+        }
       } catch (error) {
         console.warn('Failed to parse package.json:', error);
+      }
+
+      // CONTEXT-AWARE PLANNING: Detect test files
+      context.hasTestFiles = this.detectTestFiles(projectPath);
+      if (context.hasTestFiles && !context.hasTests) {
+        // Has test files but no framework configured
+        context.testFramework = 'unknown';
+        context.hasTests = true;
       }
     }
 
@@ -312,6 +345,62 @@ export class ContextBuilder {
 
     return files;
   }
+
+  /**
+   * CONTEXT-AWARE PLANNING: Detect test files in project
+   * Looks for common test patterns: *.test.ts, *.test.tsx, *.spec.ts, etc.
+   */
+  private static detectTestFiles(projectPath: string): boolean {
+    const testPatterns = [
+      '**/*.test.ts',
+      '**/*.test.tsx',
+      '**/*.test.js',
+      '**/*.test.jsx',
+      '**/*.spec.ts',
+      '**/*.spec.tsx',
+      '**/*.spec.js',
+      '**/tests/**',
+      '**/test/**',
+      '**/__tests__/**',
+    ];
+
+    const extensions = ['.test.ts', '.test.tsx', '.test.js', '.test.jsx', 
+                       '.spec.ts', '.spec.tsx', '.spec.js', '.spec.jsx'];
+
+    try {
+      // Check common test directories
+      const testDirs = ['test', 'tests', '__tests__', 'src/__tests__', 'src/tests'];
+      for (const dir of testDirs) {
+        const testPath = path.join(projectPath, dir);
+        if (fs.existsSync(testPath) && fs.statSync(testPath).isDirectory()) {
+          const files = fs.readdirSync(testPath);
+          if (files.length > 0) {
+            return true; // Has test directory with files
+          }
+        }
+      }
+
+      // Check for test files in src directory
+      const srcPath = path.join(projectPath, 'src');
+      if (fs.existsSync(srcPath)) {
+        const files = this.walkDir(srcPath, extensions);
+        if (files.length > 0) {
+          return true; // Found test files
+        }
+      }
+
+      // Check project root for test files
+      const rootFiles = fs.readdirSync(projectPath);
+      if (rootFiles.some(f => extensions.some(ext => f.endsWith(ext)))) {
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.warn('[ContextBuilder] Error detecting test files:', error);
+      return false;
+    }
+  }
 }
 
 /**
@@ -333,9 +422,14 @@ ${context.summary}
 - Production: ${Array.from(context.dependencies.keys()).slice(0, 15).join(', ')}
 - Development: ${Array.from(context.devDependencies.keys()).slice(0, 10).join(', ')}
 
+### Test Infrastructure
+- Has Tests: ${context.hasTests ? 'Yes (' + context.testFramework + ')' : 'No'}
+- Test Files Detected: ${context.hasTestFiles ? 'Yes' : 'No'}
+
 ### Constraints
 - Only import from existing dependencies listed above
 - Match existing code patterns: ${context.detectedPatterns.join(', ')}
 - Follow ${context.frameworks.length > 0 ? context.frameworks.join(', ') : 'vanilla JavaScript'} conventions
+${!context.hasTests ? '- NO automated testing infrastructure - suggest manual verification only' : ''}
 `;
 }

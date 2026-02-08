@@ -16,6 +16,7 @@ import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
 import { Refiner } from './refiner';
 import { PlanParser } from './planParser';
 import { WorkspaceDetector } from './utils';
+import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -313,10 +314,14 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     },
                   });
 
+                  // CONTEXT-AWARE PLANNING: Build project context and pass to Planner
+                  const projectContext = ContextBuilder.buildContext(selectedFolder.uri.fsPath);
+                  
                   const plan = await planner.generatePlan(
                     userRequest,
                     selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
-                    selectedFolder.name         // CRITICAL: Pass workspace name
+                    selectedFolder.name,        // CRITICAL: Pass workspace name
+                    projectContext              // CONTEXT-AWARE: Pass project context
                   );
                   
                   // Store plan for /execute command
@@ -2184,11 +2189,16 @@ ${fileContent}
                   },
                 });
 
+                // CONTEXT-AWARE PLANNING: Build project context and pass to Planner
+                const projectContext = ContextBuilder.buildContext(selectedFolder.uri.fsPath);
+
                 const plan = await planner.generatePlan(
                   pendingPlanRequest,
                   selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
-                  selectedFolder.name         // CRITICAL: Pass workspace name
+                  selectedFolder.name,        // CRITICAL: Pass workspace name
+                  projectContext              // CONTEXT-AWARE: Pass project context
                 );
+
                 (chatPanel as any)._currentPlan = plan;
 
                 // Format plan for display

@@ -89,11 +89,19 @@ export class Planner {
   async generatePlan(
     userRequest: string,
     workspacePath?: string,
-    workspaceName?: string
+    workspaceName?: string,
+    projectContext?: any  // CONTEXT-AWARE PLANNING: Accept project context
   ): Promise<TaskPlan> {
     this.config.onProgress?.('Planning', 'Decomposing request into steps...');
 
-    const planPrompt = this.buildPlanPrompt(userRequest);
+    // CONTEXT-AWARE PLANNING: Check if project has tests
+    let hasTests = true; // Default: assume has tests
+    if (projectContext) {
+      hasTests = projectContext.hasTests ?? true;
+      console.log(`[Planner] Project context: hasTests=${hasTests}, testFramework=${projectContext.testFramework}`);
+    }
+
+    const planPrompt = this.buildPlanPrompt(userRequest, hasTests);
 
     try {
       const llmResponse = await this.config.llmCall(planPrompt);
@@ -134,7 +142,7 @@ export class Planner {
    * - Tell LLM to do ANALYZE/REVIEW itself, not output as steps
    * - Schema enforcement at prompt level
    */
-  private buildPlanPrompt(userRequest: string): string {
+  private buildPlanPrompt(userRequest: string, hasTests: boolean = true): string {
     return `You are a project planning expert. Your job is to decompose a user request into atomic, executable steps.
 
 IMPORTANT CONSTRAINT - You can ONLY output steps with these actions:
@@ -149,6 +157,20 @@ You CANNOT output steps for:
 - suggestwrite: Write actual code, don't suggest
 
 If a request requires analysis or review, do it yourself first, then output only executable (read/write/run/delete) steps.
+
+${!hasTests ? `
+CONTEXT-AWARE PLANNING: This project has NO automated testing infrastructure (no jest/vitest/pytest).
+
+CRITICAL: You are FORBIDDEN from:
+- ❌ Outputting steps that run npm test, jest, vitest, pytest, or any test commands
+- ❌ Assuming the project has testing setup
+- ❌ Recommending automated testing
+
+INSTEAD:
+- ✅ Skip automated testing steps entirely
+- ✅ Suggest manual verification: "Verify in dev environment"
+- ✅ Focus on code generation and implementation
+` : ''}
 
 USER REQUEST:
 ${userRequest}
