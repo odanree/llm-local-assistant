@@ -313,7 +313,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     },
                   });
 
-                  const plan = await planner.generatePlan(userRequest);
+                  const plan = await planner.generatePlan(
+                    userRequest,
+                    selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
+                    selectedFolder.name         // CRITICAL: Pass workspace name
+                  );
                   
                   // Store plan for /execute command
                   (chatPanel as any)._currentPlan = plan;
@@ -2180,7 +2184,11 @@ ${fileContent}
                   },
                 });
 
-                const plan = await planner.generatePlan(pendingPlanRequest);
+                const plan = await planner.generatePlan(
+                  pendingPlanRequest,
+                  selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
+                  selectedFolder.name         // CRITICAL: Pass workspace name
+                );
                 (chatPanel as any)._currentPlan = plan;
 
                 // Format plan for display
