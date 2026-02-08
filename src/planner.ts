@@ -143,186 +143,32 @@ export class Planner {
    * - Schema enforcement at prompt level
    */
   private buildPlanPrompt(userRequest: string, hasTests: boolean = true): string {
-    return `You are a project planning expert. Your job is to decompose a user request into atomic, executable steps.
+    // OPTIMIZED FOR SMALL MODELS (e.g., qwen2.5-coder:7b)
+    // Use shorter, more direct prompts. Verbose prompts confuse small models.
+    return `You are a step planner. Output a numbered plan.
 
-IMPORTANT CONSTRAINT - You can ONLY output steps with these actions:
-- read: Read a file or directory
-- write: Write or modify a file
-- run: Execute a shell command or npm script
-- delete: Delete a file or directory
-- manual: Manual verification step (for projects without testing infrastructure)
+ACTIONS: read, write, run, delete, manual
 
-You CANNOT output steps for:
-- analyze: Do your own analysis BEFORE creating the plan, don't output it as a step
-- review: Review code yourself, don't ask the Executor to do it
-- suggestwrite: Write actual code, don't suggest
+RULES:
+- ONE file per write step (never multiple files)
+- Include commands for run steps
+${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use "manual" for verification'}
 
-If a request requires analysis or review, do it yourself first, then output only executable (read/write/run/delete/manual) steps.
+USER REQUEST: ${userRequest}
 
-${!hasTests ? `
-========================================
-MANDATORY RULES FOR THIS PROJECT
-========================================
-This project has NO automated testing infrastructure.
+OUTPUT THIS FORMAT (exactly):
 
-You are STRICTLY FORBIDDEN from:
-- ❌ Outputting RUN steps that execute npm test, jest, vitest, pytest, or any test commands
-- ❌ Assuming testing infrastructure exists
-- ❌ Including automated testing in the plan
+**Step 1: ACTION**
+- Description: What to do
+- Path/Command: Details
+- Expected: Result
 
-You MUST:
-- ✅ Use MANUAL steps for all verification and testing activities
-- ✅ Replace every verification step with MANUAL action type
-- ✅ Provide clear manual testing instructions in the MANUAL steps
+**Step 2: ACTION**
+- Description: What to do
+- Path/Command: Details
+- Expected: Result
 
-EXAMPLE of CORRECT behavior:
-When planning a feature, you would normally add:
-  **Step 3: run**
-  Command: npm test
-
-Instead, for this project, you MUST output:
-  **Step 3: manual**
-  Description: Verify changes work in development environment
-  Instructions: npm start, open browser, test manually
-  Expected outcome: Feature works correctly in dev environment
-
-CRITICAL: Fail-fast if you forget these rules. Every verification step
-MUST be MANUAL, not RUN. Every reference to 'npm test' MUST be replaced
-with MANUAL step with manual testing instructions.
-========================================
-` : ''}
-
-USER REQUEST:
-${userRequest}
-
-Create a detailed step-by-step plan using ONLY the allowed actions above.
-
-For each step, provide:
-1. Action type: read, write, run, delete, or manual
-2. Description: What to do (2-3 sentence summary)
-3. File/Command: Path for read/write/delete, command for run, instructions for manual
-4. Expected outcome: what will be true after this step
-5. Dependencies: which previous steps it depends on (if any)
-
-OUTPUT FORMAT - Be VERY specific and clear:
-
-${hasTests ? `
-**Step 1: read**
-- Description: Read the current login form component
-- Path: src/components/LoginForm.tsx
-- Expected outcome: Understand current form structure and imports
-- Dependencies: None
-
-**Step 2: write**
-- Description: Add remember-me checkbox to login form
-- Path: src/components/LoginForm.tsx
-- Expected outcome: Form has remember-me checkbox with state
-- Dependencies: Step 1
-
-**Step 3: run**
-- Description: Run tests to verify changes
-- Command: npm test
-- Expected outcome: All tests pass
-- Dependencies: Step 2
-` : `
-**Step 1: read**
-- Description: Read the current login form component
-- Path: src/components/LoginForm.tsx
-- Expected outcome: Understand current form structure and imports
-- Dependencies: None
-
-**Step 2: write**
-- Description: Add remember-me checkbox to login form
-- Path: src/components/LoginForm.tsx
-- Expected outcome: Form has remember-me checkbox with state
-- Dependencies: Step 1
-
-**Step 3: manual**
-- Description: Verify changes work in development environment
-- Instructions: Run 'npm start' (or equivalent), open browser to localhost, test login form manually, verify remember-me checkbox saves state
-- Expected outcome: Form displays correctly, remember-me checkbox functional, no console errors
-- Dependencies: Step 2
-`}
-
-========================================
-CRITICAL CONSTRAINT FOR 'write' STEPS - READ CAREFULLY:
-========================================
-
-Each 'write' step creates EXACTLY ONE file.
-
-You are STRICTLY FORBIDDEN from:
-- ❌ Including multiple file paths in a single step
-- ❌ Using commas to list multiple files
-- ❌ Creating multiple files in one step
-
-INVALID EXAMPLES (DO NOT DO THIS):
-❌ **Step 2: write**
-- Path: ProductPage.tsx, SearchFilter.tsx
-- Description: Create multiple files
-[THIS IS WRONG - MULTIPLE FILES IN ONE STEP]
-
-❌ **Step 3: write**
-- Path: src/components/ProductPage.tsx, src/pages/Details.tsx
-[THIS IS WRONG - COMMA-SEPARATED PATHS FORBIDDEN]
-
-VALID EXAMPLES (DO THIS):
-✅ **Step 2: write**
-- Path: src/components/ProductPage.tsx
-- Description: Create product page component
-
-✅ **Step 3: write**
-- Path: src/pages/SearchFilter.tsx
-- Description: Create search filter component
-
-REMEMBER:
-- ONE file per 'write' step
-- NO commas in Path
-- NO multiple paths
-- Create separate steps for each file
-
-If you need to create 3 files, output 3 separate 'write' steps.
-
-========================================
-CRITICAL CONSTRAINT FOR 'run' STEPS - READ CAREFULLY:
-========================================
-
-If your step's action is 'run', the 'command' field is MANDATORY.
-
-You are STRICTLY FORBIDDEN from generating a 'run' step without a valid shell command.
-
-INVALID EXAMPLES (DO NOT DO THIS):
-❌ **Step 2: run**
-- Description: Run tests
-- [No Command field] ← THIS IS WRONG - YOU MUST INCLUDE COMMAND
-
-❌ **Step 2: run**
-- Description: Run the tests to verify
-- Command: [empty or missing] ← THIS IS WRONG - COMMAND CANNOT BE EMPTY
-
-VALID EXAMPLES (DO THIS):
-✅ **Step 2: run**
-- Description: Run tests to verify changes
-- Command: npm test
-
-✅ **Step 4: run**
-- Description: Run linting checks
-- Command: npm run lint
-
-✅ **Step 6: run**
-- Description: Build the project for production
-- Command: npm run build
-
-REMEMBER:
-- Every 'run' step MUST have a Command field
-- The Command field MUST NOT be empty
-- The Command field MUST be a valid shell command
-- Examples: npm test, npm run build, npm run lint, pytest, yarn build, etc.
-
-If you cannot determine the exact command, do NOT output a run step.
-Output a different step type instead (read, write, delete).
-
-Continue for all steps needed to complete the request.
-Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
+Output only the plan. No explanations.`;
   }
 
   /**
