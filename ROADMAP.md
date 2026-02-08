@@ -1,353 +1,311 @@
-# Roadmap: LLM Local Assistant
+# ROADMAP - LLM Local Assistant
 
-**Status**: ✅ **v2.0.2 RELEASED** - Final Polish & Bug Fixes + One-Click Execution
+## Current Status: v2.0.3 Production Ready ✅
 
----
-
-## 📊 Version History
-
-### ✅ v2.0.2 - Final Polish & Bug Fixes (Feb 7, 2026)
-
-**Bug Fixes & Quality** ✅ COMPLETE
-- ✅ Tab autocomplete prioritizes commands over history
-- ✅ Multi-workspace execute buttons now showing
-- ✅ JSON parsing handles bad escape sequences
-- ✅ `/suggest-patterns` & `/refactor` pattern detection synchronized
-- ✅ Pattern detection timeout prevents hanging (5-second max)
-- ✅ Unified `/suggest-patterns` handler (eliminated 90 lines duplication)
-
-**UI/UX Enhancements**
-- ✅ **One-Click Execute Buttons** - Replace copy/paste workflow
-- ✅ **Graceful Error Handling** - Pattern detection never blocks response
-- ✅ **Better Debugging** - Timeout errors logged to console
-
-**Quality Metrics**
-- ✅ 273/273 tests passing (100%)
-- ✅ 100% TypeScript strict mode
-- ✅ 0 compilation errors
-- ✅ 0 production blockers
+**Release Date:** February 8, 2026  
+**Status:** Stable, Production-Ready  
+**Tests:** 284/284 passing  
+**TypeScript:** Strict mode, 0 errors  
+**Blockers:** None
 
 ---
 
-### ✅ v2.0+ - Intelligent Refactoring Suite + Smart UI (Feb 6-7, 2026)
+## v2.0.3: Analysis-Only, Production-Ready (CURRENT) ✅
 
-**Phase 3.4: Intelligent Refactoring** ✅ COMPLETE
-- ✅ `/refactor <file>` - 5-layer semantic analysis + architectural pattern detection (95%+ success)
-- ✅ `/extract-service <hook> <name>` - LLM-guided extraction (90%+ success)
-- ✅ `/rate-architecture` - Architecture scoring 0-10 with workspace selection (100% success)
-- ✅ `/suggest-patterns` - LLM-based pattern recommendations with copy-pastable commands (100% success)
-- ✅ `/design-system <feature>` - Multi-file generation (85%+ success)
+### What's Included (Phase 3)
+
+**Pattern Detection & Architecture Analysis**
+- ✅ `/refactor <file>` - 5-layer semantic analysis
+- ✅ `/rate-architecture` - Score codebase (0-10)
+- ✅ `/suggest-patterns` - Pattern recommendations (8 patterns)
+- ✅ `/context show structure` - Project organization
+- ✅ `/context show patterns` - Detected patterns
+- ✅ `/git-review` - Code review
+
+**File Operations (Phase 1-2)**
+- ✅ `/read <path>` - Read files
+- ✅ `/write <path>` - Generate file content
+- ✅ `/suggestwrite <path>` - Preview before writing
+- ✅ `/explain <path>` - Code explanation
+- ✅ `/git-commit-msg` - Generate commit messages
+- ✅ `/help` - Command reference
 - ✅ `/check-model` - Model diagnostics
 
-**Phase 3.3: Context Awareness** ✅ COMPLETE
-- ✅ `/context show structure` - View project organization
-- ✅ `/context show patterns` - Detect design patterns
-- ✅ `/context show dependencies` - Analyze file relationships
+**Multi-Workspace Support**
+- ✅ Plans execute in correct workspace
+- ✅ File discovery scans src AND root
+- ✅ Context-aware analysis
 
-**UI/UX Improvements** ✅ (NEW in v2.0+)
-- ✅ **Tab Autocomplete** - Complete commands with Tab key
-- ✅ **Tab Cycling** - Navigate through multiple matches
-- ✅ **Command History** - Arrow Up/Down to recall previous commands
-- ✅ **Copy-Pastable Commands** - `/suggest-patterns` output includes ready-to-use commands
-- ✅ **One-Click Buttons** - Execute commands with single click
+### What's NOT Included (Intentionally Disabled)
 
-**Infrastructure & Quality**
-- ✅ 273 comprehensive tests (100% pass rate)
-- ✅ 100% TypeScript strict mode
-- ✅ GitHub Actions CI/CD (tests on every PR)
-- ✅ Zero compilation errors
-- ✅ Zero production blockers
-- ✅ Multi-workspace support with auto-detection
+**Code Generation with Planning** - Infinite Loop Bugs
+- ❌ `/plan` - Disabled (infinite validation loop)
+- ❌ `/design-system` - Disabled (infinite validation loop)
+- ❌ `/approve` - Disabled (tied to above)
 
-**Key Improvements from v2.0.0 → v2.0.2**
-- ✅ LLM-based pattern detection (semantic analysis, not keywords)
-- ✅ CodebaseIndex auto-detection (supports app/, components/, lib/, src/)
-- ✅ Node modules blacklist (10x faster scans)
-- ✅ `/refactor` shows architectural patterns
-- ✅ GitHub Actions CI/CD workflow
-- ✅ Smart chat keyboard shortcuts
-- ✅ One-click execute buttons
-- ✅ Pattern detection timeout (no hanging)
-- ✅ Unified handlers (tech debt eliminated)
+**Why disabled:**
+- LLM generates code missing imports (e.g., `useState`)
+- Auto-correction detects error but regenerates same broken code
+- Creates infinite loop: generate → validate → regenerate → validate...
+- Traps users in retry cycles, wastes tokens
 
----
+**Better alternatives:**
+- Cursor, Windsurf, or Copilot (better multi-file context)
+- Manual implementation (now you understand the pattern)
 
-### ✅ v1.2.5 - Quality Improvements (Jan 16, 2026)
+### Philosophy: Honest About Limitations
 
-**Phase 3.4: Intelligent Refactoring** ✅ COMPLETE
-- ✅ `/refactor <file>` - 5-layer semantic analysis + architectural pattern detection (95%+ success)
-- ✅ `/extract-service <hook> <name>` - LLM-guided extraction (90%+ success)
-- ✅ `/rate-architecture` - Architecture scoring 0-10 with workspace selection (100% success)
-- ✅ `/suggest-patterns` - LLM-based pattern recommendations with copy-pastable commands (100% success)
-- ✅ `/design-system <feature>` - Multi-file generation (85%+ success)
-- ✅ `/check-model` - Model diagnostics
+**v2.0.3 is honest:**
+- ✅ **Analysis excels** - Pattern detection, scoring, recommendations (100% reliable)
+- ❌ **Generation fails** - Code generation creates infinite loops (disabled)
+- ✅ **What we're good at** - Deep code understanding and guidance
+- ❌ **What we're bad at** - Reliable multi-file code generation
 
-**Phase 3.3: Context Awareness** ✅ COMPLETE
-- ✅ `/context show structure` - View project organization
-- ✅ `/context show patterns` - Detect design patterns
-- ✅ `/context show dependencies` - Analyze file relationships
-
-**UI/UX Improvements** ✅ (NEW in v2.0+)
-- ✅ **Tab Autocomplete** - Complete commands with Tab key
-- ✅ **Tab Cycling** - Navigate through multiple matches
-- ✅ **Command History** - Arrow Up/Down to recall previous commands
-- ✅ **Copy-Pastable Commands** - `/suggest-patterns` output includes ready-to-use commands
-
-**Infrastructure & Quality**
-- ✅ 273 comprehensive tests (100% pass rate)
-- ✅ 100% TypeScript strict mode
-- ✅ GitHub Actions CI/CD (tests on every PR)
-- ✅ Zero compilation errors
-- ✅ Zero production blockers
-- ✅ Multi-workspace support with auto-detection
-
-**Key Improvements from v2.0.0 → v2.0+**
-- ✅ LLM-based pattern detection (semantic analysis, not keywords)
-- ✅ CodebaseIndex auto-detection (supports app/, components/, lib/, src/)
-- ✅ Node modules blacklist (10x faster scans)
-- ✅ `/refactor` shows architectural patterns
-- ✅ GitHub Actions CI/CD workflow
-- ✅ Smart chat keyboard shortcuts
+**Better approach:**
+- Let VS Code/Copilot/Cursor handle generation (better tools)
+- Use this extension for analysis and understanding
+- Make informed decisions based on recommendations
 
 ---
 
-### ✅ v1.2.5 - Quality Improvements (Jan 16, 2026)
+## v2.0.2: UX Polish & Bug Fixes (Previous Release)
 
-**Bug Fixes & Improvements**
-- ✅ Marketplace documentation sync
-- ✅ AI Agent safety features
-- ✅ Write operation safety
-- ✅ Follow-up questions for risky operations
-- ✅ Interactive confirmation system
+**Date:** February 7, 2026
 
-**Tests**: 140+ comprehensive tests
+**Features:**
+- ✅ Pattern detection enhancements
+- ✅ Safety improvements (pattern blocking)
+- ✅ UI/UX polish
+- ✅ Multi-workspace initial support
 
----
-
-### ✅ v1.1.2 - Phase 2 Complete (2025)
-
-**Agent Loop Features**
-- ✅ `/plan <task>` - Multi-step planning
-- ✅ `/approve` - Plan execution
-- ✅ `/reject` - Plan cancellation
-- ✅ Automatic error recovery
-- ✅ Real-time progress monitoring
-
-**Tests**: 94+ unit tests
+**Tests:** 273/273 passing
 
 ---
 
-## 🎯 Feature Matrix
+## v2.0.1: Pattern Detection Foundation (Previous Release)
 
-| Feature | v1.0 | v1.1 | v1.2 | v2.0 |
-|---------|------|------|------|------|
-| Chat Interface | ✅ | ✅ | ✅ | ✅ |
-| `/read`, `/write` | ✅ | ✅ | ✅ | ✅ |
-| `/plan`, `/approve` | ❌ | ✅ | ✅ | ✅ |
-| Context Awareness | ❌ | ❌ | ❌ | ✅ |
-| Intelligent Refactoring | ❌ | ❌ | ❌ | ✅ |
-| Architecture Validation | ❌ | ❌ | ❌ | ✅ |
-| Multi-file Generation | ❌ | ❌ | ❌ | ✅ |
+**Date:** February 6, 2026
+
+**Features:**
+- ✅ Semantic analysis (5 layers)
+- ✅ Pattern detection (8 patterns)
+- ✅ Architecture scoring
+- ✅ Initial `/refactor` command
 
 ---
 
-## 📈 Phase Timeline
+## v2.0.0: Intelligent Refactoring (Previous Release)
 
-| Phase | Feature | Status | Version | Date |
-|-------|---------|--------|---------|------|
-| 1 | Core Chat | ✅ Complete | v1.0 | 2025 |
-| 2 | Agent Loop | ✅ Complete | v1.1 | 2025 |
-| 2.1 | Safety Features | ✅ Complete | v1.2 | Jan 2026 |
-| 3.1 | Validation System | ✅ Complete | v2.0 | Feb 2026 |
-| 3.2 | Smart Planning | ✅ Complete | v2.0 | Feb 2026 |
-| 3.3 | Context Awareness | ✅ Complete | v2.0 | Feb 2026 |
-| 3.4 | Refactoring Suite | ✅ Complete | v2.0 | Feb 2026 |
+**Date:** February 6, 2026
+
+**Features:**
+- ✅ Phase 3 architecture analysis
+- ✅ Pattern detection framework
+- ✅ Multi-file coordination foundation
+- ✅ Validation loop detection
 
 ---
 
-## 🚀 Future Phases (v2.1+)
+## Future Phases (v2.1+)
 
-### Phase 3.4.7: Production Monitoring (2-3 days)
-**Goals**: Monitor real-world usage, refine rules based on patterns
+### v2.1: Better Analysis & Recommendations
 
-- Track `/design-system` success rates in production
-- Monitor retry logic effectiveness
-- Collect user feedback and pain points
-- Refine layer validation rules based on usage
-- Improve LLM prompting based on failure patterns
+**Possible Future Features:**
+- Improved pattern detection accuracy
+- Better architecture scoring algorithm
+- More specific refactoring recommendations
+- Performance profiling analysis
 
-**Expected Impact**: Further improve 85% → 90%+ success rate
+**Status:** Not started (focused on stability first)
 
----
+### v2.2: Enhanced Context & Integration
 
-### Phase 3.5: Enhanced Prompting (3-4 days)
-**Goals**: Add architecture context to LLM prompts
+**Possible Future Features:**
+- Better multi-workspace support
+- Context caching for faster analysis
+- Git history analysis
+- Team-based recommendations
 
-- Add architecture context to service generation prompts
-- Explicit file boundary awareness in LLM instructions
-- Better error prevention at prompt level ("You're generating service file, no React hooks")
-- Context-aware code generation
-- Improved multi-file consistency
+**Status:** Not started (focused on stability first)
 
-**Expected Impact**: 90%+ → 95%+ success across all commands
+### v3.0: Code Generation (Revisited)
 
----
-
-### Phase 3.6: Advanced Patterns (4-5 days)
-**Goals**: Detect and handle advanced scenarios
-
-- More semantic error detection
-- Better circular dependency handling
-- Performance optimization for large codebases
-- Advanced pattern combinations
-- Edge case handling
-
-**Expected Impact**: Production stability and reliability
+**Not In Active Development:**
+- Would require solving infinite loop problem
+- Better approach: partner with Cursor/Windsurf instead of competing
+- This extension is better as analysis tool than generation tool
 
 ---
 
-### Phase 4: Specialized Domains (Future)
-**Goals**: Support specific frameworks and architectures
+## Known Limitations (By Design)
 
-- React optimization patterns
-- Vue.js support
-- Next.js conventions
-- GraphQL schema generation
-- API layer abstraction
+### v2.0.3
 
----
+1. **No Code Generation**
+   - Why: LLM can't reliably follow validation constraints
+   - Workaround: Use Cursor, Windsurf, or manual coding
+   - Evidence: v2.0.0-2.0.2 attempts created infinite loops
 
-### Phase 5: Multi-Agent Coordination (Future)
-**Goals**: Multiple AI agents working together
+2. **Pattern Detection Limited to Common Patterns**
+   - Current: 8 patterns (CRUD, Auth, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination)
+   - Why: Others less common or harder to detect reliably
+   - Workaround: Use `/refactor` for custom pattern analysis
 
-- Agent delegation for specialized tasks
-- Code review agent
-- Testing agent
-- Documentation agent
+3. **Architecture Scoring Based on File Structure**
+   - Current: Analyzes layers and organization
+   - Limitation: Can't measure actual runtime performance
+   - Workaround: Use performance profiling tools for runtime analysis
 
----
+4. **Multi-File Operations Limited**
+   - Current: Can analyze codebase, show structure
+   - Limitation: Won't generate multiple coordinated files
+   - Workaround: Use Cursor/Windsurf for multi-file generation
 
-## 📋 Known Limitations
+### Intentional Design Choices
 
-### Current (v2.0)
+**Analysis Only, No Generation** - Because:
+- Analysis is 100% reliable (just reading code)
+- Generation is unreliable (writing working code)
+- Better to be honest about limitations
+- Recommend better tools for generation (Cursor, Windsurf)
 
-**Design System Multi-file Generation**
-- ⚠️ Success rate 85%+ (improved from 60%)
-- ⚠️ Mostly fails on very complex architectures (100+ file projects)
-- ⚠️ May skip complex component tests (manual creation needed)
-- ✅ Handles 80%+ of real-world use cases
+**No Automatic Refactoring** - Because:
+- Users should understand changes before applying them
+- Recommendations without generation safer and more useful
+- Puts user in control of transformation
 
-**Refactoring Commands**
-- ⚠️ Works best with React/TypeScript projects
-- ⚠️ May need fine-tuning for other frameworks
-- ✅ Detects all 8 major architectural patterns
-
-**Architecture Validation**
-- ✅ Prevents React hooks in services
-- ✅ Prevents runtime code in types
-- ⚠️ May be strict for unconventional architectures
-
----
-
-## 🎯 Success Metrics (v2.0)
-
-| Command | Success Rate | Quality | Notes |
-|---------|-------------|---------|-------|
-| `/refactor` | 95%+ | High | Semantic analysis very reliable |
-| `/extract-service` | 90%+ | High | LLM-guided extraction works well |
-| `/rate-architecture` | 100% | Perfect | Deterministic scoring |
-| `/suggest-patterns` | 100% | Perfect | Pattern library comprehensive |
-| `/design-system` | 85%+ | Good | Retry logic handles most failures |
-| `/context show *` | 100% | Perfect | File analysis deterministic |
+**No External APIs** - Because:
+- Local privacy more important than cloud features
+- Users can run offline
+- No dependency on external services
 
 ---
 
-## 🔮 Vision
+## Version History
 
-### Short Term (v2.1-2.3)
-- ✅ Production stability and monitoring
-- ✅ Enhanced prompting and context
-- ✅ Advanced error recovery
-
-### Medium Term (v3.0)
-- ✨ Specialized domain support
-- ✨ Framework-specific optimization
-- ✨ Community contributions
-
-### Long Term (v4.0+)
-- 🚀 Multi-agent systems
-- 🚀 Autonomous code generation
-- 🚀 Real-time collaboration
+| Version | Date | Status | Key Features |
+|---------|------|--------|--------------|
+| v2.0.3 | Feb 8, 2026 | ✅ Current | Analysis-only, disabled broken generation |
+| v2.0.2 | Feb 7, 2026 | ✅ Stable | UX polish, safety improvements |
+| v2.0.1 | Feb 6, 2026 | ✅ Stable | Pattern detection foundation |
+| v2.0.0 | Feb 6, 2026 | ✅ Stable | Intelligent refactoring framework |
+| v1.2.5 | Feb 5, 2026 | ✅ Stable | Multi-step planning and execution |
+| v1.2.0 | Early Feb | ✅ Stable | Planning and autonomous execution |
+| v1.0.0 | Jan 2026 | ✅ Stable | Basic chat and file operations |
 
 ---
 
-## 📚 Documentation
+## Contributing
 
-- **Main Guide**: README.md (updated for v2.0)
-- **Architecture**: docs/ARCHITECTURE.md
-- **Development Phases**: docs/PHASE-3.*.md
-- **Testing Guides**: docs/PHASE-3.4.5-TESTING-QUICKSTART.md
-- **Bug Analysis**: docs/VALIDATION-LOOP-ROOT-CAUSE.md
-- **Release Notes**: docs/v2.0-RELEASE-STATUS.md
+### How to Help
 
----
+**Bug Reports**
+- Found an issue? Please report via GitHub Issues
+- Include: what happened, expected behavior, steps to reproduce, setup (model/OS)
 
-## 💡 How to Use This Roadmap
+**Feature Requests**
+- Have an idea? Open GitHub Discussion
+- Community votes on priorities
 
-### For Users
-- Current version: v2.0 with 8 intelligent commands
-- All 5 refactoring commands production-ready
-- Recommended for React/TypeScript projects
-- 255 comprehensive tests verify quality
+**Code Contributions**
+- Fork repository
+- Follow code style (see README.md Development section)
+- Submit PR with tests
+- All tests must pass
 
-### For Contributors
-- Review docs/PHASE-3.4-PLAN.md for architecture
-- Check docs/DEVELOPER_GUIDE_V1.2.0.md for setup
-- Run tests before submitting PRs
-- Follow TypeScript strict mode requirements
+### Development Setup
 
-### For Fork/Extension
-- Foundation is stable (Phase 1-2)
-- Build specialized domain support on top of Phase 3 foundation
-- Use architecture validation as base for custom rules
-- Test with both simple and complex projects
+```bash
+# Clone repository
+git clone https://github.com/odanree/llm-local-assistant.git
+cd llm-local-assistant
 
----
+# Install dependencies
+npm install
 
-## 🎓 Learning Path
+# Start development
+npm run watch        # Auto-rebuild on changes
 
-1. **Start**: Install from VS Code Marketplace
-2. **Simple**: Run `/context show structure` and `/rate-architecture`
-3. **Intermediate**: Try `/refactor <file>` and `/suggest-patterns`
-4. **Advanced**: Use `/design-system` for multi-file generation
-5. **Expert**: Integrate into your CI/CD pipeline
+# Run tests
+npm test             # All tests
+npm run test:watch   # Auto-run on changes
 
----
+# Debug
+# Press F5 in VS Code to launch debug extension
+```
 
-## 🏆 Key Achievements (v2.0+)
+### Code Quality Standards
 
-- ✅ 1,500+ lines of intelligent code
-- ✅ 273 comprehensive tests (100% pass rate)
-- ✅ 8 production-ready commands
-- ✅ 85-100% success rates across features
-- ✅ Zero production blockers
-- ✅ Live on VS Code Marketplace
-- ✅ GitHub Actions CI/CD
-- ✅ Smart UI/UX with keyboard shortcuts
-- ✅ Complete documentation
-- ✅ Professional git history
+- TypeScript strict mode (0 errors)
+- 100% test coverage for new features
+- ESLint compliant
+- Clear commit messages
+- Comprehensive documentation
 
 ---
 
-## 📞 Support
+## Philosophy & Values
 
-- **Issues**: GitHub Issues
-- **Questions**: GitHub Discussions
-- **Marketplace**: https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
-- **GitHub**: https://github.com/odanree/llm-local-assistant
+### Why This Extension Exists
+
+1. **Local & Private** - Process code locally, never send to cloud
+2. **Honest** - Clear about what it does well and what it doesn't
+3. **Focused** - Do one thing (analysis) and do it well
+4. **Safe** - No risky automation or broken promises
+5. **Open** - Free and open source
+
+### Design Principles
+
+**Principle 1: Analysis Over Generation**
+- Analysis (reading code) is reliable
+- Generation (writing code) is unreliable
+- Focus on what we're good at
+
+**Principle 2: User Control**
+- Always show plan before execution
+- User approves changes
+- Never automate risky operations
+
+**Principle 3: Honest Scope**
+- Clear about limitations
+- Recommend better tools when appropriate
+- Don't pretend to do things we can't
+
+**Principle 4: Privacy First**
+- 100% local processing
+- No external APIs
+- No data collection
+- Works offline
+
+**Principle 5: Keep It Simple**
+- Focus on core functionality
+- Don't try to do everything
+- Let other tools handle what they're better at
 
 ---
 
-**Last Updated**: Feb 6, 2026  
-**Current Status**: ✅ v2.0 RELEASED AND LIVE  
-**Next Phase**: v2.1 Production Monitoring
+## Getting Help
+
+### Documentation
+- **[README.md](README.md)** - Features and quick start
+- **[CHANGELOG.md](CHANGELOG.md)** - What's new in each version
+- **[LICENSE](LICENSE)** - MIT License
+
+### Support
+- **GitHub Issues** - Bug reports and feature requests
+- **GitHub Discussions** - Questions and community support
+- **VS Code Marketplace** - Community reviews and feedback
+
+---
+
+## Contact & Social
+
+- **GitHub:** https://github.com/odanree/llm-local-assistant
+- **Marketplace:** https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
+- **Twitter:** [@odanree](https://twitter.com/odanree) (if available)
+
+---
+
+**Last Updated:** February 8, 2026  
+**Status:** v2.0.3 Production Ready ✅  
+**Next Review:** v2.1 planning (after stability feedback)
