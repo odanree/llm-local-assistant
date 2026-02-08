@@ -93,121 +93,125 @@ export class Executor {
     this.config.llmClient.clearHistory();
 
     const startTime = Date.now();
+    let succeededSteps = 0;
 
     for (const step of plan.steps) {
-      // CRITICAL FIX: Strict Path Guard - Circuit Breaker for Invalid Paths
-      // This implements Danh's senior architecture: fail-fast before filesystem corruption
-      if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
-        // Use PathSanitizer for comprehensive validation
-        const pathValidation = PathSanitizer.validatePath(step.path, {
-          workspace: this.config.workspace.fsPath,
-          action: step.action,
+      try {
+        // ✅ ATOMIC STEP VALIDATION (Danh's Fix A)
+        // 1. Deterministic Path Guard: Validate step contract BEFORE execution
+        this.validateStepContract(step);
+
+        // ✅ LIBERAL PATH SANITIZER (Danh's Fix B)
+        // Auto-fix common Qwen 7b artifacts: trailing dots, spaces, backticks
+        if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
+          step.path = this.sanitizePath(step.path);
+        }
+
+        // ✅ 2. Actual Execution with retry logic
+        let retries = 0;
+        let result: StepResult | null = null;
+        let autoFixAttempted = false;
+        let retryCount = 0;
+        const maxRetries = this.config.maxRetries || 2;
+
+        while (retries <= maxRetries) {
+          // Check for pause/cancel before executing
+          while (this.paused && !this.cancelled) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+
+          if (this.cancelled) {
+            plan.status = 'failed';
+            return {
+              success: false,
+              completedSteps: succeededSteps,
+              results: plan.results,
+              error: 'Execution cancelled by user',
+              totalDuration: Date.now() - startTime,
+            };
+          }
+
+          result = await this.executeStep(plan, step.stepId, planWorkspaceUri);
+
+          if (result.success) {
+            // Success! Show retry info if retries happened
+            if (retryCount > 0) {
+              this.config.onMessage?.(`✅ Step ${step.stepId} succeeded (after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''})`, 'info');
+            }
+            succeededSteps++;
+            break;
+          }
+
+          // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
+          if (!autoFixAttempted && result.error) {
+            this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${this.MAX_VALIDATION_ITERATIONS})...`, 'info');
+            const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS, planWorkspaceUri);
+            if (fixedResult && fixedResult.success) {
+              result = fixedResult;
+              autoFixAttempted = true;
+              succeededSteps++;
+              this.config.onMessage?.(`✅ Auto-correction succeeded for step ${step.stepId}`, 'info');
+              break; // Auto-fix succeeded, move to next step
+            }
+            autoFixAttempted = true; // Mark that we tried, don't try again
+          }
+
+          retries++;
+          retryCount++;
+          if (retries <= maxRetries) {
+            const msg = `❌ Step ${step.stepId} failed. Retrying (${retries}/${maxRetries})...`;
+            this.config.onMessage?.(msg, 'error');
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        plan.results.set(step.stepId, result!);
+
+        if (!result!.success) {
+          plan.status = 'failed';
+          plan.currentStep = step.stepId;
+          const failureMsg = retryCount > 0 
+            ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
+            : `Step ${step.stepId} failed on first attempt`;
+          return {
+            success: false,
+            completedSteps: succeededSteps,
+            results: plan.results,
+            error: failureMsg + `: ${result!.error}`,
+            totalDuration: Date.now() - startTime,
+          };
+        }
+
+        plan.currentStep = step.stepId;
+        this.config.onProgress?.(
+          plan.currentStep,
+          plan.steps.length,
+          step.description
+        );
+      } catch (error) {
+        // ✅ ATOMIC CATCH BLOCK (Danh's Fix A)
+        // Terminal failure at this step: mark as failed and break execution
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[Executor] Terminal failure at step ${step.stepId}: ${errorMsg}`);
+        
+        plan.results?.set(step.stepId, {
+          success: false,
+          stepId: step.stepId,
+          output: '',
+          error: errorMsg,
+          duration: 0,
+          timestamp: Date.now(),
         });
 
-        if (!pathValidation.success) {
-          // Aggressive Feedback: Machine-readable validation report
-          const feedbackMessage = formatValidationReportForLLM(pathValidation);
-          const errorMessage = `❌ PATH VALIDATION FAILED (Step ${step.stepId}):\n${feedbackMessage}`;
-          
-          this.config.onMessage?.(errorMessage, 'error');
-          
-          plan.results?.set(step.stepId, {
-            success: false,
-            stepId: step.stepId,
-            output: '',
-            error: errorMessage,
-            duration: 0,
-          });
-          
-          // Store validation report for RetryContext (Danh's "Aggressive Feedback")
-          if (step.stepId && pathValidation.instruction) {
-            // This will be picked up by RetryContext in the next retry
-            console.log(`[Executor] Path validation failed for step ${step.stepId}. Instruction for LLM:\n${pathValidation.instruction}`);
-          }
-          
-          continue;
-        }
-      }
-
-      // Check for pause/cancel
-      while (this.paused && !this.cancelled) {
-        await new Promise(r => setTimeout(r, 100));
-      }
-
-      if (this.cancelled) {
-        plan.status = 'failed';
+        // Return immediately with the current count
         return {
           success: false,
-          completedSteps: plan.currentStep,
+          completedSteps: succeededSteps,
           results: plan.results,
-          error: 'Execution cancelled by user',
+          error: errorMsg,
           totalDuration: Date.now() - startTime,
         };
       }
-
-      // Execute step with retry logic and auto-correction (Priority 2.1)
-      let retries = 0;
-      let result: StepResult | null = null;
-      let autoFixAttempted = false;
-      let retryCount = 0; // Track how many retries actually happened
-      const maxRetries = this.config.maxRetries || 2;
-
-      while (retries <= maxRetries) {
-        result = await this.executeStep(plan, step.stepId, planWorkspaceUri);
-
-        if (result.success) {
-          // Success! Show retry info if retries happened
-          if (retryCount > 0) {
-            this.config.onMessage?.(`✅ Step ${step.stepId} succeeded (after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''})`, 'info');
-          }
-          break;
-        }
-
-        // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
-        if (!autoFixAttempted && result.error) {
-          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${this.MAX_VALIDATION_ITERATIONS})...`, 'info');
-          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS, planWorkspaceUri);
-          if (fixedResult && fixedResult.success) {
-            result = fixedResult;
-            autoFixAttempted = true;
-            this.config.onMessage?.(`✅ Auto-correction succeeded for step ${step.stepId}`, 'info');
-            break; // Auto-fix succeeded, move to next step
-          }
-          autoFixAttempted = true; // Mark that we tried, don't try again
-        }
-
-        retries++;
-        retryCount++;
-        if (retries <= maxRetries) {
-          const msg = `❌ Step ${step.stepId} failed. Retrying (${retries}/${maxRetries})...`;
-          this.config.onMessage?.(msg, 'error');
-          await new Promise(r => setTimeout(r, 1000));
-        }
-      }
-
-      plan.results.set(step.stepId, result!);
-
-      if (!result!.success) {
-        plan.status = 'failed';
-        plan.currentStep = step.stepId;
-        const failureMsg = retryCount > 0 
-          ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
-          : `Step ${step.stepId} failed on first attempt`;
-        return {
-          success: false,
-          completedSteps: plan.currentStep,
-          results: plan.results,
-          error: failureMsg + `: ${result!.error}`,
-          totalDuration: Date.now() - startTime,
-        };
-      }
-
-      plan.currentStep = step.stepId;
-      this.config.onProgress?.(
-        plan.currentStep,
-        plan.steps.length,
-        step.description
-      );
     }
 
     plan.status = 'completed';
@@ -226,17 +230,13 @@ export class Executor {
     
     return {
       success: true,
-      completedSteps: plan.steps.length,
+      completedSteps: succeededSteps,
       results: plan.results,
       totalDuration: Date.now() - startTime,
       handover,
     };
   }
 
-  /**
-   * Suggest fixes for common errors (Priority 1.4: Smart Error Fixes)
-   * Provides helpful hints based on error type and context
-   */
   /**
    * Validate generated TypeScript/JavaScript code
    * Checks for:
@@ -870,8 +870,10 @@ export class Executor {
 
     // VALIDATOR GATE 2: Contract Enforcement (Danh's Fix B)
     // Catch "Manual" hallucinations and missing path errors BEFORE execution
-    const contractError = this.validateStepContract(step);
-    if (contractError) {
+    try {
+      this.validateStepContract(step);
+    } catch (err) {
+      const contractError = err instanceof Error ? err.message : String(err);
       console.error(`[Executor] CONTRACT_VIOLATION for Step ${stepId}:`, contractError);
       return {
         stepId,
@@ -974,42 +976,83 @@ export class Executor {
    * 
    * Returns error message if contract violated, undefined if valid
    */
-  private validateStepContract(step: PlanStep): string | undefined {
+  private validateStepContract(step: PlanStep): void {
     // Check for "manual" hallucination in path
     if (step.path && typeof step.path === 'string') {
       if (step.path.toLowerCase().includes('manual')) {
-        return `CONTRACT_VIOLATION: Step "${step.description}" has path="${step.path}". ` +
-               `Manual verification is not a valid executor action. ` +
-               `Use action='manual' instead, or describe verification in summary.`;
+        throw new Error(
+          `CONTRACT_VIOLATION: Step "${step.description}" has path="${step.path}". ` +
+          `Manual verification is not a valid executor action. ` +
+          `Use action='manual' instead, or describe verification in summary.`
+        );
       }
     }
 
     // Check for "manual" hallucination in command
     if ((step as any).command && typeof (step as any).command === 'string') {
       if ((step as any).command.toLowerCase().includes('manual')) {
-        return `CONTRACT_VIOLATION: Step "${step.description}" has command="${(step as any).command}". ` +
-               `Manual verification is not a valid executor action.`;
+        throw new Error(
+          `CONTRACT_VIOLATION: Step "${step.description}" has command="${(step as any).command}". ` +
+          `Manual verification is not a valid executor action.`
+        );
       }
     }
 
     // Check for missing path on file-based actions
     if (['read', 'write', 'delete'].includes(step.action)) {
       if (!step.path || step.path.trim().length === 0) {
-        return `CONTRACT_VIOLATION: Action '${step.action}' requires a valid file path, but none was provided. ` +
-               `Step: "${step.description}"`;
+        throw new Error(
+          `CONTRACT_VIOLATION: Action '${step.action}' requires a valid file path, but none was provided. ` +
+          `Step: "${step.description}"`
+        );
       }
     }
 
     // Check for missing command on run action
     if (step.action === 'run') {
       if (!(step as any).command || ((step as any).command as string).trim().length === 0) {
-        return `CONTRACT_VIOLATION: Action 'run' requires a command, but none was provided. ` +
-               `Step: "${step.description}"`;
+        throw new Error(
+          `CONTRACT_VIOLATION: Action 'run' requires a command, but none was provided. ` +
+          `Step: "${step.description}"`
+        );
       }
     }
 
-    // Contract validated
-    return undefined;
+    // Contract validated - no error thrown
+  }
+
+  /**
+   * ✅ LIBERAL PATH SANITIZER (Danh's Fix B)
+   * Strips common Qwen 7b artifacts from LLM-generated paths:
+   * - Trailing ellipses (..., ..)
+   * - Accidental quotes and backticks
+   * - Trailing commas and semicolons
+   * - Placeholder paths (/path/to/ → src/)
+   */
+  private sanitizePath(path: string): string {
+    if (!path || typeof path !== 'string') return path;
+
+    // Remove trailing ellipses
+    let cleaned = path.replace(/\.{2,}$/, '');
+    
+    // Remove accidental quotes and backticks
+    cleaned = cleaned.replace(/^[`'"]|[`'"]$/g, '');
+    
+    // Remove trailing commas and semicolons
+    cleaned = cleaned.replace(/[,;]$/, '');
+    
+    // Normalize placeholder paths
+    // Convert /path/to/filename.tsx → src/filename.tsx
+    cleaned = cleaned.replace(/^\/path\/to\//, 'src/');
+    
+    // Trim whitespace
+    cleaned = cleaned.trim();
+
+    if (cleaned !== path) {
+      console.log(`[Executor] Path sanitized: "${path}" → "${cleaned}"`);
+    }
+
+    return cleaned;
   }
 
   /**
