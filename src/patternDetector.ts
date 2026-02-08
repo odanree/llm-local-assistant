@@ -65,7 +65,15 @@ Be strict: if the file doesn't clearly implement a pattern, return "None".
 Don't force a pattern just because of coincidental keywords.`;
 
     try {
-      const response = await this.llmClient.sendMessage(prompt);
+      // Wrap with 5-second timeout to prevent hanging
+      const timeoutPromise = new Promise<any>((_, reject) => 
+        setTimeout(() => reject(new Error('Pattern detection timeout after 5s')), 5000)
+      );
+      
+      const response = await Promise.race([
+        this.llmClient.sendMessage(prompt),
+        timeoutPromise
+      ]);
       
       if (!response.success || !response.message) {
         return this.fallbackKeywordDetection(code);
