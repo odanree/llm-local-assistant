@@ -63,6 +63,15 @@ export class Refiner {
     this.config.onProgress?.('Building Project Context', 'Scanning dependencies and imports...');
     const projectContext = ContextBuilder.buildContext(this.config.projectRoot);
 
+    // **CRITICAL FIX (Issue #3): Force generation mode for minimal projects IMMEDIATELY**
+    // Don't even try DIFF-MODE if the project lacks structure
+    // This prevents wasted retries and context pollution
+    if (!projectContext.hasPackageJson) {
+      console.log('[Refiner] No package.json detected. FORCING SCAFFOLD-MODE immediately.');
+      this.config.onProgress?.('Mode Selection', 'Minimal project detected. Using scaffold mode...');
+      projectContext.generationMode = 'scaffold-mode';
+    }
+
     // **Main retry loop**
     while (attempt <= maxRetries) {
       attempt++;
