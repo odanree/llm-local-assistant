@@ -344,15 +344,49 @@ You are FORBIDDEN from:
 ${isSacaffoldMode
   ? `## SCAFFOLD-MODE: Generate Complete Files
 
-Your output must be a complete, compilable file with all imports.
-Format:
+Your output for a WRITE step must ONLY be compilable, executable code.
+
+MANDATORY OUTPUT STRUCTURE:
+1. Line 1+: import statements (all required imports)
+2. Middle: component/function/logic implementation
+3. Last line: export statement (export default or named export)
+
+FORBIDDEN - Do NOT do any of these:
+- ❌ Do not include markdown code fences (\`\`\`tsx, \`\`\`, etc)
+- ❌ Do not include conversational text or prose
+- ❌ Do not include explanations ("Here's the component", "This does...")
+- ❌ Do not include comments about the code (unless useful documentation)
+- ❌ Do not include incomplete or pseudo-code
+- ❌ Do not say "I created", "You can", or other first-person language
+
+VALID OUTPUT EXAMPLE:
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+
+export default function ProductPage() {
+  const [products, setProducts] = useState([]);
+  return (
+    <div>
+      {products.map(p => (
+        <Link key={p.id} to={p.url}>{p.name}</Link>
+      ))}
+    </div>
+  );
+}
+
+INVALID OUTPUT EXAMPLE (DO NOT DO THIS):
+Here's a ProductPage component:
 \`\`\`tsx
-[imports]
-[full component/logic]
+import React from 'react';
+export default function ProductPage() {
+  // ... implementation
+}
 \`\`\`
 
+CRITICAL: If output starts with prose or code fences, it WILL BE REJECTED.
+
 The user will place this file in the correct location.
-Focus on generating COMPLETE, WORKING code, not diffs.`
+Focus on generating COMPLETE, WORKING code only.`
   : `## DIFF-MODE: Precise Edits for Existing Structure
 
 Your output must STRICTLY follow ONE of these formats:
