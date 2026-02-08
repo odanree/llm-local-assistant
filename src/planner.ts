@@ -179,6 +179,21 @@ PATH_RULES:
     
     return `You are a step planner. Output a numbered plan.
 
+### CRITICAL EXECUTION RULES (MUST FOLLOW):
+
+1. **CREATION = WRITE**: If the user says "create", "add", "generate", "build", or "make", you MUST use the WRITE action.
+   - WRONG: Step 1: READ, Path: src/Button.tsx, Description: "Create a button component"
+   - RIGHT: Step 1: WRITE, Path: src/components/Button.tsx, Description: "Create a button component"
+
+2. **NO MANUAL STEPS**: You are a fully autonomous executor. Never output "Manual verification" or "Check browser" as a step command.
+   - WRONG: Step 4: read, Path: "manual verification", Command: "Test button in browser"
+   - RIGHT: Add to plan summary: "Manual verification: Test button in browser after execution"
+
+3. **READ IS FOR EXISTING ONLY**: Only use READ if you are refactoring a file that already exists in the provided context.
+   - READ = File must exist before this step
+   - WRITE = File is being created or modified
+   - If unsure whether file exists, default to WRITE (executor will handle it)
+
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
@@ -196,7 +211,7 @@ MANUAL VERIFICATION (IMPORTANT):
 RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
-${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use "manual" for verification'}
+${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
 ${contextSection}
 USER REQUEST: ${userRequest}
 
