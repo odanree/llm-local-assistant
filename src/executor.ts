@@ -95,8 +95,25 @@ export class Executor {
     const startTime = Date.now();
     let succeededSteps = 0;
 
+    // ✅ SURGICAL REFACTOR: Greenfield Guard (State-Aware Contract Enforcement)
+    // Check if workspace is greenfield (empty) and enforce READ constraints
+    const workspaceExists = await this.checkWorkspaceExists(planWorkspaceUri);
+    const hasInitialization = plan.steps.some(s => s.action === 'write');
+    
+    if (!workspaceExists && !hasInitialization) {
+      // Greenfield workspace with no initialization - inform user
+      this.config.onMessage?.(
+        '⚠️ Greenfield Workspace: Plan starts with READ operations on empty workspace. Consider WRITE operations first.',
+        'info'
+      );
+    }
+
     for (const step of plan.steps) {
       try {
+        // ✅ SURGICAL REFACTOR: Pre-Flight Contract Check (State-Aware)
+        // Run atomic contract validation BEFORE any normalization/sanitization
+        this.preFlightCheck(step, workspaceExists);
+
         // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
         // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
         if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
@@ -146,6 +163,27 @@ export class Executor {
             }
             succeededSteps++;
             break;
+          }
+
+          // ✅ SURGICAL REFACTOR: Smart Retry Strategy Switching
+          // Detect READ-ENOENT and attempt intelligent recovery
+          if (result.error && step.action === 'read' && result.error.includes('ENOENT')) {
+            const strategySwitch = this.attemptStrategySwitch(step, result.error);
+            if (strategySwitch) {
+              this.config.onMessage?.(
+                `⚠️ Step ${step.stepId}: File not found. ${strategySwitch.message}`,
+                'info'
+              );
+              // Update step with suggested action
+              step.action = strategySwitch.suggestedAction as any;
+              if (strategySwitch.suggestedPath) {
+                step.path = strategySwitch.suggestedPath;
+              }
+              // Retry with new strategy
+              retryCount++;
+              await new Promise(r => setTimeout(r, 500));
+              continue; // Retry this step with new action
+            }
           }
 
           // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
@@ -970,6 +1008,106 @@ export class Executor {
         duration: Date.now() - startTime,
       };
     }
+  }
+
+  /**
+   * ✅ SURGICAL REFACTOR: Pre-Flight Contract Check
+   * 
+   * Runs BEFORE any normalization or sanitization.
+   * Enforces state-aware constraints based on workspace conditions.
+   * 
+   * Purpose: Catch unrecoverable contract violations early
+   * - READ operations on greenfield (empty) workspaces
+   * - Paths with critical formatting issues (ellipses)
+   * - Action mismatches with workspace state
+   */
+  private preFlightCheck(step: PlanStep, workspaceExists: boolean): void {
+    // ✅ GREENFIELD GUARD: No READ on empty workspace without prior WRITE
+    if (!workspaceExists && step.action === 'read') {
+      throw new Error(
+        `GREENFIELD_VIOLATION: Cannot READ from "${step.path}" in empty workspace. ` +
+        `First step must WRITE or INIT files. Are you missing a WRITE step?`
+      );
+    }
+
+    // ✅ PATH VIOLATION: Paths with ellipses are malformed
+    if (step.path && step.path.includes('...')) {
+      throw new Error(
+        `PATH_VIOLATION: Step path contains ellipses "...": "${step.path}". ` +
+        `Provide complete filename. Remove trailing prose.`
+      );
+    }
+
+    // ✅ ACTION MISMATCH: If path looks like a description, reject READ
+    if (step.action === 'read' && step.path && step.path.length > 80) {
+      throw new Error(
+        `ACTION_MISMATCH: READ action path looks like a description (too long): "${step.path.substring(0, 60)}...". ` +
+        `Provide a valid file path, not a description.`
+      );
+    }
+  }
+
+  /**
+   * ✅ SURGICAL REFACTOR: Check if workspace exists
+   * 
+   * Determines if workspace has any files (greenfield check)
+   */
+  private async checkWorkspaceExists(workspaceUri: vscode.Uri): Promise<boolean> {
+    try {
+      const files = await vscode.workspace.fs.readDirectory(workspaceUri);
+      // Workspace exists if it has ANY files
+      return files.length > 0;
+    } catch (error) {
+      // Directory doesn't exist or is empty
+      return false;
+    }
+  }
+
+  /**
+   * ✅ SURGICAL REFACTOR: Intelligent Strategy Switching
+   * 
+   * When READ fails with ENOENT (file not found), suggests alternative actions:
+   * - If file doesn't exist → WRITE (create it)
+   * - If path looks like template → init with template
+   * - Otherwise → null (can't fix)
+   * 
+   * Returns correction signal for Executor to use in retry
+   */
+  private attemptStrategySwitch(
+    step: PlanStep,
+    error: string
+  ): { message: string; suggestedAction: string; suggestedPath?: string } | null {
+    // Only handle file not found errors
+    if (!error.includes('ENOENT') && !error.includes('not found')) {
+      return null;
+    }
+
+    // Heuristic: If trying to read a config file that doesn't exist, suggest init
+    const configPatterns = ['tsconfig', 'package.json', '.eslintrc', 'jest.config', 'babel.config'];
+    const isConfigFile = configPatterns.some(pattern => step.path?.includes(pattern));
+
+    if (isConfigFile) {
+      return {
+        message: `Config file "${step.path}" doesn't exist. Would you like to WRITE it?`,
+        suggestedAction: 'write',
+        suggestedPath: step.path,
+      };
+    }
+
+    // Heuristic: If trying to read a component/source file, suggest write
+    const sourcePatterns = ['.tsx', '.ts', '.jsx', '.js', '.vue', '.svelte'];
+    const isSourceFile = sourcePatterns.some(ext => step.path?.endsWith(ext));
+
+    if (isSourceFile) {
+      return {
+        message: `Source file "${step.path}" doesn't exist. Creating it...`,
+        suggestedAction: 'write',
+        suggestedPath: step.path,
+      };
+    }
+
+    // Can't determine recovery strategy
+    return null;
   }
 
   /**
