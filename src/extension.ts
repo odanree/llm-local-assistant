@@ -1216,7 +1216,16 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 }
 
                 // If pattern detected and confidence high, offer to refactor to apply pattern
-                if (shouldShowPattern && patternResult.confidence > 0.7) {
+                // BUT: Only show buttons if not already showing them (prevent infinite loop)
+                const alreadyAskedAboutThisFile = (chatPanel as any)._refactorAskedAbout?.includes(filepath);
+                
+                if (shouldShowPattern && patternResult.confidence > 0.7 && !alreadyAskedAboutThisFile) {
+                  // Mark that we asked about this file
+                  if (!(chatPanel as any)._refactorAskedAbout) {
+                    (chatPanel as any)._refactorAskedAbout = [];
+                  }
+                  (chatPanel as any)._refactorAskedAbout.push(filepath);
+                  
                   // Store refactoring context
                   (chatPanel as any)._currentRefactorContext = {
                     filepath,
@@ -1237,6 +1246,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       `❌ Skip`,
                     ],
                   });
+                  return;  // Stop here, don't show analysis
                 }
               } catch (err) {
                 postChatMessage({
