@@ -207,11 +207,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
           `- /check-model — Show configured model and available models on server\n\n` +
-          `⚠️ **Re-enabled in v3.0 (Phase 3 - Differential Prompting):**\n` +
-          `- /plan — Now uses Refiner differential prompting (safer, more reliable)\n` +
-          `- /approve — Acknowledge and approve generated plans\n\n` +
-          `⏳ **Coming Soon (Phase 4):**\n` +
-          `- /design-system — Full architecture generation (pending implementation)`,
+          `⚠️ **Re-enabled in v3.0 (Phase 3-4 - Differential Prompting):**\n` +
+          `- /plan — Action plan generation with step-by-step guidance\n` +
+          `- /design-system — Full system architecture design\n` +
+          `- /approve — Acknowledge and approve generated content`,
         type: 'info',
         success: true,
       });
@@ -1245,32 +1244,86 @@ ${patternResult.reasoning}
             
             // Check for /design-system command
             const designMatch = text.match(/^\/design-system\s+(.+)$/);
-            // DISABLED for v2.0.3: Code generation has infinite loop bugs
-            // Use better tools: Cursor, Windsurf, or manual implementation
+            
+            // PHASE 4: /design-system command — Re-enabled with Refiner differential prompting
             if (designMatch) {
+              const featureRequest = designMatch[1];
+              const wsFolder = vscode.workspace.workspaceFolders?.[0];
+              if (!wsFolder) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: 'No workspace folder open.',
+                  success: false,
+                });
+                return;
+              }
+
               postChatMessage({
                 command: 'addMessage',
-                error: `/design-system is disabled in v2.0.3 due to code generation limitations.
-
-LLM-based code generation has known issues:
-- ❌ Infinite loop in validation (generates same broken code repeatedly)
-- ❌ Can't consistently follow constraints (detects error but regenerates identically)
-- ❌ Incomplete implementations (skeleton code, not working features)
-- ✅ Better tools exist for this task
-
-**Recommended alternatives:**
-1. **Cursor / Windsurf** - Better multi-file context, understands constraints
-2. **Manual implementation** - Now that you understand the pattern needed
-3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
-
-**This extension excels at:**
-- /refactor — Pattern detection & analysis
-- /suggest-patterns — Find architectural patterns
-- /rate-architecture — Score code quality
-- Architecture analysis & recommendations
-
-See /help for available commands.`,
+                text: `🏗️ Generating system design for: "${featureRequest}"\n\n(Using Refiner differential prompting — Phase 4)`,
+                type: 'info',
               });
+
+              try {
+                // Create Refiner instance with LLM callbacks
+                const refiner = new Refiner({
+                  projectRoot: wsFolder.uri.fsPath,
+                  maxRetries: 3,
+                  llmCall: async (systemPrompt: string, userMessage: string) => {
+                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                // Generate design using Refiner
+                const designPrompt = `Design a complete system architecture for:
+
+${featureRequest}
+
+Provide:
+1. **Components**: Main components and their responsibilities
+2. **Data Flow**: How data flows between components
+3. **File Structure**: Recommended file organization
+4. **Dependencies**: Required packages and versions
+5. **API Design**: If applicable, REST endpoint structure
+6. **State Management**: How to manage application state
+7. **Error Handling**: Error handling strategy
+8. **Testing**: Testing approach and key test cases
+
+Format as a structured design document with code examples.`;
+
+                const result = await refiner.generateCode(designPrompt, undefined, undefined);
+
+                if (result.success && result.code) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ System design generated successfully!\n\n${result.code}`,
+                    success: true,
+                  });
+                } else {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Failed to generate design: ${result.error || result.explanation}`,
+                    success: false,
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error generating design: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
               return;
             }
 
