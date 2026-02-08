@@ -165,7 +165,7 @@ export class SimpleFixer {
 
     // Pattern: const/let/var declarations that are never used
     const unusedVarPattern = /^(const|let|var)\s+(\w+)\s*=/gm;
-    const matches = [...code.matchAll(unusedVarPattern)];
+    const matches = Array.from(code.matchAll(unusedVarPattern));
 
     for (const match of matches) {
       const varName = match[2];
@@ -283,12 +283,13 @@ export class SimpleFixer {
 
     let match;
     let lineNum = 0;
-    let charIndex = 0;
 
-    while ((match = functionPattern.exec(code)) !== null) {
+    // Use Array.from to avoid downlevelIteration issues
+    const matches = Array.from(code.matchAll(functionPattern));
+
+    for (const m of matches) {
+      match = m;
       const funcName = match[2];
-      const lineStart = code.lastIndexOf('\n', match.index) + 1;
-      const lineEnd = code.indexOf('\n', match.index);
 
       // Count lines up to this point
       lineNum = code.substring(0, match.index).split('\n').length - 1;
