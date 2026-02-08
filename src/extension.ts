@@ -1149,15 +1149,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }).join('\n')
                   }\n\n`;
                 }
+
+                // Check if file is already a service (prevent circular extraction suggestions)
+                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
                 
-                if (semanticAnalysis.couplingProblems.length > 0) {
+                // Only show coupling problems if file is NOT a service
+                // (API-in-component is expected in service files)
+                if (semanticAnalysis.couplingProblems.length > 0 && !isAlreadyService) {
                   report += `**Coupling Problems:**\n${
                     semanticAnalysis.couplingProblems.map(c => `- ${c.type}: ${c.suggestion}`).join('\n')
                   }\n\n`;
                 }
-
-                // Check if file is already a service (prevent circular extraction suggestions)
-                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
                 
                 if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   report += `**Suggested Extractions:**\n${
