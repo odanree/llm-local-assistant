@@ -2104,14 +2104,20 @@ ${fileContent}
 
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      text: `✅ **Service Extraction Successful**\n\n` +
-                        `**New Service File:** src/services/${serviceName}.ts\n` +
-                        `**Updated Hook:** ${hookFile}\n\n` +
-                        `The API logic has been extracted to a pure service layer (no React hooks).\n\n` +
-                        `**Next Steps:**\n` +
-                        `1. Update your hook to import from the new service\n` +
-                        `2. Run tests to verify functionality\n` +
-                        `3. Remove duplicate logic from the original hook`,
+                      text: `✅ **Service Extraction Complete**\n\n` +
+                        `**New Service File Created:** src/services/${serviceName}.ts\n\n` +
+                        `The service file has been generated with well-designed methods and proper documentation.\n\n` +
+                        `**⚠️ Manual Integration Required:**\n` +
+                        `This tool creates the service file, but you must manually:\n\n` +
+                        `1. **Import the service** in ${hookFile}:\n` +
+                        `   \`import { ${serviceName} } from '../services/${serviceName}';\`\n\n` +
+                        `2. **Replace API calls** with service methods:\n` +
+                        `   Before: \`const data = await fetch(...).then(...)\`\n` +
+                        `   After: \`const data = await ${serviceName}.methodName()\`\n\n` +
+                        `3. **Remove duplicate logic** from the original hook\n\n` +
+                        `4. **Update type imports** if the service uses custom types\n\n` +
+                        `5. **Test thoroughly** - verify all functionality still works\n\n` +
+                        `**Why manual?** Service extraction requires understanding component context and business logic that automated tools can't reliably handle.`,
                       success: true,
                     });
                   } catch (err) {
