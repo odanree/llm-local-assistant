@@ -30,6 +30,7 @@ let chatHistory: Array<{ role: string; content: string; type?: string }> = []; /
 let helpShown = false; // Track if help message was shown on first open
 let messageHandlerAttached = false; // Track if message handler is already attached
 let pendingQuestionResolve: ((answer: string) => void) | null = null; // For handling clarification questions
+let wsFolder: vscode.Uri | undefined; // Current workspace folder context
 
 /**
  * Find the workspace folder that contains a given file path
@@ -247,6 +248,17 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               });
 
               try {
+                // Update workspace context for multi-workspace support
+                const currentWorkspace = getActiveWorkspace();
+                wsFolder = currentWorkspace;
+                planner = new Planner({
+                  llmClient,
+                  maxSteps: 10,
+                  timeout: 120000,
+                  workspace: wsFolder,
+                  codebaseIndex,
+                });
+                
                 // First: Generate thinking to show reasoning
                 const thinking = await planner.generateThinking(
                   userRequest,
@@ -364,6 +376,42 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 console.log('[Extension] About to execute plan with', currentPlan.steps.length, 'steps');
                 currentPlan.steps.forEach((step, idx) => {
                   console.log(`[Extension] Step ${idx + 1}: action=${step.action}, description=${step.description}`);
+                });
+
+                // Update workspace context for multi-workspace support
+                const currentWorkspace = getActiveWorkspace();
+                wsFolder = currentWorkspace;
+                executor = new Executor({
+                  extension: context,
+                  llmClient,
+                  gitClient: wsFolder ? new GitClient(wsFolder) : undefined,
+                  workspace: wsFolder || vscode.Uri.file('/'),
+                  codebaseIndex,
+                  maxRetries: 2,
+                  timeout: 30000,
+                  onProgress: (step: number, total: number, description: string) => {
+                    console.log(`[Executor] Step ${step}/${total}: ${description}`);
+                  },
+                  onMessage: (message: string, type: 'info' | 'error') => {
+                    console.log(`[Executor ${type.toUpperCase()}]`, message);
+                    if (chatPanel) {
+                      chatPanel.webview.postMessage({
+                        command: 'addMessage',
+                        text: message,
+                        success: type === 'info',
+                      });
+                    }
+                  },
+                  onStepOutput: (stepId: number, output: string, isError: boolean) => {
+                    console.log(`[Executor Step ${stepId}]`, output);
+                    if (chatPanel) {
+                      chatPanel.webview.postMessage({
+                        command: 'addMessage',
+                        text: isError ? `❌ ${output}` : output,
+                        success: !isError,
+                      });
+                    }
+                  },
                 });
 
                 const result = await executor.executePlan(currentPlan);
@@ -1258,6 +1306,17 @@ ${patternResult.reasoning}
                   command: 'status',
                   text: `🎨 Designing system for ${feature}...`,
                   type: 'info',
+                });
+
+                // Update workspace context for multi-workspace support
+                const currentWorkspace = getActiveWorkspace();
+                wsFolder = currentWorkspace;
+                planner = new Planner({
+                  llmClient,
+                  maxSteps: 10,
+                  timeout: 120000,
+                  workspace: wsFolder,
+                  codebaseIndex,
                 });
 
                 // Get patterns
@@ -2314,6 +2373,24 @@ async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): P
 }
 
 /**
+ * Get the active workspace folder, preferring the workspace of the active editor
+ * Falls back to the first workspace if no editor is active
+ */
+function getActiveWorkspace(): vscode.Uri | undefined {
+  // First: Try to get workspace from active editor
+  const activeEditor = vscode.window.activeTextEditor;
+  if (activeEditor) {
+    const editorUri = activeEditor.document.uri;
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(editorUri);
+    if (workspaceFolder) {
+      return workspaceFolder.uri;
+    }
+  }
+  // Fallback: Return first workspace
+  return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+
+/**
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext) {
@@ -2331,9 +2408,10 @@ export async function activate(context: vscode.ExtensionContext) {
   llmClient = new LLMClient(config);
 
   // Get workspace folder for codebase awareness
-  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+  wsFolder = getActiveWorkspace();
 
   // Initialize Planner and Executor
+  wsFolder = getActiveWorkspace();
   planner = new Planner({
     llmClient,
     maxSteps: 10,
