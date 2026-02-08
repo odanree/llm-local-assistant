@@ -168,11 +168,6 @@ export function getWebviewContent(): string {
             btn.onclick = () => {
               input.value = option.replace('Execute: ', '');
               input.focus();
-              // Disable all buttons
-              Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
-                b.disabled = true;
-                b.style.opacity = '0.5';
-              });
             };
             buttonContainer.appendChild(btn);
           });
