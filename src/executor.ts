@@ -91,11 +91,33 @@ export class Executor {
     const startTime = Date.now();
 
     for (const step of plan.steps) {
-      // CRITICAL FIX #1: Validate strict serialization - one file per step
+      // CRITICAL FIX #1: Path Guard - Validate strict serialization (One Step, One File)
+      // This implements Danh's "One Step, One Effect" principle
       if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
+        // Check for comma-separated paths (multi-file hallucination)
         if (step.path.includes(',')) {
-          const error = `SCHEMA VIOLATION: Step ${step.stepId} has multiple paths in one step: "${step.path}". ` +
-            `Each step must target EXACTLY ONE file. Create separate steps for each file.`;
+          const error = `PATH GUARD VIOLATION: Step ${step.stepId} contains comma-separated paths: "${step.path}". ` +
+            `This violates the "One Step, One File" contract. Each step must target EXACTLY ONE file. ` +
+            `Create separate steps for each file.`;
+          this.config.onMessage?.(error, 'error');
+          plan.results?.set(step.stepId, {
+            success: false,
+            stepId: step.stepId,
+            output: '',
+            error,
+            duration: 0,
+          });
+          continue;
+        }
+        
+        // Check for suspicious space-separated paths (another common hallucination pattern)
+        // But allow spaces in file names (e.g., "My File.tsx")
+        // Only reject if it looks like multiple paths separated by spaces
+        const pathTrimmed = step.path.trim();
+        if (pathTrimmed.match(/\s+src\//) || pathTrimmed.match(/\.tsx\s+\w/) || 
+            pathTrimmed.split(/\s+/).filter(p => p.endsWith('.tsx') || p.endsWith('.ts')).length > 1) {
+          const error = `PATH GUARD VIOLATION: Step ${step.stepId} contains multiple file paths in one step: "${step.path}". ` +
+            `This violates the "One Step, One File" contract. Create separate steps for each file.`;
           this.config.onMessage?.(error, 'error');
           plan.results?.set(step.stepId, {
             success: false,
