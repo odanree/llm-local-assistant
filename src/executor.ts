@@ -97,6 +97,12 @@ export class Executor {
 
     for (const step of plan.steps) {
       try {
+        // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
+        // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
+        if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
+          step.path = PathSanitizer.normalizeString(step.path);
+        }
+
         // ✅ ATOMIC STEP VALIDATION (Danh's Fix A)
         // 1. Deterministic Path Guard: Validate step contract BEFORE execution
         this.validateStepContract(step);

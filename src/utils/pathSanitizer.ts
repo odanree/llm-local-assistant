@@ -133,6 +133,50 @@ export class PathSanitizer {
   }
 
   /**
+   * ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
+   * 
+   * Strips ALL markdown/control character artifacts with hardened regex.
+   * This is called BEFORE validation to ensure LLM output is clean.
+   * 
+   * Handles:
+   * - Markdown backticks: `path.tsx` → path.tsx
+   * - Trailing prose: path.tsx... → path.tsx
+   * - Control characters: \u0000-\u001F → removed
+   * 
+   * Pattern: Tolerant Receiver — Accept any input, normalize aggressively
+   */
+  static normalizeString(inputPath: string): string {
+    if (!inputPath || typeof inputPath !== 'string') {
+      return '';
+    }
+
+    let clean = inputPath.trim();
+
+    // 1. Strip Markdown backticks (e.g., `path.tsx`)
+    clean = clean.replace(/[`]/g, '');
+
+    // 2. Strip LLM "trailing prose" (e.g., path.tsx...)
+    clean = clean.replace(/\.{2,}$/, '');
+
+    // 3. Remove accidental whitespace or control characters (UTF-8 artifacts)
+    clean = clean.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
+    // 4. Strip markdown quotes and emphasis markers
+    clean = clean.replace(/[*_~]/g, '');
+
+    // 5. Remove stray punctuation at end
+    clean = clean.replace(/[,;!?:]+$/, '');
+
+    // 6. Remove accidental quotes
+    clean = clean.replace(/["']/g, '');
+
+    // 7. Clean up whitespace (normalize multiple spaces to single)
+    clean = clean.replace(/\s+/g, ' ').trim();
+
+    return clean;
+  }
+
+  /**
    * Sanitize a path by removing/fixing common issues
    * 
    * Danh's Postel's Law Implementation:
@@ -146,17 +190,12 @@ export class PathSanitizer {
       throw new Error('Cannot sanitize empty path');
     }
 
-    let clean = rawPath.trim();
+    // ✅ STEP 1: Normalize string first (strip markdown artifacts)
+    let clean = this.normalizeString(rawPath);
 
-    // 1. Strip common LLM "trailing prose" (Qwen 7b quirk)
-    // Remove ellipses at end (models love adding "...")
-    clean = clean.replace(/\.{2,}$/, '');
-    
-    // Remove accidental quotes or backticks (markdown escaping artifacts)
-    clean = clean.replace(/[`"']/g, '');
-    
-    // Remove trailing commas or semicolons (artifact from lists)
-    clean = clean.replace(/[,;]$/, '');
+    if (clean.length === 0) {
+      throw new Error(`Cannot sanitize path: input was pure description "${rawPath}"`);
+    }
 
     // 2. Remove common description patterns
     clean = clean.replace(/contains.*JSX.*code/i, '');
