@@ -13,7 +13,7 @@
  * 6. Retry Loop — if validation fails, retry with history (RetryContext)
  */
 
-import { SimpleFixer, RetryContext, ContextBuilder, DiffGenerator } from './utils';
+import { SimpleFixer, RetryContext, ContextBuilder, DiffGenerator, GenerationModeDetector } from './utils';
 
 export interface RefinerConfig {
   projectRoot: string;
@@ -126,6 +126,64 @@ export class Refiner {
             appliedFixes,
             error: diffResult.explanation,
           };
+        }
+      }
+
+      // **Phase 4.5: Runtime mode detection (NEW - Danh's smart fallback)**
+      this.config.onProgress?.('Detecting Generation Mode', 'Checking file existence...');
+      const hasSrc = GenerationModeDetector.hasSourceDirectory(this.config.projectRoot);
+      const modeDetection = GenerationModeDetector.detectMode(this.config.projectRoot, diffResult.diffs, hasSrc);
+      console.log('[Refiner] Generation mode:', modeDetection.mode, '—', modeDetection.reason);
+
+      // If we should retry with different mode, do that
+      if (modeDetection.shouldRetry && attempt < maxRetries) {
+        const currentMode = projectContext.generationMode;
+        const newMode = modeDetection.mode;
+
+        if (currentMode !== newMode) {
+          console.log(`[Refiner] Mode switch: ${currentMode} → ${newMode}`);
+          this.config.onProgress?.('Mode Switch', `Switching from ${currentMode} to ${newMode}...`);
+
+          const modePrompt = GenerationModeDetector.generateModePrompt(newMode);
+          const updatedRequest = userRequest + modePrompt + this.context.generateAvoidancePrompt();
+
+          this.context.recordAttempt(
+            llmResponse,
+            `Switched generation mode: ${modeDetection.reason}`,
+            'mode-switch'
+          );
+
+          // Re-prompt LLM with new mode instructions
+          try {
+            llmResponse = await this.config.llmCall(this.buildSystemPrompt(projectContext, existingCode), updatedRequest);
+            this.context.recordAttempt(llmResponse, undefined, 'LLM generation');
+
+            // Re-apply SimpleFixer
+            const fixResult2 = SimpleFixer.fix(llmResponse);
+            if (fixResult2.fixed) {
+              appliedFixes.push(...fixResult2.fixes.map((f) => f.description));
+              llmResponse = fixResult2.code;
+            }
+
+            // Re-parse diffs
+            const diffResult2 = DiffGenerator.parse(llmResponse);
+            if (diffResult2.isValid) {
+              // Success with new mode, continue to apply
+              return {
+                success: true,
+                code: llmResponse,
+                diffs: diffResult2.diffs,
+                explanation: `Generated in ${newMode}. ${modeDetection.reason}`,
+                attempts: attempt,
+                appliedFixes,
+              };
+            }
+          } catch (err) {
+            console.warn('[Refiner] Mode switch LLM call failed:', err);
+            // Fall through to next retry
+          }
+
+          continue; // Retry loop
         }
       }
 
