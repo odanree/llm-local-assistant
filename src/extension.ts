@@ -1216,37 +1216,23 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 }
 
                 // If pattern detected and confidence high, offer to refactor to apply pattern
-                // BUT: Only show buttons if not already showing them (prevent infinite loop)
-                const alreadyAskedAboutThisFile = (chatPanel as any)._refactorAskedAbout?.includes(filepath);
+                // BUT: Refactoring generation is unreliable - we only offer pattern detection
+                // Users can apply patterns manually using their IDE or other tools
                 
-                if (shouldShowPattern && patternResult.confidence > 0.7 && !alreadyAskedAboutThisFile) {
-                  // Mark that we asked about this file
-                  if (!(chatPanel as any)._refactorAskedAbout) {
-                    (chatPanel as any)._refactorAskedAbout = [];
-                  }
-                  (chatPanel as any)._refactorAskedAbout.push(filepath);
-                  
-                  // Store refactoring context
-                  (chatPanel as any)._currentRefactorContext = {
-                    filepath,
-                    code,
-                    pattern: patternResult.pattern,
-                    confidence: patternResult.confidence,
-                    workspace: workspaceFolder,
-                  };
-
-                  // Format like /suggest-patterns: "Execute: /refactor ..."
-                  const commandCode = `/refactor ${filepath}`;
+                if (shouldShowPattern && patternResult.confidence > 0.7) {
+                  // Instead of offering refactoring, just inform the user about the detected pattern
                   postChatMessage({
-                    command: 'question',
-                    question: `Pattern detected: **${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)`,
-                    options: [
-                      `Execute: ${commandCode}`,
-                      `📋 Show Preview`,
-                      `❌ Skip`,
-                    ],
+                    command: 'addMessage',
+                    text: `✅ **Pattern Detected: ${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)
+
+The analysis suggests this file implements or could benefit from the **${patternResult.pattern}** pattern.
+
+${patternResult.reasoning}
+
+**Note:** Automatic refactoring is disabled to ensure code quality and prevent incomplete or broken changes. Please apply this pattern manually using your IDE's refactoring tools or Cursor/Windsurf, which have better multi-file support.`,
+                    success: true,
                   });
-                  return;  // Stop here, don't show analysis
+                  return;
                 }
               } catch (err) {
                 postChatMessage({
