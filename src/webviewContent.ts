@@ -222,25 +222,14 @@ export function getWebviewContent(): string {
             code.textContent = command;
             row.appendChild(code);
             
-            // Button clicks put command in input and AUTO-SEND
+            // Button clicks - trigger refactoring action (not just re-run analyze)
             const btn = document.createElement('button');
             btn.className = 'question-btn command-btn';
             btn.textContent = '▶ Execute';
             btn.onclick = () => {
-              console.log('[Webview] User clicked execute button for:', command);
-              input.value = command;
-              input.focus();
-              // Auto-send the command
-              const msg = input.value.trim();
-              if (msg) {
-                chat.innerHTML += '<div class="msg user">' + msg + '</div>';
-                commandHistory.push(msg);
-                historyIndex = commandHistory.length;
-                input.value = '';
-                autocompleteMatches = [];
-                autocompleteIndex = -1;
-                vscode.postMessage({ command: 'sendMessage', text: msg });
-              }
+              console.log('[Webview] User clicked execute button, triggering refactoring');
+              // Send answerQuestion with special marker so extension knows to refactor
+              vscode.postMessage({ command: 'answerQuestion', answer: '🔧 Refactor Now' });
             };
             row.appendChild(btn);
             
