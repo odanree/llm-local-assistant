@@ -390,8 +390,8 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
     const lines = block.split('\n').filter(l => l.trim());
     if (lines.length === 0) return null;
 
-    // Extract action from first line
-    const firstLine = lines[0];
+    // Extract action from first line (case-insensitive!)
+    const firstLine = lines[0].toLowerCase();  // Convert to lowercase for comparison
     let action = 'read'; // Default to read
     
     if (firstLine.includes('manual')) action = 'manual';   // CONTEXT-AWARE: Check MANUAL first (highest priority)
