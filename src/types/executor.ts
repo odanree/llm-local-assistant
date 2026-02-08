@@ -23,10 +23,13 @@ export enum ActionType {
 
   /** Delete a file or directory */
   DELETE = 'delete',
+
+  /** Manual verification step (for projects without testing infrastructure) */
+  MANUAL = 'manual',
 }
 
 /** String literal type for flexibility when needed */
-export type ActionTypeString = 'read' | 'write' | 'run' | 'delete';
+export type ActionTypeString = 'read' | 'write' | 'run' | 'delete' | 'manual';
 
 /**
  * Validate that an action string is a valid ActionType
@@ -95,6 +98,7 @@ export interface StepResult {
   error?: string; // Error message if failed
   duration: number; // Milliseconds
   timestamp?: number; // Unix timestamp when step completed (optional for backward compat)
+  requiresManualVerification?: boolean; // True if step requires manual user action (MANUAL action type)
 }
 
 /**

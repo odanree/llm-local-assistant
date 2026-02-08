@@ -150,27 +150,14 @@ IMPORTANT CONSTRAINT - You can ONLY output steps with these actions:
 - write: Write or modify a file
 - run: Execute a shell command or npm script
 - delete: Delete a file or directory
+- manual: Manual verification step (for projects without testing infrastructure)
 
 You CANNOT output steps for:
 - analyze: Do your own analysis BEFORE creating the plan, don't output it as a step
 - review: Review code yourself, don't ask the Executor to do it
 - suggestwrite: Write actual code, don't suggest
 
-If a request requires analysis or review, do it yourself first, then output only executable (read/write/run/delete) steps.
-
-${!hasTests ? `
-CONTEXT-AWARE PLANNING: This project has NO automated testing infrastructure (no jest/vitest/pytest).
-
-CRITICAL: You are FORBIDDEN from:
-- ❌ Outputting steps that run npm test, jest, vitest, pytest, or any test commands
-- ❌ Assuming the project has testing setup
-- ❌ Recommending automated testing
-
-INSTEAD:
-- ✅ Skip automated testing steps entirely
-- ✅ Suggest manual verification: "Verify in dev environment"
-- ✅ Focus on code generation and implementation
-` : ''}
+If a request requires analysis or review, do it yourself first, then output only executable (read/write/run/delete/manual) steps.
 
 USER REQUEST:
 ${userRequest}
@@ -178,14 +165,15 @@ ${userRequest}
 Create a detailed step-by-step plan using ONLY the allowed actions above.
 
 For each step, provide:
-1. Action type: read, write, run, or delete (ONLY these)
+1. Action type: read, write, run, delete, or manual
 2. Description: What to do (2-3 sentence summary)
-3. File/Command: Path for read/write/delete, or the actual command for run
+3. File/Command: Path for read/write/delete, command for run, instructions for manual
 4. Expected outcome: what will be true after this step
 5. Dependencies: which previous steps it depends on (if any)
 
 OUTPUT FORMAT - Be VERY specific and clear:
 
+${hasTests ? `
 **Step 1: read**
 - Description: Read the current login form component
 - Path: src/components/LoginForm.tsx
@@ -203,6 +191,25 @@ OUTPUT FORMAT - Be VERY specific and clear:
 - Command: npm test
 - Expected outcome: All tests pass
 - Dependencies: Step 2
+` : `
+**Step 1: read**
+- Description: Read the current login form component
+- Path: src/components/LoginForm.tsx
+- Expected outcome: Understand current form structure and imports
+- Dependencies: None
+
+**Step 2: write**
+- Description: Add remember-me checkbox to login form
+- Path: src/components/LoginForm.tsx
+- Expected outcome: Form has remember-me checkbox with state
+- Dependencies: Step 1
+
+**Step 3: manual**
+- Description: Verify changes work in development environment
+- Instructions: Run 'npm start' (or equivalent), open browser to localhost, test login form manually, verify remember-me checkbox saves state
+- Expected outcome: Form displays correctly, remember-me checkbox functional, no console errors
+- Dependencies: Step 2
+`}
 
 ========================================
 CRITICAL CONSTRAINT FOR 'write' STEPS - READ CAREFULLY:

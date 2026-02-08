@@ -853,6 +853,18 @@ export class Executor {
           }
           result = await this.executeRun(clarifiedStep || step, startTime, stepWorkspace);
           break;
+        case 'manual':
+          // CONTEXT-AWARE PLANNING: Manual verification step (no automated testing)
+          // Show instructions to user, mark as requiring manual action
+          result = {
+            stepId: step.stepId,
+            success: true,
+            output: `MANUAL VERIFICATION (No Test Infrastructure)\n\n${step.description}\n\nInstructions:\n${(step as any).instructions || step.path || 'Follow step requirements manually'}\n\nExpected outcome:\n${step.expectedOutcome}`,
+            duration: Date.now() - startTime,
+            timestamp: Date.now(),
+            requiresManualVerification: true,
+          };
+          break;
         case 'delete':
           // Delete not yet implemented - return with helpful error
           return {
@@ -866,7 +878,7 @@ export class Executor {
           // This should never happen if validator gate works
           throw new Error(
             `Schema Violation: Unknown action "${step.action}". ` +
-            `Valid actions: read, write, run, delete`
+            `Valid actions: read, write, run, delete, manual`
           );
       }
 
