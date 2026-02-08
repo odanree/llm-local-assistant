@@ -15,7 +15,8 @@ describe('PatternRefactoringGenerator', () => {
 
   describe('generateRefactoredCode', () => {
     it('should generate refactored code for StateManagement pattern', async () => {
-      const originalCode = `
+      const originalCode = `'use client';
+        import { useState } from 'react';
         const [cart, setCart] = useState([]);
         const [loading, setLoading] = useState(false);
         
@@ -144,7 +145,7 @@ The refactored code separates data fetching logic into a reusable hook.
     it('should handle LLM exception gracefully', async () => {
       mockLLMClient.sendMessage.mockRejectedValue(new Error('Network error'));
 
-      const result = await generator.generateRefactoredCode('const x = 1;', 'Forms', 'app.tsx');
+      const result = await generator.generateRefactoredCode("'use client'; const x = 1;", 'Forms', 'components/Form.tsx');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Network error');
@@ -156,7 +157,7 @@ The refactored code separates data fetching logic into a reusable hook.
         message: 'Here is some text but no code block',
       });
 
-      const result = await generator.generateRefactoredCode('const x = 1;', 'Forms', 'app.tsx');
+      const result = await generator.generateRefactoredCode("'use client'; const x = 1;", 'Forms', 'components/Form.tsx');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Code extraction failed');
@@ -221,7 +222,7 @@ The refactored code separates data fetching logic into a reusable hook.
         message: `\`\`\`typescript\nconst x = 1;\n\`\`\`\n## Changes\n- Test`,
       });
 
-      await generator.generateRefactoredCode('x', 'StateManagement', 'app.tsx');
+      await generator.generateRefactoredCode("'use client'; const x = 1;", 'StateManagement', 'components/State.tsx');
 
       const callArgs = mockLLMClient.sendMessage.mock.calls[0][0];
       expect(callArgs).toContain('StateManagement');
@@ -247,7 +248,7 @@ The refactored code separates data fetching logic into a reusable hook.
         message: `\`\`\`typescript\nconst x = 1;\n\`\`\`\n## Changes\n- Test`,
       });
 
-      await generator.generateRefactoredCode('x', 'Forms', 'app.tsx');
+      await generator.generateRefactoredCode("'use client'; const x = 1;", 'Forms', 'components/Form.tsx');
 
       const callArgs = mockLLMClient.sendMessage.mock.calls[0][0];
       expect(callArgs).toContain('Forms');
@@ -288,7 +289,7 @@ The refactored code separates data fetching logic into a reusable hook.
         message: `\`\`\`typescript\ncode\n\`\`\`\n## Changes\n- First change\n- Second change\n- Third change`,
       });
 
-      const result = await generator.generateRefactoredCode('x', 'Forms', 'app.tsx');
+      const result = await generator.generateRefactoredCode("'use client'; const x = 1;", 'Forms', 'components/Form.tsx');
 
       expect(result.changes).toContain('First change');
       expect(result.changes).toContain('Second change');
@@ -301,7 +302,7 @@ The refactored code separates data fetching logic into a reusable hook.
         message: `\`\`\`typescript\ncode\n\`\`\`\n## Changes\n• Changed state management\n• Updated props\n• Removed unused code`,
       });
 
-      const result = await generator.generateRefactoredCode('x', 'Forms', 'app.tsx');
+      const result = await generator.generateRefactoredCode("'use client'; const x = 1;", 'Forms', 'components/Form.tsx');
 
       expect(result.changes.length).toBeGreaterThan(0);
     });

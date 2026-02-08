@@ -1,4 +1,5 @@
 import { LLMClient } from './llmClient';
+import { isServerComponent } from './patternDetector';
 
 /**
  * Phase 3.5: Pattern-Based Code Refactoring
@@ -13,6 +14,7 @@ export interface RefactoringResult {
   explanation: string;
   success: boolean;
   error?: string;
+  warning?: string;
 }
 
 export class PatternRefactoringGenerator {
@@ -31,6 +33,28 @@ export class PatternRefactoringGenerator {
     filepath: string
   ): Promise<RefactoringResult> {
     try {
+      // Check if this is a server component being refactored with a client-only pattern
+      const isServer = isServerComponent(code);
+      const forbiddenPatterns = ['Authentication', 'Forms', 'StateManagement', 'Notifications', 'SearchFilter'];
+      
+      if (isServer && forbiddenPatterns.includes(pattern)) {
+        // Don't refactor server components with client patterns
+        return {
+          originalCode: code,
+          refactoredCode: code,
+          pattern,
+          changes: [],
+          explanation: `Cannot apply ${pattern} pattern to a server component (app/layout.tsx, app/page.tsx, etc.) because it requires client-side hooks.`,
+          success: false,
+          error: `This file appears to be a Next.js server component. The ${pattern} pattern requires client-side features like hooks, state, or context which don't work in server components. 
+
+Solution: 
+1. Add 'use client' directive at the top if this should be a client component
+2. Or create a separate client component and use it within this server component
+3. Or skip refactoring this file`,
+        };
+      }
+
       // Get pattern-specific prompt
       const prompt = this.getPatternRefactoringPrompt(code, pattern, filepath);
 
@@ -95,9 +119,13 @@ export class PatternRefactoringGenerator {
    * Generate pattern-specific refactoring prompt
    */
   private getPatternRefactoringPrompt(code: string, pattern: string, filepath: string): string {
+    const isServer = isServerComponent(code);
+    const fileLocation = filepath.includes('layout') ? 'Next.js layout/root component' : 'Next.js component';
+    
     const basePrompt = `Refactor this code to apply the ${pattern} architectural pattern.
 
-File: ${filepath}
+File: ${filepath} (${fileLocation})
+${isServer ? 'NOTE: This appears to be a SERVER COMPONENT (no "use client" directive)' : 'NOTE: This is a CLIENT COMPONENT ("use client" directive present)'}
 
 Current code:
 \`\`\`typescript

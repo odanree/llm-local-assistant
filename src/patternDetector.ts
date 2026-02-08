@@ -16,6 +16,23 @@ export interface PatternDetectionResult {
   confidence: number; // 0-1
   reasoning: string;
   suggestedImprovements: string[];
+  isServerComponent?: boolean;
+}
+
+/**
+ * Check if code is a Next.js server component
+ * Server components can't use hooks, useState, useContext, etc.
+ */
+export function isServerComponent(code: string): boolean {
+  // If it has 'use client' directive, it's a client component
+  if (code.includes("'use client'") || code.includes('"use client"')) {
+    return false;
+  }
+
+  // If it has client-only hooks/features, but no 'use client', it's an error
+  // But for our purposes, if no 'use client' and in app/ dir, assume server component
+  // (We'll pass filepath separately to be more accurate)
+  return true;
 }
 
 /**
