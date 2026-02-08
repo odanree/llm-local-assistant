@@ -15,6 +15,7 @@ export function getWebviewContent(): string {
     let historyIndex = -1;
     let autocompleteMatches = [];
     let autocompleteIndex = -1;
+    let lastAutocompletePrefix = '';
     const availableCommands = [
       '/refactor',
       '/extract-service',
@@ -70,10 +71,16 @@ export function getWebviewContent(): string {
         if (lastSlash !== -1) {
           const partialCommand = beforeCursor.substring(lastSlash);
           
-          // First tab: get all matching commands
-          if (autocompleteMatches.length === 0) {
+          // Check if input changed since last tab press
+          const inputChanged = !autocompleteMatches.length || 
+            !autocompleteMatches[0].startsWith(partialCommand) ||
+            beforeCursor.substring(0, lastSlash) !== lastAutocompletePrefix;
+          
+          // First tab or input changed: get all matching commands
+          if (inputChanged) {
             autocompleteMatches = availableCommands.filter(cmd => cmd.startsWith(partialCommand));
             autocompleteIndex = 0;
+            lastAutocompletePrefix = beforeCursor.substring(0, lastSlash);
           } else {
             // Subsequent tabs: cycle through matches
             autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
