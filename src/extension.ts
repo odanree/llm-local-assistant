@@ -2478,12 +2478,26 @@ async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): P
       
       // Only flag if we should (high confidence + not "None")
       if (patternDetector.shouldFlagPattern(detectionResult)) {
-        suggestions.push({
-          file: file.path || '',
-          pattern: detectionResult.pattern,
-          confidence: detectionResult.confidence,
-          reason: detectionResult.reasoning,
-        });
+        // Check if this is a "wrapper" file (just imports components)
+        const importedComponent = extractComponentImportFromWrapper(fileContent, file.path || '');
+        
+        if (importedComponent) {
+          // Suggest refactoring the imported component instead
+          suggestions.push({
+            file: importedComponent,
+            pattern: detectionResult.pattern,
+            confidence: detectionResult.confidence,
+            reason: `Component ${importedComponent} implements ${detectionResult.pattern} pattern. Refactor the component for better code organization.`,
+          });
+        } else {
+          // File itself contains the pattern logic
+          suggestions.push({
+            file: file.path || '',
+            pattern: detectionResult.pattern,
+            confidence: detectionResult.confidence,
+            reason: detectionResult.reasoning,
+          });
+        }
       }
     } catch (err) {
       // Skip files that can't be read
@@ -2637,6 +2651,46 @@ export async function activate(context: vscode.ExtensionContext) {
   statusBarItem.text = '$(sparkle) LLM Assistant';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+}
+
+/**
+ * Detect if a file is a "wrapper" that just imports and renders components
+ * If so, extract the main imported component name to suggest refactoring that instead
+ * 
+ * Examples:
+ * - app/page.tsx that imports CostInputForm → suggest CostInputForm.tsx
+ * - index.tsx that imports Dashboard → suggest Dashboard.tsx
+ */
+function extractComponentImportFromWrapper(code: string, filepath: string): string | null {
+  // Only consider this for "wrapper" files (pages, layout, index)
+  const isWrapperFile = /page|layout|index/.test(filepath);
+  if (!isWrapperFile) {
+    return null;
+  }
+
+  // Count lines of actual code (non-whitespace, non-comment)
+  const codeLines = code
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trim();
+      return trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('*');
+    });
+
+  // If file has more than 15 lines of actual code, it's not just a wrapper
+  if (codeLines.length > 15) {
+    return null;
+  }
+
+  // Extract the main imported component
+  // Look for: import { ComponentName } from '...'
+  const importMatch = code.match(/import\s*{\s*(\w+)\s*}/);
+  if (importMatch) {
+    const componentName = importMatch[1];
+    // Convert to likely file path: CostInputForm → CostInputForm.tsx or cost-input-form.tsx
+    return `components/${componentName}/${componentName}.tsx`;
+  }
+
+  return null;
 }
 
 /**
