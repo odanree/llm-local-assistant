@@ -1226,19 +1226,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     workspace: workspaceFolder,
                   };
 
-                  // Format: show command code, then stacked buttons for quick refactor
+                  // Format: command | button label
                   const commandCode = `/refactor ${filepath}`;
                   postChatMessage({
-                    command: 'addMessage',
-                    text: `Pattern detected: **${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)\n\n\`\`\`\n${commandCode}\n\`\`\``,
-                  });
-                  
-                  // Show stacked button options
-                  postChatMessage({
                     command: 'question',
-                    question: '',
+                    question: `Pattern detected: **${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)`,
                     options: [
-                      `🔧 Refactor Now`,
+                      `${commandCode} | 🔧 Refactor Now`,
                       `📋 Show Preview`,
                       `❌ Skip`,
                     ],

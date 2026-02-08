@@ -204,20 +204,51 @@ export function getWebviewContent(): string {
         buttonContainer.className = 'question-buttons';
         
         msg.options.forEach((option, idx) => {
-          const btn = document.createElement('button');
-          btn.className = 'question-btn';
-          btn.textContent = option;
-          btn.onclick = () => {
-            console.log('[Webview] User clicked option:', option);
-            // Disable all buttons
-            Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
-              b.disabled = true;
-              b.style.opacity = '0.5';
-            });
-            // Send response to extension
-            vscode.postMessage({ command: 'answerQuestion', answer: option });
-          };
-          buttonContainer.appendChild(btn);
+          // Check if option has command code (starts with /)
+          const hasCommand = option.includes('/refactor');
+          
+          if (hasCommand) {
+            // Create row with command + button
+            const row = document.createElement('div');
+            row.className = 'command-row';
+            
+            // Extract command and button label
+            const parts = option.split('|');
+            const command = parts[0].trim();
+            const buttonLabel = parts[1]?.trim() || '🔧 Refactor';
+            
+            // Command code (left side, copyable)
+            const code = document.createElement('code');
+            code.style.fontFamily = 'monospace';
+            code.style.marginRight = '8px';
+            code.style.backgroundColor = 'var(--vscode-editor-background)';
+            code.style.padding = '4px 8px';
+            code.style.borderRadius = '3px';
+            code.textContent = command;
+            row.appendChild(code);
+            
+            // Button (right side)
+            const btn = document.createElement('button');
+            btn.className = 'question-btn command-btn';
+            btn.textContent = buttonLabel;
+            btn.onclick = () => {
+              console.log('[Webview] User clicked option:', buttonLabel);
+              vscode.postMessage({ command: 'answerQuestion', answer: buttonLabel });
+            };
+            row.appendChild(btn);
+            
+            buttonContainer.appendChild(row);
+          } else {
+            // Regular button (no command)
+            const btn = document.createElement('button');
+            btn.className = 'question-btn';
+            btn.textContent = option;
+            btn.onclick = () => {
+              console.log('[Webview] User clicked option:', option);
+              vscode.postMessage({ command: 'answerQuestion', answer: option });
+            };
+            buttonContainer.appendChild(btn);
+          }
         });
         
         div.appendChild(buttonContainer);
@@ -364,6 +395,25 @@ export function getWebviewContent(): string {
           .question-btn:disabled {
             cursor: not-allowed;
             opacity: 0.6;
+          }
+          .command-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+          }
+          .command-row code {
+            background: var(--vscode-textCodeBlock-background);
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 11px;
+            user-select: all;
+            cursor: text;
+          }
+          .command-btn {
+            white-space: nowrap;
+            flex-shrink: 0;
           }
           .input-row {
             display: flex;
