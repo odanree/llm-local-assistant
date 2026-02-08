@@ -159,6 +159,39 @@ You CANNOT output steps for:
 
 If a request requires analysis or review, do it yourself first, then output only executable (read/write/run/delete/manual) steps.
 
+${!hasTests ? `
+========================================
+MANDATORY RULES FOR THIS PROJECT
+========================================
+This project has NO automated testing infrastructure.
+
+You are STRICTLY FORBIDDEN from:
+- ❌ Outputting RUN steps that execute npm test, jest, vitest, pytest, or any test commands
+- ❌ Assuming testing infrastructure exists
+- ❌ Including automated testing in the plan
+
+You MUST:
+- ✅ Use MANUAL steps for all verification and testing activities
+- ✅ Replace every verification step with MANUAL action type
+- ✅ Provide clear manual testing instructions in the MANUAL steps
+
+EXAMPLE of CORRECT behavior:
+When planning a feature, you would normally add:
+  **Step 3: run**
+  Command: npm test
+
+Instead, for this project, you MUST output:
+  **Step 3: manual**
+  Description: Verify changes work in development environment
+  Instructions: npm start, open browser, test manually
+  Expected outcome: Feature works correctly in dev environment
+
+CRITICAL: Fail-fast if you forget these rules. Every verification step
+MUST be MANUAL, not RUN. Every reference to 'npm test' MUST be replaced
+with MANUAL step with manual testing instructions.
+========================================
+` : ''}
+
 USER REQUEST:
 ${userRequest}
 
