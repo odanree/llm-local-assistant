@@ -1498,11 +1498,16 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       
       env.PATH = pathParts.join(':');
 
-      // Use login shell (-l) to source shell configuration
-      const child = cp.spawn('/bin/bash', ['-l', '-c', command], {
+      // CRITICAL FIX: Use platform-aware shell selection
+      // /bin/bash doesn't exist on Windows, use shell: true instead
+      const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
+      const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-l', '-c', command];
+
+      const child = cp.spawn(shell, shellArgs, {
         cwd: workspaceUri.fsPath,
         env: env,
         stdio: 'pipe',
+        shell: true, // Let Node pick the default system shell
       });
 
       let stdout = '';
