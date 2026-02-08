@@ -146,7 +146,8 @@ function postChatMessage(message: any): void {
   chatPanel?.webview.postMessage(message);
   
   // Store in chat history for persistence across panel switches
-  if (message.command === 'addMessage' && message.text) {
+  // Skip storage if message has skipHistory flag (e.g., startup help text)
+  if (message.command === 'addMessage' && message.text && !message.skipHistory) {
     chatHistory.push({
       role: message.role || 'assistant',
       content: message.text,
@@ -181,7 +182,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
   // Show agent mode command help ONLY on first open
   setTimeout(() => {
     if (!helpShown) {
-      postChatMessage({
+      chatPanel?.webview.postMessage({
         command: 'addMessage',
         text: `**Agent Mode Commands:**\n\n` +
           `🤖 **Planning & Execution:**\n` +
@@ -216,6 +217,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /approve — Acknowledge and approve generated content`,
         type: 'info',
         success: true,
+        skipHistory: true, // Don't store startup help in history
       });
       helpShown = true;
     }
