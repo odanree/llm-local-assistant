@@ -394,7 +394,8 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
     const firstLine = lines[0];
     let action = 'read'; // Default to read
     
-    if (firstLine.includes('write')) action = 'write';
+    if (firstLine.includes('manual')) action = 'manual';   // CONTEXT-AWARE: Check MANUAL first (highest priority)
+    else if (firstLine.includes('write')) action = 'write';
     else if (firstLine.includes('run')) action = 'run';
     else if (firstLine.includes('delete')) action = 'delete';
     else if (firstLine.includes('read')) action = 'read';
