@@ -144,10 +144,10 @@ export class Planner {
   /**
    * Build the planning prompt
    * 
-   * CRITICAL: Constraint added to prevent Interface Drift
-   * - Tell LLM only 4 action types exist
-   * - Tell LLM to do ANALYZE/REVIEW itself, not output as steps
-   * - Schema enforcement at prompt level
+   * CRITICAL: Schema-Strict Planner (Danh's Interface Contract Fix)
+   * - Separate System Actions (what computer does) from User Instructions (what human does)
+   * - Prevent "Manual" value from entering action/path fields
+   * - Do NOT allow manual verification as ExecutionStep
    * 
    * NEW: Context Anchoring (Danh's Core Four closure)
    * - Inject project language, strategy, root directory
@@ -179,13 +179,25 @@ PATH_RULES:
     
     return `You are a step planner. Output a numbered plan.
 
-ACTIONS: read, write, run, delete, manual
-${contextSection}
+STEP TYPES & CONSTRAINTS (MANDATORY):
+- write: Requires path and content. Creates or modifies files.
+- read: Requires path. Reads existing files only.
+- run: Requires command. Executes shell commands.
+- delete: Requires path. Removes files.
+
+MANUAL VERIFICATION (IMPORTANT):
+- If a step requires human intervention (e.g., "test in browser", "verify visually"):
+  * Do NOT create a step with action='read' or 'manual'
+  * Instead, put instructions in the plan summary
+  * CRITICAL: Do NOT use 'manual' as action or in path field
+  * Example WRONG: Step 4: read, Path: manual verification
+  * Example RIGHT: Add to summary: "Manual verification: Test button in browser"
+
 RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use "manual" for verification'}
-
+${contextSection}
 USER REQUEST: ${userRequest}
 
 OUTPUT THIS FORMAT (exactly):

@@ -822,8 +822,7 @@ export class Executor {
       };
     }
 
-    // VALIDATOR GATE: Fail fast if step is malformed (Danh's recommendation)
-    // This prevents "reading 'set'" crashes and other state-loss issues
+    // VALIDATOR GATE 1: Check step schema (basic validation)
     try {
       const validatedStep = validateExecutionStep(step);
     } catch (err) {
@@ -833,6 +832,20 @@ export class Executor {
         stepId,
         success: false,
         error: errorMsg,
+        duration: 0,
+        timestamp: Date.now(),
+      };
+    }
+
+    // VALIDATOR GATE 2: Contract Enforcement (Danh's Fix B)
+    // Catch "Manual" hallucinations and missing path errors BEFORE execution
+    const contractError = this.validateStepContract(step);
+    if (contractError) {
+      console.error(`[Executor] CONTRACT_VIOLATION for Step ${stepId}:`, contractError);
+      return {
+        stepId,
+        success: false,
+        error: contractError,
         duration: 0,
         timestamp: Date.now(),
       };
@@ -918,6 +931,54 @@ export class Executor {
         duration: Date.now() - startTime,
       };
     }
+  }
+
+  /**
+   * Validate Step Contract (Danh's Fix B: Pre-Flight Check)
+   * 
+   * Purpose: Catch interface violations BEFORE execution:
+   * - "Manual" value in path or command fields (hallucination)
+   * - Missing path for file-based actions
+   * - Missing command for run actions
+   * 
+   * Returns error message if contract violated, undefined if valid
+   */
+  private validateStepContract(step: PlanStep): string | undefined {
+    // Check for "manual" hallucination in path
+    if (step.path && typeof step.path === 'string') {
+      if (step.path.toLowerCase().includes('manual')) {
+        return `CONTRACT_VIOLATION: Step "${step.description}" has path="${step.path}". ` +
+               `Manual verification is not a valid executor action. ` +
+               `Use action='manual' instead, or describe verification in summary.`;
+      }
+    }
+
+    // Check for "manual" hallucination in command
+    if ((step as any).command && typeof (step as any).command === 'string') {
+      if ((step as any).command.toLowerCase().includes('manual')) {
+        return `CONTRACT_VIOLATION: Step "${step.description}" has command="${(step as any).command}". ` +
+               `Manual verification is not a valid executor action.`;
+      }
+    }
+
+    // Check for missing path on file-based actions
+    if (['read', 'write', 'delete'].includes(step.action)) {
+      if (!step.path || step.path.trim().length === 0) {
+        return `CONTRACT_VIOLATION: Action '${step.action}' requires a valid file path, but none was provided. ` +
+               `Step: "${step.description}"`;
+      }
+    }
+
+    // Check for missing command on run action
+    if (step.action === 'run') {
+      if (!(step as any).command || ((step as any).command as string).trim().length === 0) {
+        return `CONTRACT_VIOLATION: Action 'run' requires a command, but none was provided. ` +
+               `Step: "${step.description}"`;
+      }
+    }
+
+    // Contract validated
+    return undefined;
   }
 
   /**
