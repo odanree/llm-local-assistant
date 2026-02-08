@@ -168,11 +168,6 @@ export function getWebviewContent(): string {
             btn.onclick = () => {
               input.value = option.replace('Execute: ', '');
               input.focus();
-              // Disable all buttons
-              Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
-                b.disabled = true;
-                b.style.opacity = '0.5';
-              });
             };
             buttonContainer.appendChild(btn);
           });
@@ -204,20 +199,53 @@ export function getWebviewContent(): string {
         buttonContainer.className = 'question-buttons';
         
         msg.options.forEach((option, idx) => {
-          const btn = document.createElement('button');
-          btn.className = 'question-btn';
-          btn.textContent = option;
-          btn.onclick = () => {
-            console.log('[Webview] User clicked option:', option);
-            // Disable all buttons
-            Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
-              b.disabled = true;
-              b.style.opacity = '0.5';
-            });
-            // Send response to extension
-            vscode.postMessage({ command: 'answerQuestion', answer: option });
-          };
-          buttonContainer.appendChild(btn);
+          // Check if option starts with "Execute: " (special handling for command buttons)
+          const isExecuteButton = option.startsWith('Execute: ');
+          
+          if (isExecuteButton) {
+            // Create row with command + button
+            const row = document.createElement('div');
+            row.className = 'command-row';
+            
+            // Extract command from "Execute: /refactor ..."
+            const command = option.substring('Execute: '.length);
+            
+            // Command code (left side, copyable)
+            const code = document.createElement('code');
+            code.style.fontFamily = 'monospace';
+            code.style.marginRight = '8px';
+            code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
+            code.style.padding = '4px 8px';
+            code.style.borderRadius = '3px';
+            code.style.userSelect = 'all';
+            code.style.cursor = 'text';
+            code.textContent = command;
+            row.appendChild(code);
+            
+            // Button (right side)
+            const btn = document.createElement('button');
+            btn.className = 'question-btn command-btn';
+            btn.textContent = '▶ Execute';
+            btn.onclick = () => {
+              console.log('[Webview] User clicked execute button for:', command);
+              input.value = command;
+              input.focus();
+              // Don't disable - let user click other buttons too
+            };
+            row.appendChild(btn);
+            
+            buttonContainer.appendChild(row);
+          } else {
+            // Regular button (no command)
+            const btn = document.createElement('button');
+            btn.className = 'question-btn';
+            btn.textContent = option;
+            btn.onclick = () => {
+              console.log('[Webview] User clicked option:', option);
+              vscode.postMessage({ command: 'answerQuestion', answer: option });
+            };
+            buttonContainer.appendChild(btn);
+          }
         });
         
         div.appendChild(buttonContainer);
@@ -342,9 +370,10 @@ export function getWebviewContent(): string {
           }
           .question-buttons {
             display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+            flex-direction: column;
+            gap: 6px;
             margin-top: 12px;
+            align-items: flex-start;
           }
           .question-btn {
             padding: 8px 14px;
@@ -363,6 +392,25 @@ export function getWebviewContent(): string {
           .question-btn:disabled {
             cursor: not-allowed;
             opacity: 0.6;
+          }
+          .command-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+          }
+          .command-row code {
+            background: var(--vscode-textCodeBlock-background);
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 11px;
+            user-select: all;
+            cursor: text;
+          }
+          .command-btn {
+            white-space: nowrap;
+            flex-shrink: 0;
           }
           .input-row {
             display: flex;
