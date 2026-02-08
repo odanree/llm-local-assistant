@@ -1200,7 +1200,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 });
 
                 // If there are suggested extractions, show buttons to apply them
-                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                // BUT: Don't suggest extraction if file is already a service (in src/services/)
+                // This prevents circular refactoring (extracting from already-extracted code)
+                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
+                
+                if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   // Store analysis for extraction buttons
                   (chatPanel as any)._currentRefactorData = {
                     filepath,
@@ -1213,6 +1217,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     command: 'question',
                     question: `Would you like to extract a service?`,
                     options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
+                  });
+                } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
+                  // File is already a service - don't suggest further extraction
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `ℹ️ **This file is already a service** (in \`src/services/\`)\n\nFurther extraction isn't recommended as it may create circular dependencies or duplicate abstractions. Consider refactoring this service directly if needed.`,
+                    success: true,
                   });
                 }
 
