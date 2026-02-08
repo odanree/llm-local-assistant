@@ -4,6 +4,69 @@ All notable changes to the "llm-local-assistant" extension will be documented in
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [2.0.2] - 2026-02-07
+
+### Added - Final Polish & Bug Fixes
+- **One-Click Execute Buttons** - Pattern recommendations now feature clickable buttons
+  - Replaces copy/paste workflow with instant command insertion
+  - Buttons auto-insert into chat input for immediate execution
+  - Works for both single and multi-workspace setups
+  
+- **Pattern Detection Timeout** - Prevents hanging on slow LLM responses
+  - 5-second timeout on pattern detection LLM calls
+  - Graceful fallback to keyword detection if timeout occurs
+  - Ensures `/refactor` always completes quickly
+  - Error logging for debugging timeout issues
+
+### Changed
+- **Unified `/suggest-patterns` Handler** - Eliminated code duplication
+  - Consolidated single and multi-workspace code paths
+  - Single source of truth for pattern detection logic
+  - 90 lines of duplicate code eliminated
+  - Future bug fixes apply automatically to both paths
+
+### Fixed
+1. **Tab Autocomplete** - Now prioritizes available commands over history
+   - Type `/sugg` + Tab → suggests `/suggest-patterns` (not historical `/check-modal`)
+   - Tracks input changes and recalculates matches
+   - Ensures commands take priority over history
+
+2. **Multi-Workspace Execute Buttons** - `/suggest-patterns` buttons now showing
+   - Fixed webview addMessage handler to support options parameter
+   - Both single and multi-workspace paths display buttons
+   - Consistent UX across all workspace setups
+
+3. **JSON Parsing Resilience** - Handles bad escape sequences from LLM
+   - Two-tier parsing: direct parse, then sanitize on failure
+   - Removes hex escapes (`\xNN`) and control characters
+   - Falls back to keyword detection if all parsing fails
+   - Prevents "Bad escaped character in JSON" errors
+
+4. **Pattern Detection Synchronization** - `/suggest-patterns` and `/refactor` aligned
+   - Both commands now show detected patterns consistently
+   - `/refactor` always displays patterns (even with no semantic issues)
+   - Pattern recommendations are primary output, not secondary
+   - Prevents confusing mismatches between commands
+
+5. **Error Handling** - Better error recovery with try-catch wrappers
+   - Pattern detection errors logged (not silent failures)
+   - Graceful fallback to keyword detection
+   - `/refactor` always completes (no hanging)
+
+### Quality Improvements
+- **Test Coverage**: 273/273 tests passing (100%)
+- **TypeScript**: 100% strict mode compliance
+- **Code Quality**: 0 compilation errors
+- **Performance**: Pattern detection never blocks response (<5 seconds)
+
+### Next Steps
+- Phase 3.5: Pattern-Based Code Refactoring
+  - Generate refactored code to apply detected patterns
+  - Add "Refactor to Apply Pattern" buttons
+  - Write refactored files to disk
+
+---
+
 ## [2.0.1] - 2026-02-07
 
 ### Added - Phase 3.4 Enhancements & UI/UX

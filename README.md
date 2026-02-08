@@ -8,9 +8,10 @@ A powerful VS Code extension that brings autonomous AI agent capabilities to you
 
 **🚀 NEW in v2.0**: Intelligent refactoring framework with architecture analysis, pattern detection, and safe code transformation.
 
-> **Latest Release**: v2.0.0+ - Phase 3.4: Intelligent Refactoring ✨ + UI Improvements 🎨  
-> **Phase 3.4 Features**: `/refactor`, `/extract-service`, `/design-system`, `/rate-architecture`, `/suggest-patterns`  
-> **UI/UX**: Tab autocomplete, command history, copy-pastable commands  
+> **Latest Release**: v2.0.2 - Final Polish & Bug Fixes ✅  
+> **Features**: One-click execute buttons, pattern detection synchronized, no more hanging  
+> **Phase 3.4 Complete**: `/refactor`, `/extract-service`, `/design-system`, `/rate-architecture`, `/suggest-patterns`  
+> **UI/UX**: Tab autocomplete, command history, one-click buttons  
 > 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
 
 ## ✨ Key Features
