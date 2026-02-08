@@ -222,7 +222,7 @@ export function getWebviewContent(): string {
             code.textContent = command;
             row.appendChild(code);
             
-            // Button (right side)
+            // Button clicks put command in input and AUTO-SEND
             const btn = document.createElement('button');
             btn.className = 'question-btn command-btn';
             btn.textContent = '▶ Execute';
@@ -230,7 +230,17 @@ export function getWebviewContent(): string {
               console.log('[Webview] User clicked execute button for:', command);
               input.value = command;
               input.focus();
-              // Don't disable - let user click other buttons too
+              // Auto-send the command
+              const msg = input.value.trim();
+              if (msg) {
+                chat.innerHTML += '<div class="msg user">' + msg + '</div>';
+                commandHistory.push(msg);
+                historyIndex = commandHistory.length;
+                input.value = '';
+                autocompleteMatches = [];
+                autocompleteIndex = -1;
+                vscode.postMessage({ command: 'sendMessage', text: msg });
+              }
             };
             row.appendChild(btn);
             
