@@ -1207,22 +1207,16 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   success: true,
                 });
 
-                // If there are suggested extractions, show buttons to apply them
-                // BUT: Don't suggest extraction if file is already a service (in src/services/)
-                // This prevents circular refactoring (extracting from already-extracted code)
+                // If there are suggested extractions, show them as recommendations
+                // BUT: Extraction generation is incomplete and unreliable
+                // Show suggestions but don't offer automated extraction
                 if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
-                  // Store analysis for extraction buttons
-                  (chatPanel as any)._currentRefactorData = {
-                    filepath,
-                    code,
-                    analysis: semanticAnalysis,
-                    workspaceFolder,
-                  };
-
                   postChatMessage({
-                    command: 'question',
-                    question: `Would you like to extract a service?`,
-                    options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
+                    command: 'addMessage',
+                    text: `💡 **Recommended Extractions:**\n${
+                      semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
+                    }\n\n**Note:** Code extraction requires understanding component context and business logic that automated tools can't reliably handle. Please apply these extractions manually using your IDE's refactoring tools or Cursor/Windsurf.`,
+                    success: true,
                   });
                 }
 
@@ -1254,57 +1248,7 @@ ${patternResult.reasoning}
               return;
             }
 
-            // Check for /extract-service command
-            const extractMatch = text.match(/^\/extract-service\s+(\S+)\s+(.+)$/);
-            if (extractMatch) {
-              const hookFile = extractMatch[1].trim();
-              const serviceName = extractMatch[2].trim();
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `🔄 Extracting service from ${hookFile}...`,
-                  type: 'info',
-                });
-
-                // Find the correct workspace folder for this file
-                const workspaceFolder = await findWorkspaceFolderForFile(hookFile);
-                if (!workspaceFolder) {
-                  throw new Error('No workspace folder open');
-                }
-
-                const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, hookFile);
-                const fileData = await vscode.workspace.fs.readFile(fileUri);
-                const code = new TextDecoder().decode(fileData);
-
-                // Extract service using LLM-based extraction
-                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName);
-                
-                // Store extraction data for when user clicks a button
-                (chatPanel as any)._currentExtraction = {
-                  extraction,
-                  hookFile,
-                  serviceName,
-                  code,
-                };
-
-                // Show extraction preview with action buttons in the UI
-                postChatMessage({
-                  command: 'question',
-                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
-                  options: [
-                    'Execute',
-                    'Cancel',
-                  ],
-                });
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Extract error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
-              return;
-            }
-
+            
             // Check for /design-system command
             const designMatch = text.match(/^\/design-system\s+(.+)$/);
             if (designMatch) {
@@ -2077,85 +2021,6 @@ ${fileContent}
               }
             }
             
-            // Check if this is an extraction action response
-            const extractionData = (chatPanel as any)._currentExtraction;
-            if (extractionData && ['Execute', 'Cancel'].includes(answer)) {
-              const { extraction, hookFile, serviceName, code, workspaceFolder } = extractionData;
-              
-              try {
-                if (answer === 'Execute') {
-                  chatPanel?.webview.postMessage({
-                    command: 'status',
-                    text: `✏️ Executing extraction...`,
-                    type: 'info',
-                  });
-
-                  const { extraction, hookFile, serviceName, code } = extractionData;
-
-                  try {
-                    // workspaceFolder is now passed through extractionData
-                    if (!workspaceFolder) {
-                      throw new Error('No workspace folder available');
-                    }
-
-                    // Write service file to src/services/ directory
-                    const serviceDir = vscode.Uri.joinPath(workspaceFolder.uri, 'src', 'services');
-                    try {
-                      await vscode.workspace.fs.createDirectory(serviceDir);
-                    } catch (e) {
-                      // Directory might already exist
-                    }
-
-                    const serviceFilePath = vscode.Uri.joinPath(serviceDir, `${serviceName}.ts`);
-                    await vscode.workspace.fs.writeFile(
-                      serviceFilePath,
-                      new TextEncoder().encode(extraction.extractedCode)
-                    );
-
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: `✅ **Service Extraction Complete**\n\n` +
-                        `**New Service File Created:** src/services/${serviceName}.ts\n\n` +
-                        `The service file has been generated with well-designed methods and proper documentation.\n\n` +
-                        `**⚠️ Manual Integration Required:**\n` +
-                        `This tool creates the service file, but you must manually:\n\n` +
-                        `1. **Import the service** in ${hookFile}:\n` +
-                        `   \`import { ${serviceName} } from '../services/${serviceName}';\`\n\n` +
-                        `2. **Replace API calls** with service methods:\n` +
-                        `   Before: \`const data = await fetch(...).then(...)\`\n` +
-                        `   After: \`const data = await ${serviceName}.methodName()\`\n\n` +
-                        `3. **Remove duplicate logic** from the original hook\n\n` +
-                        `4. **Update type imports** if the service uses custom types\n\n` +
-                        `5. **Test thoroughly** - verify all functionality still works\n\n` +
-                        `**Why manual?** Service extraction requires understanding component context and business logic that automated tools can't reliably handle.`,
-                      success: true,
-                    });
-                  } catch (err) {
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      error: `Extraction failed: ${err instanceof Error ? err.message : String(err)}`,
-                    });
-                  }
-                } else if (answer === 'Cancel') {
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    text: `⏭️ **Extraction cancelled**`,
-                    success: true,
-                  });
-                }
-                
-                // Clear extraction data
-                (chatPanel as any)._currentExtraction = null;
-                break;
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Extract action error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                break;
-              }
-            }
-            
             // Handle pattern refactoring answers
             const refactorContext = (chatPanel as any)._currentRefactorContext;
             if (refactorContext && answer === '🔧 Refactor Now') {
@@ -2332,76 +2197,6 @@ ${fileContent}
               }
             }
             
-            // Check if this is a refactor extraction button click
-            const refactorData = (chatPanel as any)._currentRefactorData;
-            if (refactorData && answer.startsWith('Extract: ')) {
-              const extractionName = answer.replace('Extract: ', '');
-              const { filepath, code, workspaceFolder } = refactorData;
-              
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `🔄 Extracting ${extractionName}...`,
-                  type: 'info',
-                });
-
-                // Generate service name from extraction suggestion
-                // e.g., "Extract API logic to useApi hook" -> "useApi"
-                let serviceName = '';
-                
-                // First try: match 'to <serviceName>' pattern
-                const toMatch = extractionName.match(/\bto\s+(\w+)/i);
-                if (toMatch && toMatch[1]) {
-                  serviceName = toMatch[1];
-                }
-                
-                // Second try: match camelCase starting with 'use'
-                if (!serviceName) {
-                  const useMatch = extractionName.match(/\b(use\w+)\b/i);
-                  if (useMatch && useMatch[1]) {
-                    serviceName = useMatch[1];
-                  }
-                }
-                
-                // Fallback
-                if (!serviceName) {
-                  serviceName = extractionName.split(' ')[0];
-                }
-
-                // Extract service using LLM-based extraction with semantic analysis
-                const analysis = refactorData.analysis;
-                const extraction = await serviceExtractor.extractServiceWithLLM(code, serviceName, analysis);
-                
-                // Store extraction data for when user chooses action
-                (chatPanel as any)._currentExtraction = {
-                  extraction,
-                  hookFile: filepath,
-                  serviceName,
-                  code,
-                  workspaceFolder,
-                };
-
-                // Show extraction preview with action buttons
-                postChatMessage({
-                  command: 'question',
-                  question: `📋 **Extraction Preview: ${serviceName}.ts**\n\n**Service File:** ${serviceName}.ts\n**Lines:** ${extraction.extractedCode.split('\n').length}\n**Functions:** ${extraction.exports.length}\n**Tests:** ${extraction.testCases.length}\n\nExecute this extraction?`,
-                  options: [
-                    'Execute',
-                    'Cancel',
-                  ],
-                });
-                
-                // Clear refactor data
-                (chatPanel as any)._currentRefactorData = null;
-                break;
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Refactor extraction error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                break;
-              }
-            }
             
             // Regular question answer (not extraction)
             if (pendingQuestionResolve) {
