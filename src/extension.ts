@@ -12,6 +12,7 @@ import { FeatureAnalyzer } from './featureAnalyzer';
 import { ServiceExtractor } from './serviceExtractor';
 import { RefactoringExecutor } from './refactoringExecutor';
 import { PatternDetector } from './patternDetector';
+import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -20,6 +21,7 @@ let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let architecturePatterns: ArchitecturePatterns;
 let patternDetector: PatternDetector;
+let patternRefactoringGenerator: PatternRefactoringGenerator;
 let featureAnalyzer: FeatureAnalyzer;
 let serviceExtractor: ServiceExtractor;
 let refactoringExecutor: RefactoringExecutor;
@@ -1212,6 +1214,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
                   });
                 }
+
+                // If pattern detected and confidence high, offer to refactor to apply pattern
+                if (shouldShowPattern && patternResult.confidence > 0.7) {
+                  // Store refactoring context
+                  (chatPanel as any)._currentRefactorContext = {
+                    filepath,
+                    code,
+                    pattern: patternResult.pattern,
+                    confidence: patternResult.confidence,
+                    workspace: workspaceFolder,
+                  };
+
+                  postChatMessage({
+                    command: 'question',
+                    question: `Would you like me to refactor this file to apply the **${patternResult.pattern}** pattern?`,
+                    options: [`🔧 Refactor to Apply Pattern`, `📋 Show Preview`, `❌ Skip`],
+                  });
+                }
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
@@ -2117,6 +2137,182 @@ ${fileContent}
               }
             }
             
+            // Handle pattern refactoring answers
+            const refactorContext = (chatPanel as any)._currentRefactorContext;
+            if (refactorContext && answer === '🔧 Refactor to Apply Pattern') {
+              const { filepath, code, pattern, workspace } = refactorContext;
+              
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `🔄 Generating refactored code for ${pattern} pattern...`,
+                  type: 'info',
+                });
+
+                // Generate refactored code
+                const refactoringResult = await patternRefactoringGenerator.generateRefactoredCode(
+                  code,
+                  pattern,
+                  filepath
+                );
+
+                if (!refactoringResult.success) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Failed to generate refactored code: ${refactoringResult.error}`,
+                  });
+                  break;
+                }
+
+                // Store refactoring result for applying
+                (chatPanel as any)._currentRefactoringResult = {
+                  refactoringResult,
+                  filepath,
+                  workspace,
+                };
+
+                // Create preview message
+                const summary = patternRefactoringGenerator.summarizeChanges(refactoringResult);
+                const previewMsg = `📋 **Preview: Refactored Code**\n\n${summary}\n\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 500)}...\n\`\`\``;
+
+                postChatMessage({
+                  command: 'question',
+                  question: previewMsg,
+                  options: [
+                    '💾 Write Refactored File',
+                    '👁️ Show Full Preview',
+                    '❌ Cancel',
+                  ],
+                });
+
+                // Clear refactor context
+                (chatPanel as any)._currentRefactorContext = null;
+                break;
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Pattern refactoring error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+                (chatPanel as any)._currentRefactorContext = null;
+                break;
+              }
+            }
+
+            // Handle "Show Preview" for refactoring
+            if (refactorContext && answer === '👁️ Show Full Preview') {
+              const { code, pattern } = refactorContext;
+              
+              try {
+                const refactoringResult = await patternRefactoringGenerator.generateRefactoredCode(
+                  code,
+                  pattern,
+                  refactorContext.filepath
+                );
+
+                if (refactoringResult.success) {
+                  // Store for later
+                  (chatPanel as any)._currentRefactoringResult = {
+                    refactoringResult,
+                    filepath: refactorContext.filepath,
+                    workspace: refactorContext.workspace,
+                  };
+
+                  const fullPreview = `### Original Code:\n\`\`\`typescript\n${code.substring(0, 300)}...\n\`\`\`\n\n### Refactored Code:\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 300)}...\n\`\`\`\n\n### Changes:\n${refactoringResult.changes.map(c => `• ${c}`).join('\n')}`;
+
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: fullPreview,
+                  });
+
+                  postChatMessage({
+                    command: 'question',
+                    question: `Apply these changes?`,
+                    options: ['💾 Write Refactored File', '❌ Cancel'],
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Preview error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+              break;
+            }
+
+            // Handle "Skip" for pattern refactoring
+            if (refactorContext && answer === '❌ Skip') {
+              postChatMessage({
+                command: 'addMessage',
+                text: '✅ Skipped pattern refactoring.',
+              });
+              (chatPanel as any)._currentRefactorContext = null;
+              break;
+            }
+
+            // Handle "Cancel" for refactoring preview
+            if ((chatPanel as any)._currentRefactoringResult && answer === '❌ Cancel') {
+              postChatMessage({
+                command: 'addMessage',
+                text: '✅ Cancelled refactoring.',
+              });
+              (chatPanel as any)._currentRefactoringResult = null;
+              break;
+            }
+
+            // Handle "Write Refactored File"
+            if ((chatPanel as any)._currentRefactoringResult && answer === '💾 Write Refactored File') {
+              const { refactoringResult, filepath, workspace } = (chatPanel as any)._currentRefactoringResult;
+              
+              try {
+                chatPanel?.webview.postMessage({
+                  command: 'status',
+                  text: `💾 Writing refactored file...`,
+                  type: 'info',
+                });
+
+                // Write the refactored file
+                const fileUri = vscode.Uri.joinPath(workspace.uri, filepath);
+                const encoder = new TextEncoder();
+                const newContent = encoder.encode(refactoringResult.refactoredCode);
+                
+                // Read original content for backup
+                const originalContent = await vscode.workspace.fs.readFile(fileUri);
+                const backupFileName = `${filepath.replace(/\//g, '_')}.bak.${Date.now()}`;
+                const backupDir = vscode.Uri.joinPath(workspace.uri, '.refactor-backups');
+                
+                // Create backup directory if it doesn't exist
+                try {
+                  await vscode.workspace.fs.stat(backupDir);
+                } catch {
+                  await vscode.workspace.fs.createDirectory(backupDir);
+                }
+                
+                // Write backup
+                const backupUri = vscode.Uri.joinPath(backupDir, backupFileName);
+                await vscode.workspace.fs.writeFile(backupUri, originalContent);
+                
+                // Write refactored file
+                await vscode.workspace.fs.writeFile(fileUri, newContent);
+                
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `✅ **Refactored file written!**\n\n📁 File: ${filepath}\n💾 Backup: .refactor-backups/${backupFileName}\n\n**Changes Applied:**\n${refactoringResult.changes.map(c => `• ${c}`).join('\n')}`,
+                  success: true,
+                });
+
+                // Clear refactoring context
+                (chatPanel as any)._currentRefactoringResult = null;
+                break;
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `File write error: ${err instanceof Error ? err.message : String(err)}`,
+                });
+                (chatPanel as any)._currentRefactoringResult = null;
+                break;
+              }
+            }
+            
             // Check if this is a refactor extraction button click
             const refactorData = (chatPanel as any)._currentRefactorData;
             if (refactorData && answer.startsWith('Extract: ')) {
@@ -2392,6 +2588,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize Phase 3.4 components
   architecturePatterns = new ArchitecturePatterns();
   patternDetector = new PatternDetector(llmClient);
+  patternRefactoringGenerator = new PatternRefactoringGenerator(llmClient);
   featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
   serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
