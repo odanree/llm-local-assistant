@@ -157,16 +157,17 @@ Create a detailed step-by-step plan using ONLY the allowed actions above.
 
 For each step, provide:
 1. Action type: read, write, run, or delete (ONLY these)
-2. What to do: specific file, command, or path
-3. Expected outcome: what will be true after this step
-4. Dependencies: which previous steps it depends on (if any)
+2. Description: What to do (2-3 sentence summary)
+3. File/Command: Path for read/write/delete, or the actual command for run
+4. Expected outcome: what will be true after this step
+5. Dependencies: which previous steps it depends on (if any)
 
-OUTPUT FORMAT - Be descriptive and clear:
+OUTPUT FORMAT - Be VERY specific and clear:
 
 **Step 1: read**
-- Description: Read the current authentication system
-- Path: src/auth/index.ts
-- Expected outcome: Understand current auth flow
+- Description: Read the current login form component
+- Path: src/components/LoginForm.tsx
+- Expected outcome: Understand current form structure and imports
 - Dependencies: None
 
 **Step 2: write**
@@ -180,6 +181,11 @@ OUTPUT FORMAT - Be descriptive and clear:
 - Command: npm test
 - Expected outcome: All tests pass
 - Dependencies: Step 2
+
+CRITICAL FOR RUN STEPS:
+- Always specify the actual shell command (e.g., "npm test", "npm run build", "pytest", etc.)
+- Do NOT say "run the tests" without the command
+- Include the full command that can be executed directly
 
 Continue for all steps needed to complete the request.
 Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
@@ -262,6 +268,7 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
         description: this.extractDescription(stepContent),
         path: this.extractTargetFile(stepContent),
         targetFile: this.extractTargetFile(stepContent), // For backward compat
+        command: this.extractCommand(stepContent), // CRITICAL: Extract command for run steps
         expectedOutcome: this.extractExpectedOutcome(stepContent),
         dependencies: this.extractDependencies(stepContent),
       };
@@ -300,6 +307,7 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
       description: this.extractDescription(block),
       path: this.extractTargetFile(block),
       targetFile: this.extractTargetFile(block), // For backward compat
+      command: this.extractCommand(block), // CRITICAL: Extract command for run steps
       expectedOutcome: this.extractExpectedOutcome(block),
       dependencies: this.extractDependencies(block),
     };
@@ -327,6 +335,21 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
     const targetMatch = text.match(/(?:Target|File|Path)[:\s]+([^\n]+)/i);
     if (targetMatch) {
       return targetMatch[1].trim();
+    }
+    return undefined;
+  }
+
+  /**
+   * Extract command from step block (for 'run' actions)
+   * Looks for "Command:" or "Run:" patterns
+   */
+  private extractCommand(text: string): string | undefined {
+    // Try "Command: npm test"
+    const cmdMatch = text.match(/(?:Command|Run)[:\s]+([^\n]+)/i);
+    if (cmdMatch) {
+      const cmd = cmdMatch[1].trim();
+      // Remove trailing punctuation
+      return cmd.replace(/[.;,]*$/, '');
     }
     return undefined;
   }
