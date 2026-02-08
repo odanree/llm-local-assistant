@@ -15,6 +15,7 @@ import { PatternDetector } from './patternDetector';
 import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
 import { Refiner } from './refiner';
 import { PlanParser } from './planParser';
+import { WorkspaceDetector } from './utils';
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -244,11 +245,12 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /plan command
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
-            // PHASE 3: /plan command — Re-enabled with Refiner differential prompting
+            // PHASE 6: /plan command — With multi-workspace detection
             if (planMatch) {
               const userRequest = planMatch[1];
-              const wsFolder = vscode.workspace.workspaceFolders?.[0];
-              if (!wsFolder) {
+              const rootFolder = vscode.workspace.workspaceFolders?.[0];
+              
+              if (!rootFolder) {
                 postChatMessage({
                   command: 'addMessage',
                   error: 'No workspace folder open.',
@@ -256,6 +258,39 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 });
                 return;
               }
+
+              // NEW: Detect multiple workspaces (Phase 6)
+              const detectedWorkspaces = WorkspaceDetector.findWorkspaces(rootFolder.uri.fsPath);
+
+              // If multiple workspaces detected, ask user to select
+              if (detectedWorkspaces.length > 1) {
+                const selectionPrompt = WorkspaceDetector.formatForDisplay(detectedWorkspaces);
+                
+                postChatMessage({
+                  command: 'addMessage',
+                  text: selectionPrompt,
+                  type: 'info',
+                });
+
+                // Store state for workspace selection
+                (chatPanel as any)._pendingPlanRequest = {
+                  userRequest,
+                  detectedWorkspaces,
+                  timestamp: Date.now(),
+                };
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `Please respond with a number (1-${detectedWorkspaces.length}) or "new" to continue.`,
+                  type: 'info',
+                });
+                return;
+              }
+
+              // Single workspace: proceed with plan generation
+              const wsFolder = detectedWorkspaces.length === 1 
+                ? { uri: vscode.Uri.file(detectedWorkspaces[0].path), name: detectedWorkspaces[0].name }
+                : rootFolder;
 
               postChatMessage({
                 command: 'addMessage',
@@ -303,6 +338,119 @@ Format as: [Step N] [Action Type]: [Description]`;
                 if (result.success && result.code) {
                   // Parse the generated plan into executable format
                   const parsedPlan = PlanParser.parse(result.code, userRequest);
+                  (chatPanel as any)._currentPlan = parsedPlan;
+
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ Plan generated successfully!\n\n${result.code}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                    success: true,
+                  });
+                } else {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Failed to generate plan: ${result.error || result.explanation}`,
+                    success: false,
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // PHASE 6: Handle workspace selection response (1-6 or "new")
+            const workspaceSelection = text.match(/^(new|\d+)$/i);
+            const pendingPlan = (chatPanel as any)._pendingPlanRequest;
+            
+            if (workspaceSelection && pendingPlan) {
+              const selection = workspaceSelection[1].toLowerCase();
+              const rootFolder = vscode.workspace.workspaceFolders?.[0];
+
+              if (!rootFolder) {
+                delete (chatPanel as any)._pendingPlanRequest;
+                postChatMessage({
+                  command: 'addMessage',
+                  error: 'Workspace error. Please try /plan again.',
+                  success: false,
+                });
+                return;
+              }
+
+              let selectedWorkspace: any = null;
+              let wsFolder: { uri: vscode.Uri; name: string };
+
+              if (selection === 'new') {
+                // Create new ./src folder
+                const srcPath = path.join(rootFolder.uri.fsPath, 'src');
+                wsFolder = { uri: vscode.Uri.file(srcPath), name: 'src (new)' };
+              } else {
+                const index = parseInt(selection, 10);
+                selectedWorkspace = WorkspaceDetector.getWorkspaceByIndex(pendingPlan.detectedWorkspaces, index);
+                
+                if (!selectedWorkspace) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Invalid selection. Please choose 1-${pendingPlan.detectedWorkspaces.length} or "new".`,
+                    success: false,
+                  });
+                  return;
+                }
+
+                wsFolder = { uri: vscode.Uri.file(selectedWorkspace.path), name: selectedWorkspace.name };
+              }
+
+              // Clear pending request
+              delete (chatPanel as any)._pendingPlanRequest;
+
+              postChatMessage({
+                command: 'addMessage',
+                text: `✅ Using workspace: **${wsFolder.name}**\n\n📋 Generating plan for: "${pendingPlan.userRequest}"`,
+                type: 'info',
+              });
+
+              try {
+                // Create Refiner instance with selected workspace
+                const refiner = new Refiner({
+                  projectRoot: wsFolder.uri.fsPath,
+                  workspaceName: wsFolder.name,
+                  maxRetries: 3,
+                  llmCall: async (systemPrompt: string, userMessage: string) => {
+                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                // Generate plan
+                const planPrompt = `Create a detailed step-by-step action plan for:
+
+${pendingPlan.userRequest}
+
+For each step, provide:
+1. Action type (read/write/run/analyze)
+2. What to do (specific file, command, or analysis)
+3. Expected outcome
+4. Any dependencies
+
+Format as: [Step N] [Action Type]: [Description]`;
+
+                const result = await refiner.generateCode(planPrompt, undefined, undefined);
+
+                if (result.success && result.code) {
+                  const parsedPlan = PlanParser.parse(result.code, pendingPlan.userRequest);
                   (chatPanel as any)._currentPlan = parsedPlan;
 
                   postChatMessage({
