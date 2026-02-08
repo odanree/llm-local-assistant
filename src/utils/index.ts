@@ -6,6 +6,7 @@
  * Phase 7: Lean Parser for qwen2.5-coder:7b
  * Phase 8: Path Guard & Validation Report (Danh's Senior Architecture)
  * Phase 9: GenerationModeDetector & Path Normalization (Core Four Closure)
+ * Phase 10: Post-Execution Handover (Human-in-the-Loop UX)
  * 
  * Core components for the new architecture:
  * 1. SimpleFixer - Deterministic fixes for common errors
@@ -18,6 +19,7 @@
  * 8. LeanParser - Parse lean prompt output (Danh's optimization for 7B models)
  * 9. PathSanitizer - Strict path guard & circuit breaker (senior architecture)
  * 10. ModeDetector - Detect project structure for context anchoring (Core Four closure)
+ * 11. HandoverSummary - Post-execution handover for human-in-the-loop (product thinking)
  */
 
 export { SimpleFixer, type FixResult, type FixAction } from './simpleFixer';
@@ -30,3 +32,9 @@ export { GenerationModeDetector, type GenerationModeResult } from './generationM
 export { parseLeanOutput, validateLeanOutput } from './leanParser';
 export { PathSanitizer } from './pathSanitizer';
 export { GenerationModeDetector as ModeDetector, type ProjectContext as ModeDetectorContext } from './modeDetector';
+export {
+  generateHandoverSummary,
+  formatHandoverHTML,
+  type ExecutionHandover,
+  type HandoverTask,
+} from './handoverSummary';

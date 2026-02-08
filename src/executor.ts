@@ -10,6 +10,7 @@ import { TaskPlan, PlanStep, StepResult } from './planner';
 import { validateExecutionStep } from './types/executor';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
+import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -36,6 +37,7 @@ export interface ExecutionResult {
   results: Map<number, StepResult>;
   error?: string;
   totalDuration: number;
+  handover?: any; // ExecutionHandover from handoverSummary (avoid circular import)
 }
 
 /**
@@ -209,11 +211,25 @@ export class Executor {
     }
 
     plan.status = 'completed';
+    
+    // Generate post-execution handover summary (Danh's Product Thinking)
+    const filesCreated = plan.steps
+      .filter(s => s.action === 'write')
+      .map(s => s.path)
+      .filter((p): p is string => !!p);
+    
+    const handover = generateHandoverSummary(
+      plan.results!,
+      plan.steps.map(s => s.description).join('; '),
+      filesCreated
+    );
+    
     return {
       success: true,
       completedSteps: plan.steps.length,
       results: plan.results,
       totalDuration: Date.now() - startTime,
+      handover,
     };
   }
 
