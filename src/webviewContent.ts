@@ -9,6 +9,23 @@ export function getWebviewContent(): string {
     const clear = document.getElementById('clear');
     let tokenBuffer = '';
     let bufferTimeout = null;
+    
+    // Command history & autocomplete
+    let commandHistory = [];
+    let historyIndex = -1;
+    let autocompleteMatches = [];
+    let autocompleteIndex = -1;
+    let lastAutocompletePrefix = '';
+    const availableCommands = [
+      '/refactor',
+      '/extract-service',
+      '/design-system',
+      '/rate-architecture',
+      '/suggest-patterns',
+      '/context',
+      '/check-model',
+      '/read',
+    ];
     function flushTokenBuffer() {
       if (tokenBuffer) {
         const msgs = chat.children;
@@ -29,14 +46,76 @@ export function getWebviewContent(): string {
       const msg = input.value.trim();
       if (msg) {
         chat.innerHTML += '<div class="msg user">' + msg + '</div>';
+        commandHistory.push(msg);
+        historyIndex = commandHistory.length;
         input.value = '';
+        autocompleteMatches = [];
+        autocompleteIndex = -1;
         vscode.postMessage({ command: 'sendMessage', text: msg });
       }
     }
     send.addEventListener('click', sendMessage);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
         sendMessage();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        // Tab: autocomplete or cycle through matches
+        const currentInput = input.value;
+        const cursorPos = input.selectionStart;
+        const beforeCursor = currentInput.substring(0, cursorPos);
+        
+        // Find the current command being typed
+        const lastSlash = beforeCursor.lastIndexOf('/');
+        if (lastSlash !== -1) {
+          const partialCommand = beforeCursor.substring(lastSlash);
+          
+          // Check if input changed since last tab press
+          const inputChanged = !autocompleteMatches.length || 
+            !autocompleteMatches[0].startsWith(partialCommand) ||
+            beforeCursor.substring(0, lastSlash) !== lastAutocompletePrefix;
+          
+          // First tab or input changed: get all matching commands
+          if (inputChanged) {
+            autocompleteMatches = availableCommands.filter(cmd => cmd.startsWith(partialCommand));
+            autocompleteIndex = 0;
+            lastAutocompletePrefix = beforeCursor.substring(0, lastSlash);
+          } else {
+            // Subsequent tabs: cycle through matches
+            autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
+          }
+          
+          if (autocompleteMatches.length > 0) {
+            const match = autocompleteMatches[autocompleteIndex];
+            const newInput = beforeCursor.substring(0, lastSlash) + match + currentInput.substring(cursorPos);
+            input.value = newInput;
+            input.setSelectionRange(beforeCursor.substring(0, lastSlash).length + match.length, beforeCursor.substring(0, lastSlash).length + match.length);
+          }
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        // ArrowUp: restore previous command
+        if (historyIndex > 0) {
+          historyIndex--;
+          input.value = commandHistory[historyIndex];
+          setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+        }
+        autocompleteMatches = [];
+        autocompleteIndex = -1;
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        // ArrowDown: go to next command in history
+        if (historyIndex < commandHistory.length - 1) {
+          historyIndex++;
+          input.value = commandHistory[historyIndex];
+          setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+        } else {
+          historyIndex = commandHistory.length;
+          input.value = '';
+        }
+        autocompleteMatches = [];
+        autocompleteIndex = -1;
       }
     });
     clear.addEventListener('click', () => {
@@ -75,6 +154,68 @@ export function getWebviewContent(): string {
         } else if (msg.text) {
           div.textContent = msg.text;
         }
+        
+        // Add buttons if options are provided
+        if (msg.options && msg.options.length > 0) {
+          const buttonContainer = document.createElement('div');
+          buttonContainer.className = 'question-buttons';
+          buttonContainer.style.marginTop = '12px';
+          
+          msg.options.forEach((option) => {
+            // Check if this is an Execute button
+            const isExecuteButton = option.startsWith('Execute: ');
+            
+            if (isExecuteButton) {
+              // Create row with command + button
+              const row = document.createElement('div');
+              row.className = 'command-row';
+              
+              // Extract command from "Execute: /refactor ..."
+              const command = option.substring('Execute: '.length);
+              
+              // Command code (left side, copyable)
+              const code = document.createElement('code');
+              code.style.fontFamily = 'monospace';
+              code.style.marginRight = '8px';
+              code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
+              code.style.padding = '4px 8px';
+              code.style.borderRadius = '3px';
+              code.style.userSelect = 'all';
+              code.style.cursor = 'text';
+              code.textContent = command;
+              row.appendChild(code);
+              
+              // Button - send /refactor command to trigger analysis + pattern detection
+              const btn = document.createElement('button');
+              btn.className = 'question-btn command-btn';
+              btn.textContent = '▶ Execute';
+              btn.onclick = () => {
+                console.log('[Webview] Execute button from /suggest-patterns:', command);
+                // Send /refactor command - this will run pattern detection
+                chat.innerHTML += '<div class="msg user">' + command + '</div>';
+                commandHistory.push(command);
+                historyIndex = commandHistory.length;
+                vscode.postMessage({ command: 'sendMessage', text: command });
+              };
+              row.appendChild(btn);
+              
+              buttonContainer.appendChild(row);
+            } else {
+              // Regular button
+              const btn = document.createElement('button');
+              btn.className = 'question-btn';
+              btn.textContent = option;
+              btn.onclick = () => {
+                input.value = option.replace('Execute: ', '');
+                input.focus();
+              };
+              buttonContainer.appendChild(btn);
+            }
+          });
+          
+          div.appendChild(buttonContainer);
+        }
+        
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
       } else if (msg.command === 'status') {
@@ -99,20 +240,52 @@ export function getWebviewContent(): string {
         buttonContainer.className = 'question-buttons';
         
         msg.options.forEach((option, idx) => {
-          const btn = document.createElement('button');
-          btn.className = 'question-btn';
-          btn.textContent = option;
-          btn.onclick = () => {
-            console.log('[Webview] User clicked option:', option);
-            // Disable all buttons
-            Array.from(buttonContainer.querySelectorAll('.question-btn')).forEach(b => {
-              b.disabled = true;
-              b.style.opacity = '0.5';
-            });
-            // Send response to extension
-            vscode.postMessage({ command: 'answerQuestion', answer: option });
-          };
-          buttonContainer.appendChild(btn);
+          // Check if option starts with "Execute: " (special handling for command buttons)
+          const isExecuteButton = option.startsWith('Execute: ');
+          
+          if (isExecuteButton) {
+            // Create row with command + button
+            const row = document.createElement('div');
+            row.className = 'command-row';
+            
+            // Extract command from "Execute: /refactor ..."
+            const command = option.substring('Execute: '.length);
+            
+            // Command code (left side, copyable)
+            const code = document.createElement('code');
+            code.style.fontFamily = 'monospace';
+            code.style.marginRight = '8px';
+            code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
+            code.style.padding = '4px 8px';
+            code.style.borderRadius = '3px';
+            code.style.userSelect = 'all';
+            code.style.cursor = 'text';
+            code.textContent = command;
+            row.appendChild(code);
+            
+            // Button clicks - trigger refactoring action (not just re-run analyze)
+            const btn = document.createElement('button');
+            btn.className = 'question-btn command-btn';
+            btn.textContent = '▶ Execute';
+            btn.onclick = () => {
+              console.log('[Webview] User clicked execute button, triggering refactoring');
+              // Send answerQuestion with special marker so extension knows to refactor
+              vscode.postMessage({ command: 'answerQuestion', answer: '🔧 Refactor Now' });
+            };
+            row.appendChild(btn);
+            
+            buttonContainer.appendChild(row);
+          } else {
+            // Regular button (no command)
+            const btn = document.createElement('button');
+            btn.className = 'question-btn';
+            btn.textContent = option;
+            btn.onclick = () => {
+              console.log('[Webview] User clicked option:', option);
+              vscode.postMessage({ command: 'answerQuestion', answer: option });
+            };
+            buttonContainer.appendChild(btn);
+          }
         });
         
         div.appendChild(buttonContainer);
@@ -237,9 +410,10 @@ export function getWebviewContent(): string {
           }
           .question-buttons {
             display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+            flex-direction: column;
+            gap: 6px;
             margin-top: 12px;
+            align-items: flex-start;
           }
           .question-btn {
             padding: 8px 14px;
@@ -258,6 +432,25 @@ export function getWebviewContent(): string {
           .question-btn:disabled {
             cursor: not-allowed;
             opacity: 0.6;
+          }
+          .command-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+          }
+          .command-row code {
+            background: var(--vscode-textCodeBlock-background);
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 11px;
+            user-select: all;
+            cursor: text;
+          }
+          .command-btn {
+            white-space: nowrap;
+            flex-shrink: 0;
           }
           .input-row {
             display: flex;

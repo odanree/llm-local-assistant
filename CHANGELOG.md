@@ -1,212 +1,282 @@
-# Change Log
+# CHANGELOG
 
-All notable changes to the "llm-local-assistant" extension will be documented in this file.
+All notable changes to this project will be documented in this file.
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.5] - 2026-01-16
+## [2.0.3] - 2026-02-08
 
-### Fixed
-- **Marketplace Documentation Sync** - Removed personal narrative from marketplace description
-  - Aligned marketplace messaging with professional README documentation
-  - Personal story moved to LinkedIn post for appropriate audience
-  - Maintains technical focus for VS Code Marketplace listing
+### Focus: Analysis-Only, Production-Ready
 
-## [1.2.4] - 2026-01-16
+**v2.0.3 is the honest release.** We disabled broken code generation and focused on what works.
 
-### Added
-- **v1.2.3 Release Documentation** - Updated README with AI Agent Safety features
-  - Documented write operation safety and interactive confirmation
-  - Added smart risk detection for critical files
-  - Highlighted user control and balanced automation
+### Changed
 
-## [1.2.3] - 2026-01-16
+- **Disabled `/plan`, `/design-system`, `/approve`** - Code generation creates infinite validation loops
+  - Problem: LLM generates code missing imports, auto-correction regenerates same broken code repeatedly
+  - Solution: Disabled unreliable features, updated docs with honest assessment
+  - Better tools: Use Cursor, Windsurf, or VS Code + Copilot for code generation
 
-### Added
-- **Follow-up Questions for Write Operations (Phase 2.2 Enhancement)** - Protection for critical files
-  - Questions trigger when writing to risky files: config.json, .env, Dockerfile, tsconfig.json, .eslintrc, webpack.config.js, etc.
-  - User can approve, skip, or cancel before writing to important configuration files
-  - Simple text files (.txt, .md, etc.) write directly without questions
-  - 20+ file patterns detected as risky (build configs, linters, CI/CD, containers, database files)
-  - Comprehensive logging for debugging question flow
+- **Updated README.md** - Reflects v2.0.3 analysis-only focus
+  - Removed misleading code generation claims
+  - Clear before/after comparison (what works, what doesn't)
+  - Honest about limitations and better alternatives
+  - Quick start guide for analysis commands
 
-### Tests
-- Added 5 new test cases for write operation questions (140 total tests passing)
-  - Trigger question for package.json
-  - Trigger question for .env files
-  - Don't trigger question for simple text files
-  - Handle user skipping risky writes
-  - Trigger question for Dockerfile
+- **Updated ROADMAP.md** - Transparent about design decisions
+  - Philosophy: Honest about limitations
+  - Known limitations (by design)
+  - Future plans (v2.1+)
+  - Contributing guidelines
 
-## [1.2.2] - 2026-01-16
-
-### Added
-- **Follow-up Questions (Phase 2.2)** - Interactive clarification before risky operations
-  - Questions appear in chat UI with interactive buttons when running npm/test commands
-  - User can choose: "Yes, proceed", "No, skip this step", or "Cancel execution"
-  - Executor waits for user response before continuing
-  - Prevents accidental execution of long-running or destructive commands
+- **Cleaned up project root** - Production-standard structure only
+  - Removed: PHASE-*.md, FIX-*.md, GITHUB-*.md, LOCAL_TESTING_GUIDE.md, VSIX packages
+  - Kept: README.md, CHANGELOG.md, ROADMAP.md, LICENSE, package.json, tsconfig.json
 
 ### Fixed
-- **Plan Protection** - Safeguards against destructive plan generation
-  - Blocks LLM from generating write steps for critical files (package.json, tsconfig.json, config files, lock files)
-  - Enhanced system prompt with explicit rules against modifying configuration
-  - Validation rejects plans trying to overwrite protected files
-  - Prevents 'just run X' requests from generating unnecessary destructive write steps
 
-- **Executor Flow** - Fixed question callback to properly continue execution
-  - Corrected return value when user approves question (was skipping, now proceeds)
-  - Added comprehensive logging for debugging question feature flow
+- **Fixed `/suggest-patterns` file discovery**
+  - Now scans BOTH src AND root directories (not just one or the other)
+  - Finds all files in project, comprehensive pattern detection
+  - Works with any project structure (single-dir, organized, refactored)
 
-## [1.2.1] - 2025-12-10
+- **Fixed `/plan`, `/design-system`, `/approve` multi-workspace support**
+  - Plans now execute in correct workspace (not always workspace[0])
+  - Added `getActiveWorkspace()` function to detect active editor's workspace
+  - Updates Planner/Executor workspace context before creating/executing plans
 
-### Updated
-- **Documentation** - Updated README.md to reflect v1.2.0 features
-  - Added `/explain` command documentation
-  - Documented auto-correction feature
-  - Updated feature list with codebase awareness
-  - Marketplace listing now reflects latest capabilities
+### Quality
 
-## [1.2.0] - 2025-12-10
+- **Tests**: 284/284 passing ✅
+- **Compilation**: 0 errors ✅
+- **TypeScript strict**: Enabled ✅
+- **Production blockers**: 0 ✅
 
-### Added
-- **Feature 1: Auto-Correction in Executor** - Intelligent error recovery during plan execution
-  - Auto-creates missing parent directories when writing files
-  - Falls back to parent directory when reading non-existent files
-  - Recovers from command-not-found errors by trying alternatives (npx, yarn)
-  - Transparent to user - only shows results, not recovery attempts
+### Notes
 
-- **Feature 2: Codebase Awareness** - Context-aware planning based on project analysis
-  - Analyzes package.json to detect project type, language, and frameworks
-  - Passes codebase context to LLM for informed planning
-  - TypeScript/Node.js project detection working
-  - Framework detection infrastructure ready for expansion
+**What v2.0.3 Teaches Us:**
 
-- **Feature 3: Follow-up Questions Infrastructure** - Foundation for interactive execution
-  - `askClarification()` method implemented in Executor
-  - `onQuestion` callback wired in ExecutorConfig
-  - Ready for webview UI integration in Phase 2.2
-  - Supports ambiguous file selection scenarios
+1. **Analysis > Generation**
+   - Pattern detection is 100% reliable
+   - Code generation is fundamentally unreliable
+   - Better to admit limitations than hide them
 
-- **Feature 4: /explain Command** - LLM-powered code explanation
-  - Generate detailed explanations of code files
-  - Context-aware explanations using conversation history
-  - Proper error handling for missing files
-  - Integrates with conversation for debugging workflows
+2. **Honesty Builds Trust**
+   - Clear about what works and what doesn't
+   - Recommend better tools when appropriate
+   - Users know exactly what they're getting
 
-- **Feature 5: Full Integration** - All systems working together
-  - Explain command provides knowledge
-  - Plan command uses codebase context
-  - Executor handles execution with auto-correction
-  - Complete workflow: explain → plan → execute
+3. **Focus on Strength**
+   - This extension excels at code understanding
+   - Let other tools handle what they're better at
+   - Do one thing well, not many things poorly
 
-### Improved
-- **Shell Command Execution** - Fixed PATH issues on macOS
-  - Uses login shell (`/bin/bash -l`) to source shell configuration
-  - Explicitly includes homebrew paths in environment
-  - Properly inherits parent process environment variables
-  - Resolves npm/node command discovery issues
+---
 
-- **Error Recovery** - More intelligent auto-correction patterns
-  - Pattern 1: Creates parent directories on write failures
-  - Pattern 2: Falls back to parent directory on read failures
-  - Pattern 3: Tries alternative commands (npx npm, npx tsc, etc.)
+## [2.0.2] - 2026-02-07
 
-### Testing
-- Comprehensive v1.2.0 feature test suite (8/10 tests passing)
-- Auto-correction patterns verified for all scenarios
-- Codebase awareness context-aware planning validated
-- /explain command tested with context awareness
-- Full integration workflow tested successfully
-- Success rate: 89% (8/9 applicable tests)
+### Changed
 
-## [1.1.2] - 2025-12-09
-
-### Added
-- **Directory Reading Support** - Executor can now read and display directory structures recursively
-  - Visual tree output with 📁 folder and 📄 file icons
-  - Supports glob patterns (e.g., `examples/**`)
-  - Proper depth limiting to prevent overwhelming output
-- **Chat History Persistence** - Chat messages now persist when switching between editors and chat panel
-  - New `postChatMessage()` helper for automatic message storage
-  - History restored when chat panel reopens
-  - Fixes context loss issue during workflow
-
-### Improved
-- **Planner Action Validation** - Enhanced system prompt with clearer action type indicators (✅/❌)
-  - Better error messages showing which invalid actions were used
-  - Restricted valid actions to `read`, `write`, `run` (removed `suggestwrite` from plans)
-  - Improved validation error reporting for clarity
-- **LLM Timeout Configuration** - Increased default timeout from 30s → 60s
-  - Accommodates complex multi-step planning tasks
-  - Configurable via `llm-assistant.timeout` setting
-- **Error Handling** - More descriptive error suggestions when operations fail
-  - Directory detection prevents EISDIR errors
-  - Better fallback behavior when file paths are directories
+- **Pattern detection enhancements** - Improved accuracy for all 8 patterns
+- **Safety improvements** - Added pattern blocking to prevent unsafe refactorings
+- **UI/UX polish** - Better error messages and command feedback
+- **Multi-workspace support (initial)** - Basic support for multiple workspaces
 
 ### Fixed
-- Chat history loss when switching between editors and chat panel (#phase2-persistence)
-- Directory reading fails with EISDIR errors (#phase2-dirread)
-- Planner generates unsupported `suggestwrite` actions (#phase2-validation)
-- LLM timeout for complex multi-step planning tasks (#phase2-timeout)
 
-### Testing
-- End-to-end execution: plan → read → write → test generation ✓
-- Chat persistence across panel switches ✓
-- Directory structure visualization with tree output ✓
-- Error handling for invalid plan actions ✓
-- All unit tests passing (94+) ✓
+- Fixed pattern detection timeouts
+- Fixed import validation loop detection
+- Fixed service extraction workspace handling
 
-## [1.1.0] - 2025-12-07
+### Quality
 
-### Added
-- **Phase 2: Agent Loop Foundation** - Multi-step planning and autonomous execution
-- `/plan <task>` command to generate structured action plans using LLM
-- `/approve` command to execute approved plans with automatic retry logic
-- `/reject` command to discard plans before execution
-- `Planner` module for intelligent task decomposition (breaks complex requests into 3-10 steps)
-- `Executor` module for sequential step execution with configurable retry logic
-- Automatic error recovery with up to 2 retry attempts per step
-- Progress callbacks for real-time plan execution monitoring
-- 32 comprehensive unit tests for Planner and Executor modules (>85% coverage)
+- **Tests**: 273/273 passing ✅
+- **Compilation**: 0 errors ✅
+- **TypeScript strict**: Enabled ✅
 
-### Improved
-- Updated help text to display new planning commands alongside existing file operations
-- Enhanced command routing for agent mode with planning workflow
-- Better state management for active plans across chat sessions
+---
 
-## [1.0.1] - 2025-11-19
-
-### Updated
-- Documentation updates for v1.0.0 stable release
-- Updated README with semantic versioning details
-- Updated CHANGELOG with v1.0.0 release information
-- All metrics synchronized across documentation
-
-## [1.0.0] - 2025-11-19
-
-### Released
-- First stable release with semantic versioning
-- Production-ready extension published to VS Code Marketplace
-- All core features complete and tested
-- Comprehensive documentation and error handling
-
-## [Unreleased]
+## [2.0.1] - 2026-02-06
 
 ### Added
-- Token buffering for streaming responses (batch updates every 10 tokens)
-- Performance optimization for large file reading (handles files >5MB gracefully)
 
-### Improved
-- **UI Performance**: Reduced DOM reflows during token streaming by batching updates (~3-5x fewer redraws)
-- **File Handling**: Large files (>5MB) now show truncation warning instead of causing lag
-- **Streaming UX**: Smoother streaming display with optimized buffer flush timing (50ms timeout for small responses)
+- **Pattern Detection Foundation**
+  - 8 design patterns: CRUD, Authentication, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination
+  - Automatic pattern discovery across codebase
+  - Pattern availability scoring
 
-### Initial release
+- **Architecture Analysis**
+  - 5-layer semantic analysis (state, dependencies, coupling, data flow, anti-patterns)
+  - Layer-aware code quality scoring (0-10)
+  - Actionable recommendations for improvements
 
-- Chat interface with streaming responses
-- File read/write/suggest commands
-- Configuration management for local LLM endpoints
-- Support for Ollama, LM Studio, vLLM servers
-- Error handling with actionable error messages
-- Comprehensive TypeScript type safety
+### Changed
+
+- `/refactor <file>` command redesigned
+  - Now focuses on analysis and recommendations
+  - Removed automatic code generation
+  - Shows pattern suggestions instead
+
+### Fixed
+
+- Fixed circular import detection
+- Fixed validation loop prevention
+- Fixed service extraction safety checks
+
+### Quality
+
+- **Tests**: 255+ passing ✅
+- **Compilation**: 0 errors ✅
+- **TypeScript strict**: Enabled ✅
+
+---
+
+## [2.0.0] - 2026-02-06
+
+### Major Release: Intelligent Refactoring Framework
+
+### Added
+
+- **Phase 3: Intelligent Refactoring (NEW)**
+  - `/refactor <file>` - Deep semantic analysis with recommendations
+  - `/rate-architecture` - Architecture scoring (0-10)
+  - `/suggest-patterns` - Pattern recommendations (8 patterns)
+  - `/context show structure` - Project organization
+  - `/context show patterns` - Detected patterns
+  - `/context show dependencies` - File relationships
+
+- **Architecture Analysis Engine**
+  - 5-layer semantic analysis
+  - Pattern detection for 8 common patterns
+  - Architecture scoring algorithm
+  - Issue classification and severity
+
+- **Safety Features**
+  - Validation loop prevention
+  - Circular import detection
+  - Smart error recovery
+  - Graceful degradation
+
+### Changed
+
+- Refactored core architecture for Phase 3
+- Updated LLM client for better analysis prompts
+- Improved error messages and diagnostics
+- Enhanced documentation
+
+### Quality
+
+- **Tests**: 234 passing ✅
+- **Compilation**: 0 errors ✅
+- **TypeScript strict**: Enabled ✅
+- **Type coverage**: 100% ✅
+
+---
+
+## [1.2.5] - 2026-02-05
+
+### Added
+
+- Multi-step planning with LLM
+- Autonomous plan execution with retry logic
+- Interactive plan approval/rejection
+- Real-time progress tracking
+
+### Changed
+
+- Redesigned command system
+- Updated webview UI for better clarity
+- Improved error handling
+
+---
+
+## [1.2.0] - 2026-02-04
+
+### Added
+
+- `/plan <task>` - Break down tasks into multi-step plans
+- `/approve` - Execute approved plans
+- `/reject` - Discard plans
+- Plan execution with automatic retry (up to 2 attempts)
+- Interactive confirmation for risky operations
+
+### Changed
+
+- Chat UI redesigned for planning workflow
+- New plan execution system
+
+---
+
+## [1.0.0] - 2026-01-31
+
+### Initial Release
+
+### Added
+
+- Basic LLM chat with streaming support
+- `/read <path>` - Read files
+- `/write <path>` - Generate file content
+- `/suggestwrite <path>` - Preview before writing
+- `/explain <path>` - Code explanation
+- `/git-commit-msg` - Generate commit messages
+- `/git-review` - Code review
+- `/check-model` - Model diagnostics
+- `/help` - Command reference
+- Local LLM support (Ollama, LM Studio, vLLM)
+- 100% local and private
+- TypeScript strict mode
+- 92 comprehensive tests
+
+---
+
+## Philosophy
+
+This changelog documents our learnings, not just features:
+
+### What We've Learned
+
+1. **Analysis is more valuable than generation**
+   - Pattern detection excels, code generation fails
+   - Focus on understanding code, not writing it
+
+2. **Honesty about limitations builds trust**
+   - Better to say "we can't do this" than break promises
+   - Recommend better tools when appropriate
+
+3. **Simple, focused tools are better than everything**
+   - Do one thing well (analysis)
+   - Let other tools handle other things (generation)
+
+4. **Local and private is a feature**
+   - Users care about code privacy
+   - Worth the effort to support local-only
+
+5. **Tests catch everything**
+   - 100% test coverage prevents regressions
+   - Tests guide API design
+   - Tests build confidence in changes
+
+### Future Mindset
+
+- **Quality over quantity** - Focus on reliability, not features
+- **Honest scope** - Clear about what works and what doesn't
+- **User control** - No surprise automation
+- **Local first** - Privacy and offline-capability
+- **Community feedback** - Listen to users, adapt accordingly
+
+---
+
+## Acknowledgments
+
+Thanks to the LLM community for inspiration and tools:
+- Ollama - Local LLM serving
+- VS Code - Extension API
+- TypeScript - Type safety
+- Vitest - Testing framework
+
+---
+
+**Last Updated**: 2026-02-08  
+**Current Version**: v2.0.3 ✅  
+**Status**: Production Ready

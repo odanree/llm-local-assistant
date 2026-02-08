@@ -6,9 +6,16 @@ node_modules
 .DS_Store
 **/.DS_Store
 
+# Example files (documentation only, not real tests)
+examples/**/*.test.ts
+examples/**/*.spec.ts
+examples/**/test/
+
 # AI Coding Agent Instructions (internal development context)
 .github/copilot-instructions.md
 
 # LinkedIn post (less transparency on social media strategy)
 docs/LINKEDIN_POST.md
 
+# Generated packages
+llm-local-assistant-*.vsix

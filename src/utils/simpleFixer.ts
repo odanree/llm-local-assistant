@@ -1,331 +1,328 @@
 /**
- * SimpleFixer - Deterministic, regex-based fixes for common validation errors
- * 
- * Part of the "Stateful Correction" architecture (Phase 1 - v3.0 Relaunch)
- * 
- * Philosophy:
- * Before asking the LLM to fix validation errors, check if the error is
- * a "simple" mistake that can be fixed deterministically. This:
- * 1. Reduces validation failures from 3+ retries to 0-1 retries
- * 2. Avoids LLM repeating the same mistake
- * 3. Covers ~40% of real-world validation errors
- * 
- * Patterns covered:
- * - Missing imports (useState, useEffect, etc.)
- * - Missing semicolons
- * - Unused variables
- * - Duplicate imports
- * - Closing brackets/parens
+ * SimpleFixer: Deterministic, regex-based fixes for common code errors
+ *
+ * Part of Phase 1: Stateful Correction Architecture
+ * Handles common errors without invoking LLM, reducing retry loops
+ *
+ * Strategy: Fix what we're SURE about (missing imports, unused vars, syntax)
+ * Defer to LLM only when logic is unclear or context-dependent
  */
 
-export interface SimpleFix {
-  type: 'import' | 'semicolon' | 'unused-var' | 'duplicate' | 'bracket' | 'unknown';
-  applied: boolean;
-  fixedCode: string;
-  description: string;
+export interface FixResult {
+  code: string;
+  fixed: boolean;
+  fixes: FixAction[];
 }
 
-export interface FixerResult {
-  fixed: boolean;
-  code: string;
-  appliedFixes: SimpleFix[];
-  fixLog: string[];
+export interface FixAction {
+  type: string;
+  description: string;
+  line?: number;
 }
 
 export class SimpleFixer {
   /**
-   * Attempt to fix code using deterministic patterns
-   * Returns the fixed code + log of what was fixed
+   * Attempt deterministic fixes on invalid code
+   * Returns enhanced code if fixable, otherwise returns original
    */
-  static fix(code: string): FixerResult {
-    const fixes: SimpleFix[] = [];
-    const fixLog: string[] = [];
-    let currentCode = code;
+  static fix(code: string): FixResult {
+    const fixes: FixAction[] = [];
+    let fixed = code;
 
-    // Try each fix in sequence
-    const importFix = this.fixMissingImports(currentCode);
-    if (importFix.applied) {
-      fixes.push(importFix);
-      fixLog.push(`✓ ${importFix.description}`);
-      currentCode = importFix.fixedCode;
+    // Fix 1: Missing imports for common React hooks
+    const importFixes = this.fixMissingImports(fixed);
+    if (importFixes.code !== fixed) {
+      fixed = importFixes.code;
+      fixes.push(...importFixes.fixes);
     }
 
-    const duplicateFix = this.removeDuplicateImports(currentCode);
-    if (duplicateFix.applied) {
-      fixes.push(duplicateFix);
-      fixLog.push(`✓ ${duplicateFix.description}`);
-      currentCode = duplicateFix.fixedCode;
+    // Fix 2: Missing semicolons at end of statements
+    const semiColonFixes = this.fixMissingSemicolons(fixed);
+    if (semiColonFixes.code !== fixed) {
+      fixed = semiColonFixes.code;
+      fixes.push(...semiColonFixes.fixes);
     }
 
-    const semicolonFix = this.fixMissingSemicolons(currentCode);
-    if (semicolonFix.applied) {
-      fixes.push(semicolonFix);
-      fixLog.push(`✓ ${semicolonFix.description}`);
-      currentCode = semicolonFix.fixedCode;
+    // Fix 3: Unused variable declarations
+    const unusedFixes = this.fixUnusedVariables(fixed);
+    if (unusedFixes.code !== fixed) {
+      fixed = unusedFixes.code;
+      fixes.push(...unusedFixes.fixes);
     }
 
-    const bracketFix = this.fixClosingBrackets(currentCode);
-    if (bracketFix.applied) {
-      fixes.push(bracketFix);
-      fixLog.push(`✓ ${bracketFix.description}`);
-      currentCode = bracketFix.fixedCode;
+    // Fix 4: Missing closing braces/brackets
+    const closingBracketFixes = this.fixMissingClosingBrackets(fixed);
+    if (closingBracketFixes.code !== fixed) {
+      fixed = closingBracketFixes.code;
+      fixes.push(...closingBracketFixes.fixes);
+    }
+
+    // Fix 5: Incorrect return statements in conditionals
+    const returnFixes = this.fixIncorrectReturns(fixed);
+    if (returnFixes.code !== fixed) {
+      fixed = returnFixes.code;
+      fixes.push(...returnFixes.fixes);
+    }
+
+    // Fix 6: Double function declarations
+    const duplicateFixes = this.fixDuplicateFunctionDeclarations(fixed);
+    if (duplicateFixes.code !== fixed) {
+      fixed = duplicateFixes.code;
+      fixes.push(...duplicateFixes.fixes);
     }
 
     return {
+      code: fixed,
       fixed: fixes.length > 0,
-      code: currentCode,
-      appliedFixes: fixes,
-      fixLog,
+      fixes,
     };
   }
 
   /**
-   * Fix missing imports by analyzing usage and injecting import statements
-   * 
-   * Patterns:
-   * - useState, useEffect, useContext, useReducer, useState, useCallback, useMemo, etc.
-   * - Custom hooks that follow use* pattern
+   * Fix 1: Add missing React imports
    */
-  private static fixMissingImports(code: string): SimpleFix {
-    const lines = code.split('\n');
-    let fixed = false;
-    const imports: Set<string> = new Set();
-    const existingImports = this.extractExistingImports(code);
+  private static fixMissingImports(code: string): FixResult {
+    const fixes: FixAction[] = [];
+    let fixed = code;
 
-    // Common React hooks
-    const reactHooks = [
-      'useState',
-      'useEffect',
-      'useContext',
-      'useReducer',
-      'useCallback',
-      'useMemo',
-      'useRef',
-      'useLayoutEffect',
-      'useImperativeHandle',
-      'useDebugValue',
-      'useDeferredValue',
-      'useTransition',
-      'useSyncExternalStore',
-      'useId',
-    ];
-
-    // Check for usage of React hooks
-    for (const hook of reactHooks) {
-      const hookRegex = new RegExp(`\\b${hook}\\s*\\(`, 'g');
-      if (hookRegex.test(code) && !existingImports.has(hook)) {
-        imports.add(hook);
-        fixed = true;
-      }
-    }
-
-    // If we found missing imports, inject them at the top
-    if (imports.size > 0) {
-      const importList = Array.from(imports).join(', ');
-      const importStatement = `import { ${importList} } from 'react';\n`;
-
-      // Find the first line that's not a comment or empty
-      let insertIndex = 0;
-      for (let i = 0; i < lines.length; i++) {
-        const trimmed = lines[i].trim();
-        if (trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('/*')) {
-          insertIndex = i;
-          break;
-        }
-      }
-
-      lines.splice(insertIndex, 0, importStatement);
-      const fixedCode = lines.join('\n');
-
-      return {
-        type: 'import',
-        applied: true,
-        fixedCode,
-        description: `Added missing React imports: ${importList}`,
-      };
-    }
-
-    return {
-      type: 'import',
-      applied: false,
-      fixedCode: code,
-      description: 'No missing imports detected',
+    const hooks = {
+      useState: /useState/,
+      useEffect: /useEffect/,
+      useContext: /useContext/,
+      useReducer: /useReducer/,
+      useCallback: /useCallback/,
+      useMemo: /useMemo/,
+      useRef: /useRef/,
     };
+
+    const missingHooks = Object.entries(hooks)
+      .filter(([, regex]) => regex.test(fixed))
+      .filter(([hook]) => !fixed.includes(`import ${hook} from`))
+      .map(([hook]) => hook);
+
+    if (missingHooks.length > 0) {
+      const hooksString = missingHooks.join(", ");
+      const importStatement = `import { ${hooksString} } from "react";`;
+
+      if (!fixed.includes('import')) {
+        fixed = importStatement + "\n" + fixed;
+      } else {
+        // Insert after first React import or at top
+        const firstImportIndex = fixed.indexOf('import ');
+        const endOfFirstImport = fixed.indexOf('\n', firstImportIndex);
+        fixed = fixed.substring(0, endOfFirstImport + 1) + importStatement + "\n" + fixed.substring(endOfFirstImport + 1);
+      }
+
+      fixes.push({
+        type: 'missing-import',
+        description: `Added missing React imports: ${hooksString}`,
+      });
+    }
+
+    return { code: fixed, fixed: fixes.length > 0, fixes };
   }
 
   /**
-   * Remove duplicate import statements (same module imported multiple times)
+   * Fix 2: Add missing semicolons
    */
-  private static removeDuplicateImports(code: string): SimpleFix {
+  private static fixMissingSemicolons(code: string): FixResult {
+    const fixes: FixAction[] = [];
+
+    // Skip lines that already end with semicolons or are control flow
     const lines = code.split('\n');
-    const importMap = new Map<string, string>();
-    const indicesToRemove: number[] = [];
-    let fixed = false;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line.startsWith('import ') && line.endsWith(';')) {
-        // Extract the module name (the part after 'from')
-        const match = line.match(/from\s+['"]([^'"]+)['"]/);
-        if (match) {
-          const moduleName = match[1];
-          if (importMap.has(moduleName)) {
-            // This is a duplicate
-            indicesToRemove.push(i);
-            fixed = true;
-          } else {
-            importMap.set(moduleName, line);
-          }
-        }
-      }
-    }
-
-    if (fixed) {
-      // Remove lines in reverse order to preserve indices
-      for (let i = indicesToRemove.length - 1; i >= 0; i--) {
-        lines.splice(indicesToRemove[i], 1);
-      }
-      const fixedCode = lines.join('\n');
-
-      return {
-        type: 'duplicate',
-        applied: true,
-        fixedCode,
-        description: `Removed ${indicesToRemove.length} duplicate import(s)`,
-      };
-    }
-
-    return {
-      type: 'duplicate',
-      applied: false,
-      fixedCode: code,
-      description: 'No duplicate imports found',
-    };
-  }
-
-  /**
-   * Fix missing semicolons at end of statements
-   * (only for obvious cases to avoid breaking code)
-   */
-  private static fixMissingSemicolons(code: string): SimpleFix {
-    const lines = code.split('\n');
-    let fixed = 0;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    const shouldHaveSemicolon = (line: string) => {
       const trimmed = line.trim();
-
-      // Skip empty lines, comments, and lines already ending with semicolon
-      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.endsWith(';') || trimmed.endsWith(',')) {
-        continue;
-      }
-
-      // Patterns that should end with semicolon
-      const shouldHaveSemicolon =
-        trimmed.startsWith('const ') ||
-        trimmed.startsWith('let ') ||
-        trimmed.startsWith('var ') ||
-        trimmed.startsWith('return ') ||
-        trimmed.startsWith('import ') ||
-        trimmed.startsWith('export ');
-
-      // Patterns that should NOT have semicolon
-      const shouldNotHaveSemicolon =
-        trimmed.endsWith('{') ||
-        trimmed.endsWith('}') ||
-        trimmed.endsWith('[') ||
-        trimmed.endsWith(']') ||
-        trimmed.endsWith('(') ||
-        trimmed.startsWith('}');
-
-      if (shouldHaveSemicolon && !shouldNotHaveSemicolon) {
-        lines[i] = line + ';';
-        fixed++;
-      }
-    }
-
-    if (fixed > 0) {
-      const fixedCode = lines.join('\n');
-      return {
-        type: 'semicolon',
-        applied: true,
-        fixedCode,
-        description: `Added ${fixed} missing semicolon(s)`,
-      };
-    }
-
-    return {
-      type: 'semicolon',
-      applied: false,
-      fixedCode: code,
-      description: 'No missing semicolons detected',
+      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*')) return false;
+      if (/^(if|else|for|while|switch|try|catch|do|function|class|interface|export|import)/.test(trimmed)) return false;
+      if (/[{}\[\]]$/.test(trimmed)) return false;
+      return /[a-zA-Z0-9_\)\]\}]$/.test(trimmed);
     };
-  }
 
-  /**
-   * Fix mismatched closing brackets/parens/braces
-   */
-  private static fixClosingBrackets(code: string): SimpleFix {
-    const lines = code.split('\n');
-    let fixed = false;
-
-    // Count opening/closing brackets
-    const openBrackets = (code.match(/\[/g) || []).length;
-    const closeBrackets = (code.match(/\]/g) || []).length;
-    const openParens = (code.match(/\(/g) || []).length;
-    const closeParens = (code.match(/\)/g) || []).length;
-    const openBraces = (code.match(/\{/g) || []).length;
-    const closeBraces = (code.match(/\}/g) || []).length;
-
-    if (openBrackets > closeBrackets) {
-      lines.push(']'.repeat(openBrackets - closeBrackets));
-      fixed = true;
-    }
-    if (openParens > closeParens) {
-      lines.push(')'.repeat(openParens - closeParens));
-      fixed = true;
-    }
-    if (openBraces > closeBraces) {
-      lines.push('}'.repeat(openBraces - closeBraces));
-      fixed = true;
-    }
-
-    if (fixed) {
-      const fixedCode = lines.join('\n');
-      return {
-        type: 'bracket',
-        applied: true,
-        fixedCode,
-        description: `Added missing closing bracket(s)`,
-      };
-    }
-
-    return {
-      type: 'bracket',
-      applied: false,
-      fixedCode: code,
-      description: 'No missing brackets detected',
-    };
-  }
-
-  /**
-   * Extract existing imports from code to avoid adding duplicates
-   */
-  private static extractExistingImports(code: string): Set<string> {
-    const imports = new Set<string>();
-    const lines = code.split('\n');
+    let fixed = code;
+    let lineNum = 0;
 
     for (const line of lines) {
-      const match = line.match(/import\s*{([^}]+)}\s*from/);
-      if (match) {
-        const items = match[1].split(',').map((item) => item.trim());
-        items.forEach((item) => {
-          const name = item.split(' as ')[0].trim();
-          imports.add(name);
+      if (shouldHaveSemicolon(line) && !line.trim().endsWith(';')) {
+        fixed = fixed.replace(line, line + ';');
+        fixes.push({
+          type: 'missing-semicolon',
+          description: 'Added missing semicolon',
+          line: lineNum,
+        });
+      }
+      lineNum++;
+    }
+
+    return { code: fixed, fixed: fixes.length > 0, fixes };
+  }
+
+  /**
+   * Fix 3: Remove or fix unused variable declarations
+   */
+  private static fixUnusedVariables(code: string): FixResult {
+    const fixes: FixAction[] = [];
+    let fixed = code;
+
+    // Pattern: const/let/var declarations that are never used
+    const unusedVarPattern = /^(const|let|var)\s+(\w+)\s*=/gm;
+    const matches = Array.from(code.matchAll(unusedVarPattern));
+
+    for (const match of matches) {
+      const varName = match[2];
+      const varRegex = new RegExp(`\\b${varName}\\b`, 'g');
+      const usages = code.match(varRegex) || [];
+
+      // If used only once (declaration), comment it out
+      if (usages.length === 1) {
+        const line = code.substring(code.lastIndexOf('\n', match.index) + 1, code.indexOf('\n', match.index) + 1);
+        fixed = fixed.replace(line, `// ${line.trim()}`);
+        fixes.push({
+          type: 'unused-variable',
+          description: `Commented out unused variable: ${varName}`,
         });
       }
     }
 
-    return imports;
+    return { code: fixed, fixed: fixes.length > 0, fixes };
   }
+
+  /**
+   * Fix 4: Add missing closing brackets/braces
+   */
+  private static fixMissingClosingBrackets(code: string): FixResult {
+    const fixes: FixAction[] = [];
+    let fixed = code;
+
+    // Count unmatched opening/closing braces
+    let braceCount = 0;
+    let bracketCount = 0;
+    let parenCount = 0;
+
+    for (const char of code) {
+      if (char === '{') braceCount++;
+      if (char === '}') braceCount--;
+      if (char === '[') bracketCount++;
+      if (char === ']') bracketCount--;
+      if (char === '(') parenCount++;
+      if (char === ')') parenCount--;
+    }
+
+    // Add missing closing braces
+    while (braceCount > 0) {
+      fixed += '\n}';
+      braceCount--;
+      fixes.push({
+        type: 'missing-closing-brace',
+        description: 'Added missing closing brace }',
+      });
+    }
+
+    // Add missing closing brackets
+    while (bracketCount > 0) {
+      fixed += '\n]';
+      bracketCount--;
+      fixes.push({
+        type: 'missing-closing-bracket',
+        description: 'Added missing closing bracket ]',
+      });
+    }
+
+    // Add missing closing parens
+    while (parenCount > 0) {
+      fixed += ')';
+      parenCount--;
+      fixes.push({
+        type: 'missing-closing-paren',
+        description: 'Added missing closing parenthesis )',
+      });
+    }
+
+    return { code: fixed, fixed: fixes.length > 0, fixes };
+  }
+
+  /**
+   * Fix 5: Fix return statements in conditionals
+   */
+  private static fixIncorrectReturns(code: string): FixResult {
+    const fixes: FixAction[] = [];
+
+    // Pattern: else { return ... } should be compatible with if { return ... }
+    // This is a heuristic - don't change logic, just structure
+    let fixed = code;
+
+    // Simple case: return without value when one expected
+    const returnPattern = /return\s*;/g;
+    if (returnPattern.test(code) && code.includes('return ')) {
+      // Count if there are returns with values
+      const returnsWithValue = (code.match(/return\s+\S+/g) || []).length;
+      const returnsWithoutValue = (code.match(/return\s*;/g) || []).length;
+
+      if (returnsWithValue > 0 && returnsWithoutValue > 0) {
+        // This is a potential mismatch - flag it but don't fix (logic-dependent)
+        fixes.push({
+          type: 'inconsistent-returns',
+          description: 'Found inconsistent return statements (some with values, some without)',
+        });
+      }
+    }
+
+    return { code: fixed, fixed: fixes.length > 0, fixes };
+  }
+
+  /**
+   * Fix 6: Remove duplicate function declarations
+   */
+  private static fixDuplicateFunctionDeclarations(code: string): FixResult {
+    const fixes: FixAction[] = [];
+    let fixed = code;
+
+    // Pattern: function name() { ... } function name() { ... }
+    const functionPattern = /^(?:export\s+)?(function|const)\s+(\w+)\s*(?::|=|\()/gm;
+    const seenFunctions = new Set<string>();
+    const linesToRemove = new Set<number>();
+
+    let match;
+    let lineNum = 0;
+
+    // Use Array.from to avoid downlevelIteration issues
+    const matches = Array.from(code.matchAll(functionPattern));
+
+    for (const m of matches) {
+      match = m;
+      const funcName = match[2];
+
+      // Count lines up to this point
+      lineNum = code.substring(0, match.index).split('\n').length - 1;
+
+      if (seenFunctions.has(funcName)) {
+        linesToRemove.add(lineNum);
+        fixes.push({
+          type: 'duplicate-function',
+          description: `Removed duplicate function declaration: ${funcName}`,
+          line: lineNum,
+        });
+      }
+
+      seenFunctions.add(funcName);
+    }
+
+    // Remove duplicate lines (in reverse to preserve indices)
+    const lines = code.split('\n');
+    const sortedLines = Array.from(linesToRemove).sort((a, b) => b - a);
+
+    for (const line of sortedLines) {
+      lines.splice(line, 1);
+    }
+
+    fixed = lines.join('\n');
+
+    return { code: fixed, fixed: fixes.length > 0, fixes };
+  }
+}
+
+/**
+ * Export a simpler convenience function for direct use
+ */
+export function simpleFix(code: string): string {
+  return SimpleFixer.fix(code).code;
 }

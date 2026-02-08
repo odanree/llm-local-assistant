@@ -53,32 +53,109 @@ export class CodebaseIndex {
 
   /**
    * Scan project directory and index all TypeScript files
+   * Auto-detects source directories (src, app, components, etc.)
+   * Also scans project root for files not in a src directory
    */
   async scan(srcDir?: string): Promise<void> {
-    const scanRoot = srcDir || path.join(this.projectRoot, 'src');
+    let scanDirs: string[] = [];
 
-    if (!fs.existsSync(scanRoot)) {
-      console.log(`[CodebaseIndex] Scan root not found: ${scanRoot}`);
+    // If no explicit dir provided, auto-detect source directories
+    if (!srcDir) {
+      scanDirs = this.autoDetectSourceDirs();
+    } else {
+      scanDirs = [srcDir];
+    }
+
+    if (scanDirs.length === 0) {
+      console.log(`[CodebaseIndex] No source directories found`);
       return;
     }
 
-    this.scanDirectory(scanRoot);
+    console.log(`[CodebaseIndex] Scanning from: ${scanDirs.join(', ')}`);
+    
+    // Scan all directories
+    for (const dir of scanDirs) {
+      if (fs.existsSync(dir)) {
+        this.scanDirectory(dir);
+      }
+    }
+    
     this.extractDependencies();
     this.detectPatterns();
   }
 
   /**
+   * Auto-detect source directories in project
+   * Looks for common patterns: src/, app/, components/, lib/
+   * Also includes project root if it has component files
+   * Returns array of directories to scan (both src AND root)
+   */
+  private autoDetectSourceDirs(): string[] {
+    const dirs: string[] = [];
+    const commonSourceDirs = ['src', 'app', 'components', 'lib', 'source', 'code'];
+
+    // Check for standard source directories
+    for (const dir of commonSourceDirs) {
+      const fullPath = path.join(this.projectRoot, dir);
+      if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+        console.log(`[CodebaseIndex] Found source dir: ${dir}`);
+        dirs.push(fullPath);
+      }
+    }
+
+    // Always include project root if it has TypeScript files
+    const rootFiles = fs.readdirSync(this.projectRoot).filter(f => 
+      (f.endsWith('.tsx') || f.endsWith('.ts') || f.endsWith('.jsx') || f.endsWith('.js')) &&
+      !f.startsWith('.')
+    );
+    
+    if (rootFiles.length > 0) {
+      console.log(`[CodebaseIndex] Found ${rootFiles.length} files at project root`);
+      dirs.push(this.projectRoot);
+    }
+
+    // If no directories found, default to project root
+    if (dirs.length === 0) {
+      console.log(`[CodebaseIndex] No source directories found, using project root`);
+      dirs.push(this.projectRoot);
+    }
+
+    return dirs;
+  }
+
+  /**
    * Recursively scan directory for TypeScript files
+   * Skips node_modules, .next, .git, and other common non-source directories
    */
   private scanDirectory(dir: string): void {
     try {
+      // Skip directories that shouldn't be scanned
+      const dirName = path.basename(dir);
+      const skipDirs = [
+        'node_modules',
+        '.next',
+        '.git',
+        '.venv',
+        'dist',
+        'build',
+        'coverage',
+        '.nuxt',
+        'out',
+        '__pycache__',
+        '.pytest_cache',
+      ];
+
+      if (skipDirs.includes(dirName)) {
+        return;
+      }
+
       const entries = fs.readdirSync(dir, { withFileTypes: true });
 
       entries.forEach(entry => {
         const fullPath = path.join(dir, entry.name);
 
         if (entry.isDirectory()) {
-          // Recurse into subdirectories
+          // Recurse into subdirectories (unless skipped)
           this.scanDirectory(fullPath);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
           // Parse TypeScript file
@@ -149,13 +226,21 @@ export class CodebaseIndex {
     const fileName = path.basename(filePath).toLowerCase();
     const dirName = path.dirname(filePath).toLowerCase();
 
+    // Priority 1: Classify by directory (most reliable)
     if (dirName.includes('schema')) return 'schema';
-    if (dirName.includes('hook') || fileName.startsWith('use')) return 'hook';
     if (dirName.includes('service') || dirName.includes('api')) return 'service';
-    if (dirName.includes('component') || fileName.endsWith('.tsx')) return 'component';
+    if (dirName.includes('component')) return 'component';
+    if (dirName.includes('hook')) return 'hook';
     if (dirName.includes('util') || dirName.includes('helper')) return 'utility';
     if (dirName.includes('type') || fileName === 'index.ts') return 'types';
     if (dirName.includes('constant')) return 'constant';
+
+    // Priority 2: Classify by file extension (if not in a classified directory)
+    if (fileName.endsWith('.tsx')) return 'component';
+
+    // Priority 3: Classify by naming pattern (only if directory didn't classify it)
+    // Files named useXxx in root/unknown locations are hooks
+    if (fileName.startsWith('use')) return 'hook';
 
     return 'unknown';
   }

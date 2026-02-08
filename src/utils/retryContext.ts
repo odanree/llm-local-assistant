@@ -1,232 +1,298 @@
 /**
- * RetryContext - Memory of previous attempts within a single retry cycle
- * 
- * Part of the "Stateful Correction" architecture (Phase 1 - v3.0 Relaunch)
- * 
- * Problem:
- * When the LLM fails to fix code and we retry, it doesn't remember what it tried before.
- * This causes infinite loops where the LLM repeats the same mistake.
- * 
- * Solution:
- * Track all attempts in the current retry cycle, and inject the full history
- * into the system prompt with explicit instructions like:
- * "You previously generated code with [ERROR]. Do NOT repeat this mistake."
- * 
- * Lifecycle:
- * 1. Create RetryContext when first error is encountered
- * 2. Store original code + error
- * 3. For each retry attempt, add attempt record with generated code + failure reason
- * 4. Pass full history to LLM in next retry
- * 5. Dispose after command completes (max 3 retries)
+ * RetryContext: Track attempt history for stateful correction
+ *
+ * Part of Phase 1: Stateful Correction Architecture
+ * Maintains memory of previous generation attempts and failures
+ *
+ * Strategy: Store each attempt + error, inject into LLM prompt with explicit
+ * "avoid these approaches" instructions to break retry loops
  */
-
-export interface ValidationError {
-  type: string;
-  message: string;
-  line?: number;
-  column?: number;
-  suggestion?: string;
-}
 
 export interface AttemptRecord {
   attemptNumber: number;
   timestamp: number;
-  generatedCode: string;
-  error: ValidationError;
-  fixApproach: string;
+  code: string;
+  error?: string;
+  errorType?: string;
+  fixes?: string[];
+  context?: string;
+}
+
+export interface RetryPolicy {
+  maxAttempts: number;
+  maxSimpleFixRetries: number;
+  backoffMultiplier: number;
 }
 
 export class RetryContext {
-  /** Original code before any fixes */
-  readonly originalCode: string;
-
-  /** Original validation error that triggered retries */
-  readonly originalError: ValidationError;
-
-  /** All attempts made so far in this retry cycle */
+  private commandId: string;
   private attempts: AttemptRecord[] = [];
+  private policy: RetryPolicy;
+  private startTime: number;
 
-  /** Maximum retries before giving up (default: 3) */
-  readonly maxRetries: number;
-
-  /** Timestamp when this context was created */
-  readonly createdAt: number;
-
-  /** Current attempt number (0-indexed) */
-  private attemptNumber: number = -1;
-
-  constructor(originalCode: string, originalError: ValidationError, maxRetries: number = 3) {
-    this.originalCode = originalCode;
-    this.originalError = originalError;
-    this.maxRetries = maxRetries;
-    this.createdAt = Date.now();
+  constructor(
+    commandId: string,
+    policy: RetryPolicy = {
+      maxAttempts: 3,
+      maxSimpleFixRetries: 2,
+      backoffMultiplier: 1.5,
+    }
+  ) {
+    this.commandId = commandId;
+    this.policy = policy;
+    this.startTime = Date.now();
   }
 
   /**
-   * Record an attempt with its generated code and failure
+   * Record an attempt with its outcome
    */
-  recordAttempt(generatedCode: string, error: ValidationError, fixApproach: string): void {
-    this.attemptNumber++;
-    this.attempts.push({
-      attemptNumber: this.attemptNumber,
+  recordAttempt(code: string, error?: string, errorType?: string, fixes?: string[]): AttemptRecord {
+    const attempt: AttemptRecord = {
+      attemptNumber: this.attempts.length + 1,
       timestamp: Date.now(),
-      generatedCode,
+      code,
       error,
-      fixApproach,
-    });
+      errorType,
+      fixes,
+    };
+
+    this.attempts.push(attempt);
+    return attempt;
   }
 
   /**
-   * Get the current attempt number (0-indexed)
+   * Get the number of attempts made so far
    */
-  getCurrentAttemptNumber(): number {
-    return this.attemptNumber;
+  getAttemptCount(): number {
+    return this.attempts.length;
   }
 
   /**
-   * Check if we've exhausted retries
+   * Check if we've exceeded the retry limit
    */
   isExhausted(): boolean {
-    return this.attemptNumber >= this.maxRetries;
+    return this.attempts.length >= this.policy.maxAttempts;
   }
 
   /**
-   * Get the number of remaining retries
+   * Get remaining attempts
    */
-  getRemainingRetries(): number {
-    return Math.max(0, this.maxRetries - this.attemptNumber);
+  getRemainingAttempts(): number {
+    return Math.max(0, this.policy.maxAttempts - this.attempts.length);
   }
 
   /**
-   * Get the full history of attempts
+   * Get all attempts in order
    */
-  getAttempts(): AttemptRecord[] {
+  getAllAttempts(): AttemptRecord[] {
     return [...this.attempts];
   }
 
   /**
-   * Get the last attempt (most recent)
+   * Get the most recent attempt
    */
-  getLastAttempt(): AttemptRecord | undefined {
-    return this.attempts[this.attempts.length - 1];
+  getLatestAttempt(): AttemptRecord | null {
+    return this.attempts.length > 0 ? this.attempts[this.attempts.length - 1] : null;
   }
 
   /**
-   * Build a system prompt injection that encodes the retry history
-   * This is used to instruct the LLM about what mistakes to avoid
+   * Get all errors from previous attempts
    */
-  buildRetryHistoryPrompt(): string {
+  getErrorHistory(): Array<{ attempt: number; error: string; type?: string }> {
+    return this.attempts
+      .filter(a => a.error)
+      .map(a => ({
+        attempt: a.attemptNumber,
+        error: a.error!,
+        type: a.errorType,
+      }));
+  }
+
+  /**
+   * Get all fixes applied in previous attempts
+   */
+  getFixHistory(): Array<{ attempt: number; fixes: string[] }> {
+    return this.attempts
+      .filter(a => a.fixes && a.fixes.length > 0)
+      .map(a => ({
+        attempt: a.attemptNumber,
+        fixes: a.fixes!,
+      }));
+  }
+
+  /**
+   * Check if we've tried this error before
+   */
+  hasSeenError(error: string): boolean {
+    return this.attempts.some(a => a.error && a.error.includes(error));
+  }
+
+  /**
+   * Generate summary of attempts for LLM injection
+   */
+  generateAttemptSummary(): string {
     if (this.attempts.length === 0) {
+      return 'No previous attempts.';
+    }
+
+    const summaryParts: string[] = [];
+
+    summaryParts.push(`## Attempt History (${this.attempts.length}/${this.policy.maxAttempts})\n`);
+
+    for (const attempt of this.attempts) {
+      summaryParts.push(`### Attempt ${attempt.attemptNumber}`);
+
+      if (attempt.error) {
+        summaryParts.push(`**Error:** ${attempt.error.substring(0, 200)}...`);
+      }
+
+      if (attempt.errorType) {
+        summaryParts.push(`**Type:** ${attempt.errorType}`);
+      }
+
+      if (attempt.fixes && attempt.fixes.length > 0) {
+        summaryParts.push(`**Fixes Applied:** ${attempt.fixes.join(', ')}`);
+      }
+
+      summaryParts.push('');
+    }
+
+    summaryParts.push(`## Instruction for Next Attempt`);
+    summaryParts.push(`You have ${this.getRemainingAttempts()} attempts remaining.`);
+    summaryParts.push(`\n**DO NOT repeat these approaches:**`);
+
+    // Extract what didn't work
+    const failedPatterns = this.extractFailedPatterns();
+    for (const pattern of failedPatterns) {
+      summaryParts.push(`- ${pattern}`);
+    }
+
+    return summaryParts.join('\n');
+  }
+
+  /**
+   * Generate a "what not to do" prompt for LLM
+   */
+  generateAvoidancePrompt(): string {
+    const avoidances: string[] = [];
+
+    for (const attempt of this.attempts) {
+      if (attempt.error) {
+        if (attempt.error.includes('is not defined')) {
+          avoidances.push('- Do not use undefined variables or missing imports');
+        }
+        if (attempt.error.includes('unexpected token')) {
+          avoidances.push('- Check syntax - ensure all brackets, braces, and parens are balanced');
+        }
+        if (attempt.error.includes('is not a function')) {
+          avoidances.push('- Do not call things that are not functions - check variable types');
+        }
+        if (attempt.error.includes('Cannot read properties')) {
+          avoidances.push('- Do not access properties on undefined/null - add null checks');
+        }
+      }
+    }
+
+    if (avoidances.length === 0) {
       return '';
     }
 
-    let prompt = `## Retry History\n\n`;
-    prompt += `You have already attempted to fix this code ${this.attempts.length} time(s).\n\n`;
+    return `
+## Known Issues to Avoid
+${avoidances.join('\n')}
+`;
+  }
+
+  /**
+   * Extract patterns of what failed
+   */
+  private extractFailedPatterns(): string[] {
+    const patterns: Set<string> = new Set();
 
     for (const attempt of this.attempts) {
-      prompt += `### Attempt ${attempt.attemptNumber + 1}\n`;
-      prompt += `**Approach:** ${attempt.fixApproach}\n`;
-      prompt += `**Code Generated:**\n\`\`\`typescript\n${this.truncateCode(attempt.generatedCode)}\n\`\`\`\n`;
-      prompt += `**Failed With:** ${attempt.error.message}\n`;
-      if (attempt.error.suggestion) {
-        prompt += `**Why:** ${attempt.error.suggestion}\n`;
+      if (!attempt.error) continue;
+
+      const error = attempt.error.toLowerCase();
+
+      if (error.includes('not defined') || error.includes('undefined')) {
+        patterns.add('Variables used without definition or import');
       }
-      prompt += `\n`;
+      if (error.includes('syntax') || error.includes('unexpected')) {
+        patterns.add('Syntax errors or unmatched brackets');
+      }
+      if (error.includes('not a function')) {
+        patterns.add('Calling non-function values');
+      }
+      if (error.includes('cannot read') || error.includes('cannot assign')) {
+        patterns.add('Type mismatches or invalid operations');
+      }
+      if (error.includes('module') || error.includes('import')) {
+        patterns.add('Missing or invalid imports');
+      }
     }
 
-    prompt += `## Critical Instructions\n`;
-    prompt += `**DO NOT repeat the mistakes above.** Each attempt failed for a specific reason.\n`;
-    prompt += `This time, focus ONLY on fixing: **${this.originalError.message}**\n\n`;
-
-    // Add specific anti-patterns based on error history
-    const commonMistakes = this.identifyCommonMistakes();
-    if (commonMistakes.length > 0) {
-      prompt += `**Mistakes to avoid:**\n`;
-      commonMistakes.forEach((mistake) => {
-        prompt += `- ${mistake}\n`;
-      });
-      prompt += `\n`;
-    }
-
-    return prompt;
+    return Array.from(patterns);
   }
 
   /**
-   * Identify patterns in the retry history to guide the next attempt
+   * Check if we're in an infinite loop (same error repeated)
    */
-  private identifyCommonMistakes(): string[] {
-    const mistakes: Set<string> = new Set();
+  isInfiniteLoop(): boolean {
+    if (this.attempts.length < 2) return false;
 
-    for (const attempt of this.attempts) {
-      const error = attempt.error;
+    const recentErrors = this.attempts
+      .slice(-2)
+      .map(a => a.errorType)
+      .filter(Boolean);
 
-      if (error.message.includes('missing') && error.message.includes('import')) {
-        mistakes.add('Missing import statement');
-      }
-      if (error.message.includes('useState') || error.message.includes('useEffect')) {
-        mistakes.add('React hook not imported from react');
-      }
-      if (error.message.includes('unused variable')) {
-        mistakes.add('Declaring variables that are never used');
-      }
-      if (error.message.includes('syntax')) {
-        mistakes.add('Syntax errors (missing semicolon, bracket)');
-      }
-      if (error.message.includes('undefined')) {
-        mistakes.add('Using undefined variables or functions');
-      }
-    }
-
-    return Array.from(mistakes);
+    // Same error type twice in a row = potential infinite loop
+    return recentErrors.length === 2 && recentErrors[0] === recentErrors[1];
   }
 
   /**
-   * Truncate long code snippets for readability in prompts
-   */
-  private truncateCode(code: string, maxLines: number = 15): string {
-    const lines = code.split('\n');
-    if (lines.length <= maxLines) {
-      return code;
-    }
-    return lines.slice(0, maxLines).join('\n') + `\n... (${lines.length - maxLines} more lines)`;
-  }
-
-  /**
-   * Get confidence score (0-1) that we should continue retrying
-   * Based on whether we're making progress
+   * Calculate confidence that we should keep retrying
+   * 0 = give up, 1 = confident we can fix
    */
   getRetryConfidence(): number {
-    if (this.attempts.length === 0) {
-      return 1.0; // First attempt, high confidence
+    if (this.attempts.length === 0) return 1.0;
+    if (this.isInfiniteLoop()) return 0.1; // Low confidence if looping
+    if (this.isExhausted()) return 0.0; // No confidence if exhausted
+
+    // Confidence based on progress
+    const errorCounts = this.attempts.filter(a => a.error).length;
+    const fixCounts = this.attempts.filter(a => a.fixes?.length).length;
+
+    // If we've successfully applied fixes, confidence stays high
+    if (fixCounts > errorCounts / 2) {
+      return 0.8;
     }
 
-    // If we have 3+ attempts, confidence drops to 0.3
-    if (this.attempts.length >= 3) {
+    // If all attempts failed, confidence drops
+    if (errorCounts === this.attempts.length) {
       return 0.3;
     }
 
-    // Check if error messages are different (sign of progress)
-    const errorMessages = this.attempts.map((a) => a.error.message);
-    const uniqueErrors = new Set(errorMessages);
-
-    // If we're seeing the same error repeatedly, low confidence
-    if (uniqueErrors.size === 1) {
-      return 0.4;
-    }
-
-    // Decreasing confidence with each attempt
-    return 1.0 - this.attempts.length * 0.25;
+    return 0.6;
   }
 
   /**
-   * Get a summary of the retry context for logging
+   * Get command metadata
    */
-  getSummary(): string {
-    return (
-      `RetryContext: ${this.attempts.length} attempts, ` +
-      `exhausted=${this.isExhausted()}, ` +
-      `confidence=${this.getRetryConfidence().toFixed(2)}, ` +
-      `duration=${Date.now() - this.createdAt}ms`
-    );
+  getMetadata() {
+    return {
+      commandId: this.commandId,
+      attemptCount: this.attempts.length,
+      totalTimeMs: Date.now() - this.startTime,
+      isExhausted: this.isExhausted(),
+      isLooping: this.isInfiniteLoop(),
+      confidence: this.getRetryConfidence(),
+    };
   }
+}
+
+/**
+ * Export convenience function for creating retry contexts
+ */
+export function createRetryContext(commandId: string): RetryContext {
+  return new RetryContext(commandId);
 }

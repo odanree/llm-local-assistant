@@ -1,250 +1,513 @@
 # LLM Local Assistant - VS Code Extension
 
-A powerful VS Code extension that brings autonomous AI agent capabilities to your local machine. Break down complex tasks into structured multi-step plans, execute them automatically, and stay in control with the ability to review and reject plans before execution.
+[![Tests](https://github.com/odanree/llm-local-assistant/workflows/Test%20Build/badge.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-code/v/odanree.llm-local-assistant)](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant)
 
-**🚀 NEW in v2.0**: Intelligent refactoring framework with architecture analysis, pattern detection, and safe code transformation.
+A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, and refactor with confidence using your local LLM.
 
-> **Latest Release**: v2.0.0 - Intelligent Refactoring Framework ✨  
-> **Previous**: v1.3.0 - Architecture Alignment & .cursorrules Support 🏗️  
-> 📚 **Contributing**: See [CONTRIBUTING.md](https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md) for development guide.
+**🎯 v2.0.3 Focus: Pattern Detection & Architecture Analysis (No Broken Code Generation)**
 
-## ✨ Key Features
+> **Latest Release**: v2.0.3 - Analysis-Only, Production-Ready ✅  
+> **Philosophy**: Honest about limitations. Pattern detection excels. Code generation disabled.  
+> **Status**: 284/284 tests passing. 0 errors. Ready for production.
 
-### 🧠 Intelligent Refactoring (Phase 3.4 - NEW in v2.0!)
-- **`/refactor <file>`** - Analyze code and suggest improvements
-  - Detects anti-patterns (inline styles, magic strings, unsafe types)
-  - Identifies fat hooks and oversized components
-  - Provides confidence scores for suggestions
-  - 90%+ accuracy on single-file analysis
+## ✨ What's v2.0.3 (Analysis-Only)
 
-- **`/extract-service <hook> <name>`** - Extract business logic to service layer
-  - Identifies extraction candidates (API calls, state mutations, validation)
-  - Generates service files with proper error handling
-  - Updates hook to use new service
-  - Auto-generates test cases
-  - 90%+ success rate
+### ✅ What Works Great (Keep These)
 
-- **`/design-system <feature>`** - Generate complete feature architecture
-  - Creates schema, service, hook, and component files
-  - Enforces proper layer structure
-  - Follows design patterns (CRUD, Auth, Forms, etc.)
-  - All files created in correct dependency order
-
+**Pattern Detection & Analysis** - Safe, reliable, accurate
+- **`/refactor <file>`** - Semantic code analysis (5-layer deep)
 - **`/rate-architecture`** - Score your codebase (0-10)
-  - Analyzes all files by purpose and quality
-  - Scores each layer (schema, service, hook, component)
-  - Identifies gaps and weaknesses
-  - 100% reliable analysis
+- **`/suggest-patterns`** - Pattern recommendations (8 patterns)
+- **`/context show structure`** - See project organization
+- **`/context show patterns`** - View detected patterns
+- **`/git-review`** - AI code review
 
-- **`/suggest-patterns`** - Get pattern improvement recommendations
-  - Shows available design patterns
-  - Identifies where patterns can be applied
-  - Provides implementation guidance
+**File Operations**
+- **`/read <path>`** - Read files
+- **`/write <path> <prompt>`** - Generate file content
+- **`/suggestwrite <path> <prompt>`** - Review before writing
+- **`/explain <path>`** - Explain code
+- **`/git-commit-msg`** - Generate commit messages
 
-### 🌐 Context Awareness (Phase 3.3 - NEW in v2.0!)
-- **`/context show structure`** - View codebase organization
-  - See all files organized by purpose
-  - Understand project architecture at a glance
+### ❌ What Doesn't Work (Disabled)
 
-- **`/context show patterns`** - See detected design patterns
-  - CRUD, Authentication, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination
-  - Know what patterns are already in use
+**Code Generation with Planning** - Infinite loop bugs
+- **`/plan`** - DISABLED (infinite loop in validation)
+- **`/design-system`** - DISABLED (infinite loop in validation)
+- **`/approve`** - DISABLED (tied to /plan, /design-system)
 
-- **`/context show dependencies`** - View file relationships
-  - See import chains and dependencies
-  - Understand file organization
+**Why disabled?**
+- LLM generates code with missing imports (e.g., no `useState` import)
+- Validator catches error: "Add: import { useState }"
+- Auto-correction tries to fix via LLM
+- LLM regenerates SAME broken code (no import)
+- Repeats 3 times → **infinite loop**
+- Wastes tokens, leaves tasks incomplete
 
-- **Intelligent Multi-File Planning** - `/plan` now works better
-  - Dependency detection ensures correct file ordering
-  - 70%+ success rate on multi-file features
-  - Live output tracking during execution
+**Better alternatives:**
+- **Cursor** or **Windsurf** - Better multi-file context
+- **Manual coding** - Now that you understand the pattern needed
+- **VS Code + GitHub Copilot** - Better context awareness
 
-### 🏗️ Architecture Rules (Phase 3.1 - v1.3.0)
-- Define project patterns in `.lla-rules` file
-- Automatically injected into LLM system prompt
-- All generated code follows your team's patterns
-- No manual guidance needed per request
-- Supports `.cursorrules` as fallback (Cursor IDE compatibility)
-- See `docs/CURSORRULES_EXAMPLE.md` for setup
+## 🚀 Quick Start (30 seconds)
 
-### 🧠 Autonomous Planning (Phase 2)
-- Break complex tasks into structured multi-step plans
-- Review plans before execution
-- Automatic error recovery with retry logic
-- Interactive confirmation for risky operations
-- Protection against overwriting critical config files
-- AI-powered write safety with user approval
+### 1. Start Local LLM Server
+```bash
+# Option A: Ollama (Recommended)
+ollama run mistral
 
-### 🤖 Agent Mode Commands
-- `/plan <task>` - Generate multi-step action plans with LLM
-- `/approve` - Execute approved plans sequentially
-- `/reject` - Discard plans without execution
-- `/read <path>` - Read files from workspace
-- `/write <path>` - Generate and write file content
-- `/git-commit-msg` - Generate conventional commit messages
-- `/git-review` - AI-powered code review of staged changes
-- `/explain <path>` - Analyze and explain code
-- **Auto-Correction** - LLM suggestions for command mistakes
+# Option B: LM Studio
+# Download: https://lmstudio.ai
+# Click "Start Local Server"
 
-### 💻 Local & Private
-- 🔒 Works with Ollama, LM Studio, vLLM - no external APIs
-- 🚀 Fast local LLM inference with streaming support
-- ⚙️ Fully configurable (endpoint, model, temperature, timeout)
-- 💬 Conversation context maintained per session
-- ✅ Production-ready with comprehensive error handling
+# Option C: vLLM
+python -m vllm.entrypoints.openai.api_server --model mistral-7b
+```
 
-## 📊 Project Status & Version History
+### 2. Install Extension
+- Open VS Code → Extensions (Ctrl+Shift+X)
+- Search: "LLM Local Assistant"
+- Click Install
 
-### Latest: v2.0.0 (February 2026) - Intelligent Refactoring Framework ✨
+### 3. Test It
+- Open Command Palette (Cmd+Shift+P / Ctrl+Shift+P)
+- Run: `/check-model`
+- Should show your configured model ✅
 
-**v2.0.0 Features:**
-- ✅ **Context Awareness** - `/context` commands with codebase visibility
-- ✅ **Intelligent Refactoring** - `/refactor`, `/extract-service`, `/design-system`
-- ✅ **Architecture Analysis** - `/rate-architecture`, `/suggest-patterns`
-- ✅ **8 Design Patterns** - CRUD, Auth, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination
-- ✅ **Anti-Pattern Detection** - 20+ common issues identified
-- ✅ **5-Layer Validation** - Safe refactoring with syntax, type, logic, performance, compatibility checks
-- ✅ **Automatic Tests** - Test case generation for refactored code
-- ✅ **234 Tests** - Comprehensive test coverage, production-ready
-- ✅ **Multi-File Coordination** - 70%+ success on single-feature systems
+### 4. Analyze Your Code
+```bash
+/context show structure       # See your project layout
+/rate-architecture            # Score your code (0-10)
+/suggest-patterns             # Get pattern suggestions
+/refactor src/App.tsx         # Analyze and suggest improvements
+```
 
-**v2.0.0 Stats:**
-- 70KB production code
-- 234 tests (231 passing, 3 skipped)
-- 8 hours ahead of schedule
-- Zero regressions from Phase 3.1-3.2
+## 📋 Command Reference
 
-**Known Limitation:**
-- Multi-file orchestration: 70% success (Phase 3.2.1 coming in 2-3 weeks improves to 85%+)
-- ✅ **Code Explanation** - `/explain` command for detailed code analysis and documentation
-- ✅ **Shell Environment Fix** - Fixed npm/command PATH resolution on macOS
-- ✅ **Enhanced Error Handling** - Better error messages and recovery strategies
+### Architecture Analysis (SAFE & RELIABLE)
 
-**Phase 2: Multi-Step Planning & Autonomous Execution**
-- ✅ **Planner Module** - LLM-based task decomposition into structured plans
-- ✅ **Executor Module** - Sequential execution with automatic retry (up to 2 attempts per step)
-- ✅ **Observer System** - Real-time progress tracking
-- ✅ **Error Recovery** - Intelligent error handling with helpful feedback
-- ✅ **32+ Unit Tests** - >85% code coverage
-- ✅ **Full Type Safety** - TypeScript strict mode, 0 errors
-- ✅ **Backward Compatible** - All v1.0 commands unchanged
+#### `/refactor <file>`
+Deep semantic analysis with actionable recommendations.
 
-**Phase 1 Foundation (v1.0.0):**
-- 💬 Local LLM chat with streaming support
-- 📁 File operations (read, write, suggestwrite)
-- 🔀 Git integration (commit messages, code review)
-- 🔒 100% private, offline-first design
-- 92 unit tests with 100% pass rate
+```
+You: /refactor src/hooks/useUser.ts
 
-### What's New in Phase 2
+Output:
+🔍 **Semantic Analysis** (useUser.ts)
 
-**Autonomous Planning & Execution Workflow:**
-1. Describe a task: `/plan create a React component with tests`
-2. Review the plan: See breakdown of steps (read, generate, write)
-3. Approve execution: `/approve` to run all steps sequentially
-4. Monitor progress: Real-time status for each step
-5. Handle errors: Automatic retry or manual investigation
+[5-Layer Analysis]
+✅ State Management: 3 states, well-organized
+⚠️ Dependencies: Missing useCallback on fetchUser
+⚠️ Coupling: Tight to AuthContext
+⚠️ Anti-patterns: Direct API call (should extract)
+⚠️ Data Flow: Incomplete error handling
 
-**Real-World Use Cases:**
-- 🚀 Refactoring modules (analyze, generate, test, verify)
-- 📝 Generating documentation (read code, analyze, write docs)
-- 🏗️ Creating project structures (multiple files, configs, tests)
-- 🔄 Multi-step code transformations (analyze, plan, execute)
+[Recommendations]
+1. Extract API logic to service layer (95% confidence)
+2. Add useCallback optimization (88% confidence)
+3. Improve error handling patterns (92% confidence)
+```
+
+**What it analyzes:**
+- State management (unused states, missing deps)
+- Coupling (tight dependencies on context/props)
+- Data flow (traces data movement)
+- Anti-patterns (unsafe practices, magic strings)
+- Performance (optimization opportunities)
+
+#### `/rate-architecture`
+Score your codebase with layer-aware analysis.
+
+```
+You: /rate-architecture
+
+Output:
+📊 **Architecture Rating: 9/10** ⭐⭐⭐⭐⭐
+
+[Layer Breakdown]
+├─ Schema Layer (types/): 9/10
+├─ Service Layer (services/): 8/10
+├─ Hook Layer (hooks/): 9/10
+└─ Component Layer (components/): 8/10
+
+[Strengths]
+✅ Clear separation of concerns
+✅ Proper error handling
+✅ Type-safe implementation
+✅ Testable architecture
+
+[Recommendations]
+⚠️ Some hooks are large (150+ lines)
+⚠️ Missing error boundary components
+```
+
+#### `/suggest-patterns`
+Get pattern recommendations for your codebase.
+
+```
+You: /suggest-patterns
+
+Output:
+🎯 **Available Patterns**
+
+1. CRUD Pattern (95% match) ✅ Already implemented
+   Where: src/services/userService.ts
+   
+2. Forms Pattern (82% match) ⚠️ Partially implemented
+   Gap: Missing form validation framework
+   
+3. DataFetching Pattern (78% match) ✅ Already implemented
+   Where: src/hooks/useUser.ts
+
+4. StateManagement Pattern (65% match) ⚠️ Partial
+   Gap: No centralized state store
+   
+5-8. Other patterns...
+
+[Supported Patterns]
+CRUD, Authentication, Forms, DataFetching, StateManagement,
+Notifications, SearchFilter, Pagination
+```
+
+### Project Context (100% Reliable)
+
+#### `/context show structure`
+Visualize your project organization.
+
+```
+You: /context show structure
+
+Output:
+📁 Project Structure
+
+schemas/
+├─ User.ts
+├─ Post.ts
+└─ Comment.ts
+
+services/
+├─ userService.ts
+├─ postService.ts
+└─ commentService.ts
+
+hooks/
+├─ useUser.ts
+├─ usePost.ts
+└─ usePagination.ts
+
+components/
+├─ UserProfile.tsx
+├─ PostList.tsx
+└─ CommentThread.tsx
+
+Overall: 12 files organized in 4 layers
+```
+
+#### `/context show patterns`
+See detected design patterns.
+
+```
+You: /context show patterns
+
+Output:
+🎯 Detected Patterns
+
+Zod Schema: 3 files
+React Component: 3 files
+Custom Hook: 3 files
+API Service: 3 files
+```
+
+### File Operations
+
+#### `/read <path>`
+Read and display file contents.
+
+```
+/read src/hooks/useUser.ts
+```
+
+#### `/write <path> <prompt>`
+Generate and write file content.
+
+```
+/write src/utils/validators.ts generate validation functions for email and password
+```
+
+#### `/suggestwrite <path> <prompt>`
+Preview changes before writing.
+
+```
+/suggestwrite src/App.tsx add dark mode support using context and localStorage
+```
+
+#### `/explain <path>`
+Get detailed code explanation.
+
+```
+/explain src/services/userService.ts
+```
+
+### Git Integration
+
+#### `/git-commit-msg`
+Generate conventional commit message from staged changes.
+
+```
+/git-commit-msg
+
+Output:
+feat(auth): add remember-me functionality to login form
+
+- Add remember-me checkbox to LoginForm component
+- Store session token in localStorage for 30 days
+- Update Auth context to check for stored token on app load
+- Add tests for localStorage persistence
+```
+
+#### `/git-review`
+AI-powered code review of staged changes.
+
+```
+/git-review
+
+Output:
+📝 **Code Review**
+
+[Issues Found]
+⚠️ Missing null check on user object (line 42)
+⚠️ Potential race condition in async handler (line 58)
+✅ Good: Error handling comprehensive
+✅ Good: Type safety throughout
+
+[Suggestions]
+1. Add null coalescing operator on user
+2. Use AbortController for cancellable requests
+```
+
+### Diagnostics
+
+#### `/check-model`
+Verify LLM configuration and connectivity.
+
+```
+/check-model
+
+Output:
+🔍 **Model Configuration**
+
+Endpoint: http://localhost:11434
+Configured Model: mistral
+Status: ✅ Connected
+
+Available Models:
+- mistral ✅ (active)
+- llama2
+- neural-chat
+```
+
+#### `/help`
+Show all available commands.
+
+```
+/help
+```
+
+## 📸 Visual Guide (v2.0.3)
+
+### ✅ Pattern Detection & Analysis (Working)
+
+#### `/refactor <file>` - Semantic Analysis
+
+Shows 5-layer semantic analysis:
+- State management issues
+- Dependency problems  
+- Coupling analysis
+- Data flow inspection
+- Anti-pattern detection
+- Actionable recommendations
+
+**Example Output:**
+```
+🔍 **Semantic Analysis** (hooks/useUser.ts)
+
+[5-Layer Analysis]
+✅ State Management: 3 states, well-organized
+⚠️ Dependencies: Missing useCallback on fetchUser
+⚠️ Coupling: Tight to AuthContext
+⚠️ Anti-patterns: Direct API call (should extract)
+⚠️ Data Flow: Incomplete error handling
+
+[Recommendations]
+1. Extract API logic to service layer (95% confidence)
+2. Add useCallback optimization (88% confidence)
+3. Improve error handling patterns (92% confidence)
+```
+
+#### `/rate-architecture` - Code Quality Scoring
+
+Architecture scoring (0-10):
+- Overall rating with breakdown
+- Layer-by-layer analysis
+- Strengths and weaknesses
+- Specific recommendations
+
+**Example Output:**
+```
+📊 **Architecture Rating: 9/10** ⭐⭐⭐⭐⭐
+
+[Layer Breakdown]
+├─ Schema Layer (types/): 9/10
+├─ Service Layer (services/): 8/10
+├─ Hook Layer (hooks/): 9/10
+└─ Component Layer (components/): 8/10
+
+[Strengths]
+✅ Clear separation of concerns
+✅ Proper error handling
+✅ Type-safe implementation
+
+[Recommendations]
+⚠️ Some hooks are large (150+ lines)
+⚠️ Missing error boundary components
+```
+
+#### `/suggest-patterns` - Pattern Recommendations
+
+8 design patterns:
+- CRUD, Authentication, Forms
+- DataFetching, StateManagement
+- Notifications, SearchFilter, Pagination
+- Shows which patterns are applicable
+- Implementation guidance
+
+**Example Output:**
+```
+🎯 **Available Patterns**
+
+1. CRUD Pattern (95% match) ✅ Already implemented
+   Where: src/services/userService.ts
+   
+2. Forms Pattern (82% match) ⚠️ Partially implemented
+   Gap: Missing form validation framework
+   
+3. DataFetching Pattern (78% match) ✅ Already implemented
+   Where: src/hooks/useUser.ts
+
+[5-8 more patterns...]
+```
+
+#### `/context show structure` - Project Organization
+
+Visualizes project layout:
+- Files organized by purpose
+- Proper separation of concerns
+- Clear architecture view
+
+**Example Output:**
+```
+📁 Project Structure
+
+schemas/
+├─ User.ts
+├─ Post.ts
+└─ Comment.ts
+
+services/
+├─ userService.ts
+├─ postService.ts
+
+hooks/
+├─ useUser.ts
+├─ usePost.ts
+
+components/
+├─ UserProfile.tsx
+├─ PostList.tsx
+
+Overall: 12 files organized in 4 layers
+```
+
+#### `/context show patterns` - Pattern Detection
+
+Shows detected patterns:
+- Pattern type and count
+- Which files implement which patterns
+- Architecture understanding
+
+**Example Output:**
+```
+🎯 Detected Patterns
+
+Zod Schema: 3 files
+React Component: 3 files
+Custom Hook: 3 files
+API Service: 3 files
+```
+
+### ⚠️ Disabled Features (v2.0.3)
+
+#### ❌ `/plan` - DISABLED (Infinite Loop Bug)
+*Note: Code generation with multi-step planning was disabled due to infinite validation loops.*
+
+**Issue:** Auto-correction creates infinite loop
+- Generates code with missing imports
+- Validator detects error
+- Auto-correction regenerates same broken code
+- Repeats endlessly
+
+**Better alternatives:**
+- Cursor or Windsurf (better multi-file context)
+- Manual implementation (now that you understand the pattern)
+
+#### ❌ `/design-system` - DISABLED (Infinite Loop Bug)
+*Note: Multi-file feature generation was disabled due to infinite validation loops.*
+
+**Same issue as `/plan`** - Auto-correction infinite loop
+
+**Better alternatives:**
+- Cursor or Windsurf (better multi-file context)
+- Compose features manually from `/refactor` recommendations
+
+#### ❌ `/approve` - DISABLED
+*Tied to `/plan` and `/design-system` which are disabled.*
 
 ---
 
-## 📸 Workflow Screenshots
+## ⚙️ Configuration
 
-### 1. Planning View - Multi-Step Decomposition
-![Phase 2 Planning](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-planning.png)
 
-*Shows `/plan` command breaking down a task:*
-- *LLM analyzes request and creates structured plan*
-- *Step-by-step action breakdown (read, write operations)*
-- *Detailed descriptions for each step*
-- *Ready for approval: `/approve` to execute*
+### VS Code Settings
 
-### 2. Plan Steps - Review Before Execution
-![Phase 2 Plan Steps](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-plan-steps.png)
+Open Settings (Cmd+, / Ctrl+,) and search "llm-assistant":
 
-*Shows the generated plan ready for review:*
-- *Multi-step action sequence (typically 2-5 steps)*
-- *Each step shows action, path, and description*
-- *User controls: `/approve` to execute or `/reject` to cancel*
-- *Transparent decision point before running*
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `llm-assistant.endpoint` | `http://localhost:11434` | LLM server URL |
+| `llm-assistant.model` | `mistral` | Model name to use |
+| `llm-assistant.temperature` | `0.7` | Response randomness (0-1) |
+| `llm-assistant.maxTokens` | `4096` | Max response length |
+| `llm-assistant.timeout` | `60000` | Request timeout (ms) |
 
-### 3. Execution View - Real-Time Progress
-![Phase 2 Execution](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-execution.png)
-
-*Shows `/approve` executing the plan:*
-- *Step-by-step execution with real-time status*
-- *Progress indicator (Step X of Y)*
-- *Step output and results displayed inline*
-- *Automatic error recovery with retry logic*
-
-### 4. Error Recovery - Automatic Retry Handling
-![Phase 2 Error Recovery](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-error-recovery.png)
-
-*Shows error handling and recovery:*
-- *Step failure detection with clear error message*
-- *Automatic retry mechanism triggered (up to 2 attempts)*
-- *Detailed error information for troubleshooting*
-- *User has control to proceed or abort*
-
-### 5. Completed Workflow - Results Summary
-![Phase 2 Workflow Complete](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2-complete.png)
-
-*Shows successful plan completion:*
-- *Summary of completed steps*
-- *Files created and modifications made*
-
-### 6. Follow-up Questions - Interactive Confirmation (v1.2.2+)
-![Follow-up Questions](https://github.com/odanree/llm-local-assistant/raw/main/assets/phase2.2-follow-up-questions.png)
-
-*Shows interactive confirmation before risky operations:*
-- *Question appears with clear context about the command*
-- *Three interactive buttons: "Yes, proceed", "No, skip this step", "Cancel execution"*
-- *Prevents accidental execution of long-running or destructive commands*
-
-### 7. Write Operation Protection - Critical File Safeguards (v1.2.3)
-![Write Operation Question](https://github.com/odanree/llm-local-assistant/raw/main/assets/write-operation-question.png)
-
-*Shows protection for writing to critical configuration files:*
-- *Question appears when planning to write to: config.json, .env, Dockerfile, tsconfig.json, etc.*
-- *Three interactive buttons: "Yes, write the file", "No, skip this step", "Cancel execution"*
-- *Simple text files (.txt, .md) write directly without questions*
-- *20+ file patterns detected as risky (build configs, linters, CI/CD, containers)*
-- *User maintains full control over file modifications*
-- *Currently triggers for npm/test commands*
-- *Ready for next task or manual review*
-- *Full chat history maintained*
-
-### 6. Git Integration - Autonomous Commit Messages
-![Git Integration](https://github.com/odanree/llm-local-assistant/raw/main/assets/git-integration.png)
-
-*Shows Phase 1 git integration commands:*
-- *`/git-commit-msg` analyzing staged changes*
-- *AI-generated conventional commit message*
-- *Professional message format ready to use*
-- *Can also use `/git-review` for code analysis*
-
----
-
-## 📋 Prerequisites
-
-### Local LLM Server (Required)
-
-You need one of:
+### LLM Server Setup
 
 **Ollama** (Recommended)
 ```bash
+# Install: https://ollama.ai
+# Run model server:
 ollama run mistral
-# Server at: http://localhost:11434
+# Server: http://localhost:11434
 ```
 
 **LM Studio**
-- Download: https://lmstudio.ai
-- Start local server on: http://localhost:8000
+```
+1. Download: https://lmstudio.ai
+2. Open app → Select model → Click "Start Local Server"
+3. Server: http://localhost:8000
+4. In VS Code settings, set endpoint to: http://localhost:8000
+```
 
 **vLLM**
 ```bash
@@ -253,20 +516,100 @@ python -m vllm.entrypoints.openai.api_server \
   --port 11434
 ```
 
-## 🚀 Getting Started
+### Recommended Models
 
-### Quick Install (One Command)
+| Model | Rating | Notes |
+|-------|--------|-------|
+| `mistral` | ⭐⭐⭐⭐⭐ | Best all-around (recommended) |
+| `qwen2.5-coder` | ⭐⭐⭐⭐⭐ | Best for code analysis |
+| `llama2-uncensored` | ⭐⭐⭐⭐ | Good general analysis |
+| `neural-chat` | ⭐⭐⭐⭐ | Fast, decent quality |
 
-**From VS Code Marketplace (Easiest):**
-```bash
-code --install-extension odanree.llm-local-assistant
+## 🔒 Privacy & Security
+
+✅ **100% Local & Private**
+- No external APIs
+- No cloud services
+- No telemetry
+- No internet required
+- Your code stays on your machine
+
+**How it works:**
+1. Your LLM runs locally (Ollama, LM Studio, vLLM)
+2. Extension sends requests to local server only
+3. All processing happens locally
+4. Responses processed in VS Code
+5. Nothing leaves your machine
+
+## 🏗️ Architecture & Design
+
+### Three-Phase AI Loop
+
+```
+Your Code
+   ↓
+[ANALYZER] → Detects patterns and issues
+   ↓
+[RECOMMENDATIONS] → Suggests improvements
+   ↓
+[ACTION] → You decide what to do next
 ```
 
-Or search for "LLM Local Assistant" in VS Code Extensions marketplace: https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
+### Phase 3: Architecture Analysis (SAFE)
+- Semantic code analysis (5 layers)
+- Pattern detection (8 patterns)
+- Architecture scoring (0-10)
+- Safe, always reliable
 
-**See [docs/INSTALL.md](https://github.com/odanree/llm-local-assistant/blob/main/docs/INSTALL.md) for detailed platform-specific setup, troubleshooting, and development instructions.**
+### Phase 2: File Operations (SAFE)
+- Read files
+- Generate file content
+- Review before writing
+- Git integration
 
-## 🚀 Development & Building
+### Phase 1: Chat & Utilities (SAFE)
+- LLM chat with context
+- Model diagnostics
+- Help and documentation
+
+**What's NOT included:**
+- Code generation with planning
+- Multi-file generation
+- Automatic refactoring
+- (These had infinite loop bugs, disabled for safety)
+
+## ✅ Quality & Testing
+
+- **284 tests** - All passing ✅
+- **100% TypeScript strict** - Zero type errors
+- **0 compilation errors**
+- **Production-ready** - Used by real projects
+
+**Test Coverage:**
+- Pattern detection: 50+ tests
+- Architecture analysis: 45+ tests
+- File operations: 40+ tests
+- Error handling: 35+ tests
+- Git integration: 40+ tests
+- All other: 74+ tests
+
+## 📊 v2.0.3 Status
+
+**What Changed from v2.0.2:**
+- ✅ Fixed file discovery (now scans both src AND root)
+- ✅ Fixed multi-workspace support (plans execute in correct workspace)
+- ✅ Disabled broken code generation (`/plan`, `/design-system`, `/approve`)
+- ✅ Updated documentation (honest about limitations)
+- ✅ Cleaned up project root (production-standard only)
+
+**Metrics:**
+- Tests: 284/284 passing ✅
+- Compilation: 0 errors ✅
+- TypeScript strict: Enabled ✅
+- Blockers: 0 ✅
+- Ready for: Production ✅
+
+## 🚀 Development
 
 ### Build
 ```bash
@@ -275,537 +618,47 @@ npm run watch         # Auto-rebuild on changes
 npm run package       # Production VSIX package
 ```
 
-### Testing
+### Test
 ```bash
-npm test              # Run all 120+ tests
+npm test              # Run all tests
 npm run test:watch   # Auto-run on changes
-npm run test:coverage # Coverage report
 ```
 
 ### Debug
 ```bash
-# Launch in VS Code debug mode
-F5
-
-# Then interact with extension:
-- Type messages to chat
-- Use /plan, /approve, /reject
-- Check console for debug output
+# Press F5 in VS Code to start debug session
+# Then test commands in chat window
 ```
-
-### Source Code Structure
-```
-src/
-├── extension.ts           # Command routing, UI orchestration
-├── planner.ts            # Plan generation with thinking phase
-├── executor.ts           # Step execution with retry logic
-├── llmClient.ts          # LLM API abstraction
-├── gitClient.ts          # Git operations
-├── webviewContent.ts     # Chat UI HTML/CSS/JS
-├── *.test.ts             # 120+ unit tests
-└── vitest.setup.ts       # Test configuration
-```
-
----
-
-#### System
-- **`/help`** - Show available commands
-  ```
-  /help
-  ```
-
-## 🤖 Phase 2 Commands Guide
-
-### Planning & Execution
-
-#### `/plan <task>`
-**Analyze a task and create a structured multi-step plan**
-
-```
-You: /plan create a React component with unit tests
-
-LLM: 📋 **Plan Created** (5 steps, 8.3s thinking)
-
-STEP 1: read
-  Read example React components to understand style
-
-STEP 2: write  
-  Generate TypeScript React component with hooks
-
-STEP 3: write
-  Generate Jest unit tests for component
-
-STEP 4: run
-  Execute npm test to verify tests pass
-
-STEP 5: write
-  Create documentation for component
-
-Ready to execute? Use **/approve** or **/reject**
-```
-
-**What it does:**
-- Uses LLM thinking phase to analyze your request
-- Breaks task into 3-10 atomic steps
-- Each step is one of: `read`, `write`, `run`, or `suggestwrite`
-- Generates step descriptions explaining the action
-
-#### `/approve`
-**Execute the current plan step-by-step**
-
-```
-You: /approve
-
-LLM: ⚙️ **Executing Plan** (5 steps)
-
-✅ STEP 1: read (127ms)
-   Read example React components
-
-✅ STEP 2: write (3.2s)
-   Generated MyComponent.tsx (284 lines)
-
-✅ STEP 3: write (2.1s)
-   Generated MyComponent.test.tsx (156 lines)
-
-⚠️ STEP 4: run (1.8s)
-   npm test - Retry 1 of 2
-   ✅ Retry succeeded, tests pass
-
-✅ STEP 5: write (890ms)
-   Generated COMPONENT.md
-
-✅ **Plan completed successfully** (7.9 seconds)
-```
-
-**Features:**
-- Executes steps sequentially
-- Automatic retry (up to 2 times) on step failure
-- Real-time progress with elapsed time
-- Shows output for each step
-- Continues on success, stops on unrecoverable error
-
-#### `/reject`
-**Discard the current plan without executing**
-
-```
-You: /reject
-
-LLM: ❌ Plan discarded. What would you like to do?
-```
-
----
-
-### File Operations (Phase 1 - Still Available)
-
-#### `/read <path>`
-```
-/read src/main.ts
-```
-Read and display file contents with syntax highlighting.
-
-#### `/write <path> [prompt]`
-```
-/write src/greeting.ts write a TypeScript function that greets users with their name
-```
-Generate file content via LLM and write to disk.
-
-#### `/suggestwrite <path> [prompt]`
-```
-/suggestwrite src/config.ts add validation for the API endpoint
-```
-LLM suggests changes, you review the diff before writing.
-
----
-
-### Git Integration (Phase 1 - Still Available)
-
-#### `/git-commit-msg`
-**Generate conventional commit message from staged changes**
-```
-/git-commit-msg
-```
-
-Analyzes all staged diffs and generates a message following the pattern:
-```
-<type>(<scope>): <description>
-
-[optional body with detailed changes]
-```
-
-#### `/git-review`
-**AI-powered code review of staged changes**
-```
-/git-review
-```
-
-Reviews staged changes and provides:
-- Potential issues or bugs
-- Code quality suggestions
-- Security considerations
-- Style recommendations
-
-## 🏗️ Architecture & Design
-
-### Why This Design?
-
-**Three-Module Agent Loop**
-```
-User Request
-    ↓
-[PLANNER] → Breaks task into structured steps
-    ↓
-[REVIEW] → You see plan, decide to approve/reject
-    ↓
-[EXECUTOR] → Runs steps sequentially with retry
-    ↓
-[OBSERVER] → Monitors progress, provides feedback
-```
-
-**Key Design Decisions:**
-
-1. **Planner → Executor Separation**
-   - You always review before execution
-   - Plan can be rejected without side effects
-   - Clear visibility into what will happen
-
-2. **Sequential Execution with Retry**
-   - Each step runs to completion before next
-   - Automatic retry (up to 2 times) on failure
-   - Stops on unrecoverable errors
-
-3. **Observable Progress**
-   - Real-time output for each step
-   - Elapsed time and performance metrics
-   - Detailed error messages guide investigation
-
-4. **Atomic Steps**
-   - Each step is one of: read, write, run, suggestwrite
-   - No partial execution or rollback needed
-   - Simple state management
-
-### Module Responsibilities
-
-**Planner** (`src/planner.ts` - 366 lines)
-- Analyzes user task
-- Generates execution plan as JSON
-- Validates steps are valid action types
-- Returns readable plan summary
-
-**Executor** (`src/executor.ts` - 503 lines)
-- Executes steps sequentially
-- Implements each action type (read, write, run)
-- Handles errors and retries
-- Provides progress callbacks for UI
-
-**Extension** (`src/extension.ts` - 385 lines)
-- Routes commands to Planner/Executor
-- Manages webview chat UI
-- Handles approval/rejection UI
-- Orchestrates the agent loop
-
-### Error Handling & Recovery
-
-**Automatic Retry Pattern**
-```typescript
-for (let attempt = 1; attempt <= maxRetries; attempt++) {
-  try {
-    return await executeStep(step);
-  } catch (error) {
-    if (attempt === maxRetries) throw error;
-    logRetry(step, attempt, error);
-  }
-}
-```
-
-**Error Categories & Handling**
-- **Transient** (retry): Network timeouts, temporary file locks
-- **Unrecoverable** (stop): File not found, syntax errors, permissions
-- **Information** (continue): Warnings logged but execution continues
-
-**Error Message Strategy**
-- Always show specific error details
-- Suggest corrective actions (💡 prefix)
-- Include affected file paths and line numbers
-
-## 🎯 Use Cases & Examples
-
-### Example 1: Refactor Module with Tests
-```
-You: /plan refactor src/auth.js to use async/await and add comprehensive tests
-
-LLM Creates Plan:
-  1. Read src/auth.js (analyze current implementation)
-  2. Write src/auth.js (generate refactored async/await version)
-  3. Write src/auth.test.js (generate test suite)
-  4. Run npm test (verify tests pass)
-  5. Write docs/REFACTOR.md (document changes)
-
-You: /approve
-→ 5 steps execute in 12.4 seconds
-→ All tests pass
-→ Documentation created
-```
-
-### Example 2: Generate Project Structure
-```
-You: /plan create a new TypeScript project structure for an Express API
-
-LLM Creates Plan:
-  1. Read examples/project-template (reference structure)
-  2. Write src/index.ts (create main server file)
-  3. Write src/routes/api.ts (create API routes)
-  4. Write src/middleware/auth.ts (create auth middleware)
-  5. Write tests/api.test.ts (create tests)
-  6. Write README.md (create documentation)
-
-You: /approve
-→ Complete project scaffolding in seconds
-```
-
-### Example 3: Implement Feature with Documentation
-```
-You: /plan add a rate-limiting feature to the API
-
-LLM Creates Plan:
-  1. Read current middleware structure
-  2. Write src/middleware/rateLimit.ts (implementation)
-  3. Write docs/RATE_LIMITING.md (docs)
-  4. Write tests/rateLimit.test.ts (tests)
-
-You: /approve
-→ Feature fully implemented with tests and docs
-```
-
----
-
-## 📦 Installation & Configuration
-
-### Quick Start
-
-1. **Start your LLM server**
-   ```bash
-   # Ollama (recommended)
-   ollama run mistral
-   
-   # LM Studio
-   # Open LM Studio → Select model → Start local server
-   
-   # vLLM
-   python -m vllm.entrypoints.openai.api_server --model mistral-7b
-   ```
-
-2. **Install extension**
-   - Open VS Code Extensions (Ctrl+Shift+X)
-   - Search "LLM Local Assistant"
-   - Click Install
-
-3. **Configure endpoint** (if not using defaults)
-   - Open VS Code Settings (Ctrl+,)
-   - Set `llm-assistant.endpoint`: `http://localhost:11434`
-   - Set `llm-assistant.model`: `mistral`
-
-4. **Test connection**
-   - Click **LLM Assistant** in status bar
-   - Run "Test Connection" command
-   - ✅ Should show "Connection successful"
-
-See [docs/INSTALL.md](docs/INSTALL.md) for platform-specific setup.
-
-### Configuration Reference
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `llm-assistant.endpoint` | `http://localhost:11434` | LLM server URL |
-| `llm-assistant.model` | `mistral` | Model name to use |
-| `llm-assistant.temperature` | `0.7` | Response randomness (0-1) |
-| `llm-assistant.maxTokens` | `2048` | Max response length |
-| `llm-assistant.timeout` | `60000` | Request timeout (ms) |
-
-### Supported LLM Servers
-
-| Server | Endpoint | Setup |
-|--------|----------|-------|
-| **Ollama** | `http://localhost:11434` | `ollama run mistral` |
-| **LM Studio** | `http://localhost:8000` | Start local server in UI |
-| **vLLM** | `http://localhost:8000` | Python server |
-| **OpenAI Compatible** | Custom URL | Any OpenAI-compatible endpoint |
-
----
-
-## ✅ Quality & Testing
-
-### Test Coverage
-- **120+ unit tests** covering all core functionality
-- **>85% code coverage** on Planner and Executor modules
-- **100% pass rate** on every commit
-- Tests run on: Linux, macOS, Windows
-
-**Coverage by Module:**
-- `planner.ts`: 17 tests
-- `executor.ts`: 15 tests  
-- `extension.ts`: 36 tests
-- `llmClient.ts`: 33 tests
-- `gitClient.ts`: 23 tests
-
-### Type Safety
-- **TypeScript strict mode** enabled
-- **Zero type errors** in entire codebase
-- **Explicit types** on all public APIs
-- **JSDoc comments** on all modules
-
-### Error Handling
-- **Specific error detection** - Different handling for timeouts, not-found, permission errors
-- **User-friendly messages** - Technical details only shown for debugging
-- **Automatic retry logic** - Up to 2 retries for transient failures
-- **Timeout handling** - Clean cancellation with AbortController
-
-### Code Quality
-- **100% ESLint compliant** - Clean code standards enforced
-- **Clean git history** - 30+ atomic commits showing development progression
-- **Comprehensive documentation** - Every module documented with architecture rationale
-
----
-
-## 🔒 Privacy & Security
-
-### 100% Local & Private
-✅ **No external APIs** - Works completely offline with local LLM  
-✅ **No cloud services** - Zero dependencies on external infrastructure  
-✅ **No telemetry** - No tracking, analytics, or data collection  
-✅ **No internet required** - After model download, works completely offline  
-✅ **Your code stays private** - Never sent to external servers  
-
-**How it works:**
-1. Your LLM server runs on your machine (Ollama, LM Studio, vLLM)
-2. Extension sends requests to local server only
-3. All responses processed locally in VS Code
-4. Your code, conversations, and tasks never leave your machine
-
----
 
 ## 📚 Documentation
 
-| Document | Purpose |
-|----------|---------|
-| **[README.md](README.md)** (this file) | Overview, features, quick start |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Deep dive into design and modules |
-| **[PROJECT_STATUS.md](PROJECT_STATUS.md)** | Current development status |
-| **[ROADMAP.md](ROADMAP.md)** | Future features and phases |
-| **[CHANGELOG.md](CHANGELOG.md)** | Version history |
-| **[CONTRIBUTING.md](CONTRIBUTING.md)** | Developer guide |
-
-**Phase 2 Deep Dives:**
-- `docs/PHASE2_GUIDE.md` - Complete Phase 2 specification
-- `docs/PHASE2_INTEGRATION.md` - Integration architecture
-- `docs/EXTENSIBILITY_ANALYSIS.md` - Extension patterns and examples
-
----
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history
+- **[ROADMAP.md](ROADMAP.md)** - Future plans
+- **[LICENSE](LICENSE)** - MIT License
 
 ## 🐛 Troubleshooting
 
-### Connection Issues
+### "Cannot connect to endpoint"
+- Make sure LLM server is running
+- Check endpoint URL in settings
+- Test with `/check-model` command
 
-**"Cannot connect to endpoint"**
-- Verify LLM server running: `ollama serve` or LM Studio UI
-- Check endpoint in settings: `llm-assistant.endpoint`
-- Test connection: Click status bar → "Test Connection"
-- Check firewall: Port 11434 (Ollama) or 8000 (LM Studio) accessible?
+### "Model not found"
+- List models: `ollama list`
+- Download: `ollama pull mistral`
+- Update settings with correct model name
 
-**"Model not found"**
-- List available models: `ollama list`
-- Download if needed: `ollama pull mistral`
-- Update settings: `llm-assistant.model: mistral`
+### "Request timeout"
+- Increase timeout in settings (default 60000ms)
+- Check server resources (CPU, RAM)
+- Try smaller model
 
-### Performance Issues
+## 📝 License
 
-**"Requests timing out"**
-- Increase `llm-assistant.timeout` (default 60000ms)
-- Check server resources: CPU, RAM, disk space
-- Try smaller model: `ollama run tinyllama` instead of mistral
-
-**"Very slow responses"**
-- Use smaller model: `ollama pull orca-mini` (3.8GB)
-- Reduce `llm-assistant.maxTokens` (default 2048)
-- Check GPU acceleration: Ollama can use CUDA/Metal
-
-### LLM Server Setup
-
-**Ollama Won't Start**
-```bash
-# Mac/Linux: Reinstall
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Windows: Download from https://ollama.ai/download
-# Then: ollama run mistral
-```
-
-**LM Studio Issues**
-- Download latest: https://lmstudio.ai
-- Load model in UI
-- Ensure "Local Server" is started (green dot)
-- Default port: 8000, check in settings
+MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-## 🎓 Learn More
+**✨ v2.0.3 - Pattern Detection & Architecture Analysis | 🎯 Safe & Reliable | 🔒 100% Private | 🚀 Production-Ready**
 
-### For Users
-- How to install and configure: [docs/INSTALL.md](docs/INSTALL.md)
-- Command reference: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
-- Video tutorial: [See demo video](https://github.com/odanree/llm-local-assistant/wiki/Demo-Video)
-
-### For Developers
-- Architecture deep dive: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Development guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Phase 2 extensibility: [docs/EXTENSIBILITY_ANALYSIS.md](docs/EXTENSIBILITY_ANALYSIS.md)
-- Future roadmap: [ROADMAP.md](ROADMAP.md)
-
-### For Contributors
-- Clean code patterns: Review `src/*.ts` files
-- Test patterns: Review `src/*.test.ts` files
-- Git workflow: Check clean commit history with `git log --oneline`
-
----
-
-## 📊 Project Stats
-
-| Metric | Count |
-|--------|-------|
-| **Tests** | 120+ |
-| **Test Coverage** | >85% |
-| **Modules** | 6 core |
-| **TypeScript Strict** | ✅ Yes |
-| **Type Errors** | 0 |
-| **Commit History** | 30+ atomic |
-| **Versions** | 2 released |
-
----
-
-## 🙏 Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup
-- Code style guidelines  
-- Testing requirements
-- Pull request process
-
-### Quick Contribution Guide
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-thing`)
-3. **Code** with tests (see existing patterns)
-4. **Test** locally (`npm test`)
-5. **Commit** with clear message (`git commit -m "feat: add amazing thing"`)
-6. **Push** to your fork
-7. **Open** PR with description
-
----
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) file for details
-
-**Created by [@odanree](https://github.com/odanree)**
-
----
-
-**🚀 Local AI Agent for VS Code | 🔒 100% Private | ⚡ Autonomous Planning & Execution**
+Created by [@odanree](https://github.com/odanree)

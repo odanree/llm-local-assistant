@@ -1,175 +1,311 @@
-# Roadmap: LLM Local Assistant
+# ROADMAP - LLM Local Assistant
 
-## ⚠️ CRITICAL: Documentation Constraint
+## Current Status: v2.0.3 Production Ready ✅
 
-**STRICTLY ENFORCED**: Root directory contains EXACTLY 6 documentation files. NO new .md/.txt files in root. ALL new documentation goes to `/docs/` subdirectory.
-
----
-
-**Status**: PHASE 2 COMPLETE - Published to VS Code Marketplace (v1.1.2)
-
-This extension now features multi-step task planning and autonomous execution with real-time progress monitoring.
-
-### ✅ Phase 1 Features (Stable)
-
-**Core Chat Functionality**
-- ✅ Local LLM chat integration (Ollama, LM Studio, vLLM)
-- ✅ Streaming response support (real-time tokens)
-- ✅ Multi-turn conversation with context maintenance
-- ✅ Full VS Code integration (status bar, settings)
-
-**Agent Mode Commands (Phase 1)**
-- ✅ `/read <path>` - Read files and directories from workspace
-- ✅ `/write <path> [prompt]` - Generate content and write to files
-- ✅ `/suggestwrite <path> [prompt]` - LLM suggests changes with user approval
-- ✅ `/git-commit-msg` - Generate commit messages from staged changes
-- ✅ `/git-review` - Review code changes with AI analysis
-
-**Production Quality**
-- ✅ Comprehensive error handling with smart suggestions
-- ✅ Configuration management (endpoint, model, temperature, timeouts)
-- ✅ Auto-directory creation for write operations
-- ✅ Modern, responsive UI with streaming display
-- ✅ Full TypeScript type safety
-- ✅ Complete documentation (README, ARCHITECTURE, copilot-instructions)
-
-### ✅ Phase 2 Features (NEW - v1.1.0+)
-
-**Agent Loop: Think-Plan-Execute-Observe**
-- ✅ `/plan <task>` - Generate multi-step execution plans
-- ✅ `/approve` - Execute approved plans with automatic retry logic
-- ✅ `/reject` - Discard plans before execution
-- ✅ **Thinking Phase** - LLM explains approach before planning
-- ✅ **Planning** - Generates 3-10 step action sequences
-- ✅ **Execution** - Runs steps sequentially with error recovery
-- ✅ **Observation** - Captures step results for context
-- ✅ **Directory Reading** - Recursively read folder structures (supports `examples/**`)
-- ✅ **Chat Persistence** - History survives panel switches
-- ✅ **Action Validation** - Smart constraint checking on generated plans
-
-**Capabilities**
-- ✅ 94+ unit tests covering Planner and Executor modules (>85% coverage)
-- ✅ Automatic error recovery (up to 2 retries per step)
-- ✅ Real-time progress monitoring with step output
-- ✅ Smart error messages with recovery suggestions
-- ✅ Full backward compatibility (Phase 1 unchanged)
-
-### 📋 Known Limitations (Phase 2)
-
-**Intentional Scope Boundaries**:
-- ⚠️ NPM commands don't work in executor shell (workaround: run manually)
-- ⚠️ No interactive approval mid-execution (only before/after plan)
-- ⚠️ No rollback of executed steps
-- ⚠️ No codebase context awareness yet
-
-See `docs/PHASE2_GUIDE.md` for full technical details.
+**Release Date:** February 8, 2026  
+**Status:** Stable, Production-Ready  
+**Tests:** 284/284 passing  
+**TypeScript:** Strict mode, 0 errors  
+**Blockers:** None
 
 ---
 
-## Future Phases (v1.2+)
+## v2.0.3: Analysis-Only, Production-Ready (CURRENT) ✅
 
-**Phases 3-7 are in `FUTURE_ROADMAP.md`** with detailed specifications.
+### What's Included (Phase 3)
 
-### Phase 2.1: Copilot-Like Experience (3-5 days)
-- Streaming output for each planning step
-- Automatic step observation and result capture
-- Smart error correction (auto-fix common issues)
-- Better conversation context during execution
+**Pattern Detection & Architecture Analysis**
+- ✅ `/refactor <file>` - 5-layer semantic analysis
+- ✅ `/rate-architecture` - Score codebase (0-10)
+- ✅ `/suggest-patterns` - Pattern recommendations (8 patterns)
+- ✅ `/context show structure` - Project organization
+- ✅ `/context show patterns` - Detected patterns
+- ✅ `/git-review` - Code review
 
-### Phase 2.2: Advanced Features (3-4 days)
-- Modify plans before execution
-- Rollback capability for failed steps
-- Codebase awareness (understand existing code)
-- Follow-up questions during execution
+**File Operations (Phase 1-2)**
+- ✅ `/read <path>` - Read files
+- ✅ `/write <path>` - Generate file content
+- ✅ `/suggestwrite <path>` - Preview before writing
+- ✅ `/explain <path>` - Code explanation
+- ✅ `/git-commit-msg` - Generate commit messages
+- ✅ `/help` - Command reference
+- ✅ `/check-model` - Model diagnostics
 
-### Phase 2.3: Polish & UX (2-3 days)
-- Tree visualization of execution progress
-- Estimated time to completion
-- Execution history and replay
-- Cancel/pause during execution
+**Multi-Workspace Support**
+- ✅ Plans execute in correct workspace
+- ✅ File discovery scans src AND root
+- ✅ Context-aware analysis
 
-### Phase 3+: Agent Intelligence
-- Error analysis and automatic correction
-- Multi-agent task delegation
-- VS Code integration (command palette, problem panel)
-- External tool/MCP integration
+### What's NOT Included (Intentionally Disabled)
+
+**Code Generation with Planning** - Infinite Loop Bugs
+- ❌ `/plan` - Disabled (infinite validation loop)
+- ❌ `/design-system` - Disabled (infinite validation loop)
+- ❌ `/approve` - Disabled (tied to above)
+
+**Why disabled:**
+- LLM generates code missing imports (e.g., `useState`)
+- Auto-correction detects error but regenerates same broken code
+- Creates infinite loop: generate → validate → regenerate → validate...
+- Traps users in retry cycles, wastes tokens
+
+**Better alternatives:**
+- Cursor, Windsurf, or Copilot (better multi-file context)
+- Manual implementation (now you understand the pattern)
+
+### Philosophy: Honest About Limitations
+
+**v2.0.3 is honest:**
+- ✅ **Analysis excels** - Pattern detection, scoring, recommendations (100% reliable)
+- ❌ **Generation fails** - Code generation creates infinite loops (disabled)
+- ✅ **What we're good at** - Deep code understanding and guidance
+- ❌ **What we're bad at** - Reliable multi-file code generation
+
+**Better approach:**
+- Let VS Code/Copilot/Cursor handle generation (better tools)
+- Use this extension for analysis and understanding
+- Make informed decisions based on recommendations
 
 ---
 
-## Quick Links
+## v2.0.2: UX Polish & Bug Fixes (Previous Release)
 
-- **Implementation Details**: `docs/PHASE2_GUIDE.md`
-- **Testing Guide**: `docs/PHASE2_TESTING.md`
-- **Development Status**: `docs/PHASE2_IMPLEMENTATION_LOG.md`
-- **Improvements Roadmap**: `docs/PHASE2_COPILOT_IMPROVEMENTS.md`
+**Date:** February 7, 2026
 
-## Using This Project as a Starting Point
+**Features:**
+- ✅ Pattern detection enhancements
+- ✅ Safety improvements (pattern blocking)
+- ✅ UI/UX polish
+- ✅ Multi-workspace initial support
 
-### For Feature Extensions (Phase 2+)
-1. Review `FUTURE_ROADMAP.md` for detailed specifications
-2. Read `ARCHITECTURE.md` to understand Phase 1 foundation
-3. Use `.github/copilot-instructions.md` for AI-assisted development
-4. Keep Phase 1 codebase stable (don't refactor existing code)
+**Tests:** 273/273 passing
 
-### For Bug Reports or Improvements
-- Phase 1 is stable and feature-complete
-- Minor UI/UX improvements welcome
-- Performance optimizations welcome
-- Documentation improvements welcome
+---
+
+## v2.0.1: Pattern Detection Foundation (Previous Release)
+
+**Date:** February 6, 2026
+
+**Features:**
+- ✅ Semantic analysis (5 layers)
+- ✅ Pattern detection (8 patterns)
+- ✅ Architecture scoring
+- ✅ Initial `/refactor` command
+
+---
+
+## v2.0.0: Intelligent Refactoring (Previous Release)
+
+**Date:** February 6, 2026
+
+**Features:**
+- ✅ Phase 3 architecture analysis
+- ✅ Pattern detection framework
+- ✅ Multi-file coordination foundation
+- ✅ Validation loop detection
+
+---
+
+## Future Phases (v2.1+)
+
+### v2.1: Better Analysis & Recommendations
+
+**Possible Future Features:**
+- Improved pattern detection accuracy
+- Better architecture scoring algorithm
+- More specific refactoring recommendations
+- Performance profiling analysis
+
+**Status:** Not started (focused on stability first)
+
+### v2.2: Enhanced Context & Integration
+
+**Possible Future Features:**
+- Better multi-workspace support
+- Context caching for faster analysis
+- Git history analysis
+- Team-based recommendations
+
+**Status:** Not started (focused on stability first)
+
+### v3.0: Code Generation (Revisited)
+
+**Not In Active Development:**
+- Would require solving infinite loop problem
+- Better approach: partner with Cursor/Windsurf instead of competing
+- This extension is better as analysis tool than generation tool
+
+---
+
+## Known Limitations (By Design)
+
+### v2.0.3
+
+1. **No Code Generation**
+   - Why: LLM can't reliably follow validation constraints
+   - Workaround: Use Cursor, Windsurf, or manual coding
+   - Evidence: v2.0.0-2.0.2 attempts created infinite loops
+
+2. **Pattern Detection Limited to Common Patterns**
+   - Current: 8 patterns (CRUD, Auth, Forms, DataFetching, StateManagement, Notifications, SearchFilter, Pagination)
+   - Why: Others less common or harder to detect reliably
+   - Workaround: Use `/refactor` for custom pattern analysis
+
+3. **Architecture Scoring Based on File Structure**
+   - Current: Analyzes layers and organization
+   - Limitation: Can't measure actual runtime performance
+   - Workaround: Use performance profiling tools for runtime analysis
+
+4. **Multi-File Operations Limited**
+   - Current: Can analyze codebase, show structure
+   - Limitation: Won't generate multiple coordinated files
+   - Workaround: Use Cursor/Windsurf for multi-file generation
+
+### Intentional Design Choices
+
+**Analysis Only, No Generation** - Because:
+- Analysis is 100% reliable (just reading code)
+- Generation is unreliable (writing working code)
+- Better to be honest about limitations
+- Recommend better tools for generation (Cursor, Windsurf)
+
+**No Automatic Refactoring** - Because:
+- Users should understand changes before applying them
+- Recommendations without generation safer and more useful
+- Puts user in control of transformation
+
+**No External APIs** - Because:
+- Local privacy more important than cloud features
+- Users can run offline
+- No dependency on external services
+
+---
+
+## Version History
+
+| Version | Date | Status | Key Features |
+|---------|------|--------|--------------|
+| v2.0.3 | Feb 8, 2026 | ✅ Current | Analysis-only, disabled broken generation |
+| v2.0.2 | Feb 7, 2026 | ✅ Stable | UX polish, safety improvements |
+| v2.0.1 | Feb 6, 2026 | ✅ Stable | Pattern detection foundation |
+| v2.0.0 | Feb 6, 2026 | ✅ Stable | Intelligent refactoring framework |
+| v1.2.5 | Feb 5, 2026 | ✅ Stable | Multi-step planning and execution |
+| v1.2.0 | Early Feb | ✅ Stable | Planning and autonomous execution |
+| v1.0.0 | Jan 2026 | ✅ Stable | Basic chat and file operations |
+
+---
+
+## Contributing
+
+### How to Help
+
+**Bug Reports**
+- Found an issue? Please report via GitHub Issues
+- Include: what happened, expected behavior, steps to reproduce, setup (model/OS)
+
+**Feature Requests**
+- Have an idea? Open GitHub Discussion
+- Community votes on priorities
+
+**Code Contributions**
+- Fork repository
+- Follow code style (see README.md Development section)
+- Submit PR with tests
+- All tests must pass
 
 ### Development Setup
+
 ```bash
+# Clone repository
+git clone https://github.com/odanree/llm-local-assistant.git
+cd llm-local-assistant
+
+# Install dependencies
 npm install
-npm run watch          # Auto-rebuild on changes
-npm run compile        # Single build
-npm run lint          # Check code quality
-npm test              # Run tests (when added)
+
+# Start development
+npm run watch        # Auto-rebuild on changes
+
+# Run tests
+npm test             # All tests
+npm run test:watch   # Auto-run on changes
+
+# Debug
+# Press F5 in VS Code to launch debug extension
 ```
 
----
+### Code Quality Standards
 
-## Phase 1 Success Criteria ✅
-
-- ✅ Chat works smoothly with streaming tokens
-- ✅ `/read`, `/write`, `/suggestwrite` all function correctly
-- ✅ Error handling is graceful (no crashes)
-- ✅ Configuration is flexible (endpoint, model, temperature, etc.)
-- ✅ Documentation is comprehensive
-- ✅ Code is well-organized and typed
-- ✅ Ready for production use and portfolio showcase
+- TypeScript strict mode (0 errors)
+- 100% test coverage for new features
+- ESLint compliant
+- Clear commit messages
+- Comprehensive documentation
 
 ---
 
-## What's Next for You?
+## Philosophy & Values
 
-### Option 1: Polish Phase 1 Further
-- Improve UI responsiveness
-- Add more test coverage
-- Optimize performance with large files
-- Create demo videos
+### Why This Extension Exists
 
-### Option 2: Start a Phase 2 Project
-- Fork this repo or create a branch
-- Follow `FUTURE_ROADMAP.md` Phase 2 section
-- Build agent loop architecture
-- Test with Phase 1 commands as foundation
+1. **Local & Private** - Process code locally, never send to cloud
+2. **Honest** - Clear about what it does well and what it doesn't
+3. **Focused** - Do one thing (analysis) and do it well
+4. **Safe** - No risky automation or broken promises
+5. **Open** - Free and open source
 
-### Option 3: Contribute to Ecosystem
-- Create agents for specific languages (Python agent, Go agent, etc.)
-- Build specialized tools (test runner integration, linter integration)
-- Write usage guides and tutorials
+### Design Principles
+
+**Principle 1: Analysis Over Generation**
+- Analysis (reading code) is reliable
+- Generation (writing code) is unreliable
+- Focus on what we're good at
+
+**Principle 2: User Control**
+- Always show plan before execution
+- User approves changes
+- Never automate risky operations
+
+**Principle 3: Honest Scope**
+- Clear about limitations
+- Recommend better tools when appropriate
+- Don't pretend to do things we can't
+
+**Principle 4: Privacy First**
+- 100% local processing
+- No external APIs
+- No data collection
+- Works offline
+
+**Principle 5: Keep It Simple**
+- Focus on core functionality
+- Don't try to do everything
+- Let other tools handle what they're better at
 
 ---
 
-## Questions & Support
+## Getting Help
 
-For questions about:
-- **Phase 1 (current)**: See README.md, ARCHITECTURE.md
-- **Future phases**: See FUTURE_ROADMAP.md
-- **Development**: See `.github/copilot-instructions.md`, QUICK_REFERENCE.md
-- **Contributing**: See CONTRIBUTING.md (coming soon)
+### Documentation
+- **[README.md](README.md)** - Features and quick start
+- **[CHANGELOG.md](CHANGELOG.md)** - What's new in each version
+- **[LICENSE](LICENSE)** - MIT License
+
+### Support
+- **GitHub Issues** - Bug reports and feature requests
+- **GitHub Discussions** - Questions and community support
+- **VS Code Marketplace** - Community reviews and feedback
 
 ---
 
-Last Updated: November 2025  
-Phase 1 Status: ✅ COMPLETE AND STABLE
+## Contact & Social
+
+- **GitHub:** https://github.com/odanree/llm-local-assistant
+- **Marketplace:** https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant
+- **Twitter:** [@odanree](https://twitter.com/odanree) (if available)
+
+---
+
+**Last Updated:** February 8, 2026  
+**Status:** v2.0.3 Production Ready ✅  
+**Next Review:** v2.1 planning (after stability feedback)
