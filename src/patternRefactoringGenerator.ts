@@ -113,29 +113,46 @@ Apply the ${pattern} pattern following these guidelines:`;
       `
 ${patternGuidelines}
 
-## Requirements
-1. Maintain all existing functionality
-2. Preserve all props, state, and logic
-3. Use modern React patterns (hooks, context, custom hooks)
-4. Add proper error handling
-5. Include TypeScript types
-6. Add JSDoc comments for new functions
-7. Keep the code readable and maintainable
+## CRITICAL Requirements (DO NOT BREAK THESE)
+1. **PRESERVE all existing components, functions, and exports**
+   - Do NOT remove or replace existing JSX components
+   - Do NOT delete function calls or component renders
+   - Do NOT strip CSS modules or styling imports
+   - Keep all props, parameters, and function signatures
+
+2. **ENHANCE, don't REPLACE**
+   - Extract logic into hooks/utilities while keeping existing components
+   - Create NEW hooks/functions, don't remove originals
+   - Use extracted logic WITHIN the existing components
+   - Wrap existing components with new patterns, don't replace them
+
+3. **Maintain all existing functionality**
+   - All features must work exactly as before
+   - All UI elements must render
+   - All business logic must be preserved
+   - User experience must not change (except improvements)
+
+4. Use modern React patterns (hooks, context, custom hooks)
+5. Add proper error handling
+6. Include TypeScript types
+7. Add JSDoc comments for new functions
+8. Keep the code readable and maintainable
 
 ## Output Format
 Provide the refactored code in a TypeScript code block, then explain the changes made.
 
+IMPORTANT: The refactored code must be a MODIFIED VERSION of the original, not a complete rewrite.
+
 \`\`\`typescript
-// Refactored code here
+// Refactored code here - should look similar to original but with pattern applied
 \`\`\`
 
 ## Changes
-- Change 1: description
-- Change 2: description
-- Change 3: description
+- Change 1: description (what was added/extracted, not removed)
+- Change 2: description (how pattern was applied while preserving functionality)
 
 ## Explanation
-Detailed explanation of how the pattern was applied...
+Detailed explanation of how the pattern was applied while maintaining all original functionality...
 `
     );
   }
@@ -146,12 +163,10 @@ Detailed explanation of how the pattern was applied...
   private getPatternGuidelines(pattern: string): string {
     const guidelines: Record<string, string> = {
       StateManagement: `
-- Extract component state into a custom hook or store
-- Use Zustand, Redux, or Context API for global state
-- Remove unnecessary useState calls
-- Implement proper state getters/setters
-- Add loading and error states
-- Implement state reset/cleanup functions`,
+- Extract component state into a custom hook or store (e.g., useCartState) using Zustand or Context API
+- Keep the original component structure and JSX
+- Use the extracted hook within the existing component
+- Preserve all prop drilling and component hierarchy`,
 
       DataFetching: `
 - Extract API calls into a custom hook (useData pattern)
@@ -163,62 +178,57 @@ Detailed explanation of how the pattern was applied...
 - Handle race conditions properly`,
 
       Forms: `
-- Extract form state into a custom hook or store
-- Implement field validation
-- Add error messages and display
-- Use form libraries (React Hook Form, Formik) if complex
-- Implement proper submission handling
-- Add loading state during submission
-- Implement form reset functionality`,
+- Extract form state into a custom hook (e.g., useCostForm) but KEEP the original component structure
+- Implement field validation using libraries like Yup or Zod
+- Add error display for each field
+- Use React Hook Form or Formik to manage form state
+- Add loading state and submission handling
+- Implement form reset
+- KEEP all existing JSX and child components - just enhance the form logic`,
 
       CRUD: `
-- Implement separate functions for Create, Read, Update, Delete
-- Add proper error handling for each operation
-- Implement optimistic updates where appropriate
-- Add loading states for each operation
-- Implement proper data synchronization
-- Add validation for each operation
-- Use proper HTTP methods (GET, POST, PUT, DELETE)`,
+- Create separate functions for Create, Read, Update, Delete operations
+- Add proper error handling and validation
+- Implement loading/success/error states
+- Use optimistic updates where appropriate
+- PRESERVE the existing UI that uses these operations
+- Wrap CRUD operations in custom hooks
+- Don't remove any existing components or UI elements`,
 
       Pagination: `
-- Split data into pages with configurable page size
+- Create a custom hook to manage pagination state (currentPage, pageSize, totalItems)
 - Implement page navigation controls
-- Handle edge cases (empty data, partial pages)
-- Add loading state during page transitions
-- Preserve filters/sorts during pagination
-- Implement keyboard navigation
-- Add total count and current page indicators`,
+- Add loading states and error handling
+- Preserve filters and sorts across page changes
+- KEEP the original list component that displays items
+- Just add pagination logic around it, don't replace it`,
 
       Authentication: `
-- Implement login/logout flows
+- Create an auth context or hook to manage login state
+- Implement login/logout functions with proper error handling
 - Add token management (storage, refresh)
-- Implement protected routes
-- Add session checking on mount
-- Implement role-based access control if needed
-- Add proper error handling for auth failures
-- Implement logout on token expiration`,
+- Preserve all existing components
+- Wrap components with auth checks, don't remove them
+- Implement protected routes while keeping the existing route structure`,
 
       Notifications: `
-- Create a notification context/store
-- Implement toast/alert component
-- Add auto-dismiss with configurable duration
-- Implement different notification types (success, error, info, warning)
-- Add notification queue management
-- Implement accessibility features (ARIA)
-- Add click-to-dismiss functionality`,
+- Create a notifications context/hook for managing toast/alert state
+- Implement a toast component to display notifications
+- Use this in existing components without removing them
+- Add different notification types
+- Implement auto-dismiss and user dismissal
+- PRESERVE all existing functionality, just add notifications to it`,
 
       SearchFilter: `
-- Implement search input with debouncing
-- Add filter selection UI
-- Implement combined search + filter logic
-- Add clear/reset functionality
-- Implement URL params for state persistence
-- Add loading state during search
-- Implement result count display
-- Add "no results" handling`,
+- Create a custom hook for search/filter logic with debouncing
+- Add search and filter state management
+- Implement combined search + filter functionality
+- Use this logic in the existing component that displays results
+- PRESERVE the original result display, just enhance filtering
+- Add proper loading/empty states while keeping the original UI structure`,
     };
 
-    return guidelines[pattern] || `Apply the ${pattern} pattern appropriately to this code.`;
+    return guidelines[pattern] || `Apply the ${pattern} pattern appropriately to this code while preserving all existing functionality and components.`;
   }
 
   /**
