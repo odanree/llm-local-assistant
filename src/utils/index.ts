@@ -7,6 +7,6 @@
  * 3. ContextBuilder - Project context injection for LLM
  */
 
-export { SimpleFixer, SimpleFix, FixerResult } from './simpleFixer';
-export { RetryContext, ValidationError, AttemptRecord } from './retryContext';
-export { ContextBuilder, ProjectContext, ProjectDependencies, ImportPattern } from './contextBuilder';
+export { SimpleFixer, FixResult, FixAction } from './simpleFixer';
+export { RetryContext, AttemptRecord, RetryPolicy } from './retryContext';
+export { ContextBuilder, ProjectContext } from './contextBuilder';
