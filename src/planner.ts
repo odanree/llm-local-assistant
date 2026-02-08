@@ -69,6 +69,13 @@ export type PlanStep = ExecutionStep;
 export interface PlannerConfig {
   llmCall: (prompt: string) => Promise<string>;
   onProgress?: (stage: string, details: string) => void;
+  projectContext?: {
+    language: 'TypeScript' | 'JavaScript';
+    strategy: 'DIFF_MODE' | 'SCAFFOLD_MODE';
+    extension: '.tsx' | '.jsx' | '.ts' | '.js';
+    root: string;
+    isMinimalProject: boolean;
+  };
 }
 
 export class Planner {
@@ -141,14 +148,39 @@ export class Planner {
    * - Tell LLM only 4 action types exist
    * - Tell LLM to do ANALYZE/REVIEW itself, not output as steps
    * - Schema enforcement at prompt level
+   * 
+   * NEW: Context Anchoring (Danh's Core Four closure)
+   * - Inject project language, strategy, root directory
+   * - LLM no longer guesses tech stack
    */
   private buildPlanPrompt(userRequest: string, hasTests: boolean = true): string {
     // OPTIMIZED FOR SMALL MODELS (e.g., qwen2.5-coder:7b)
     // Use shorter, more direct prompts. Verbose prompts confuse small models.
+    
+    const context = this.config.projectContext;
+    let contextSection = '';
+    
+    if (context) {
+      contextSection = `
+ENVIRONMENT (MANDATORY):
+- Language: ${context.language}
+- Strategy: ${context.strategy}
+- File Extension: ${context.extension}
+- Root Directory: ${context.root}
+- Project Type: ${context.isMinimalProject ? 'MINIMAL' : 'MATURE'}
+
+PATH_RULES:
+1. All new files must use: ${context.extension}
+2. All new files go in: ${context.root}
+3. FORBIDDEN: /path/to/, your-project/, {PROJECT_ROOT}/
+4. REQUIRED: Real project paths like src/components/Button.${context.extension.slice(1)}
+`;
+    }
+    
     return `You are a step planner. Output a numbered plan.
 
 ACTIONS: read, write, run, delete, manual
-
+${contextSection}
 RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps

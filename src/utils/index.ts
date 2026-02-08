@@ -5,6 +5,7 @@
  * Phase 6.5: Runtime Generation Mode Detection
  * Phase 7: Lean Parser for qwen2.5-coder:7b
  * Phase 8: Path Guard & Validation Report (Danh's Senior Architecture)
+ * Phase 9: GenerationModeDetector & Path Normalization (Core Four Closure)
  * 
  * Core components for the new architecture:
  * 1. SimpleFixer - Deterministic fixes for common errors
@@ -16,6 +17,7 @@
  * 7. GenerationModeDetector - Runtime detection of generation mode (diff vs scaffold)
  * 8. LeanParser - Parse lean prompt output (Danh's optimization for 7B models)
  * 9. PathSanitizer - Strict path guard & circuit breaker (senior architecture)
+ * 10. ModeDetector - Detect project structure for context anchoring (Core Four closure)
  */
 
 export { SimpleFixer, type FixResult, type FixAction } from './simpleFixer';
@@ -27,3 +29,4 @@ export { WorkspaceDetector, type DetectedWorkspace } from './workspaceDetector';
 export { GenerationModeDetector, type GenerationModeResult } from './generationModeDetector';
 export { parseLeanOutput, validateLeanOutput } from './leanParser';
 export { PathSanitizer } from './pathSanitizer';
+export { GenerationModeDetector as ModeDetector, type ProjectContext as ModeDetectorContext } from './modeDetector';

@@ -130,6 +130,7 @@ export class PathSanitizer {
    * Sanitize a path by removing/fixing common issues
    * 
    * This is more aggressive than validate() — it tries to fix instead of just rejecting.
+   * Danh's enhancement: Replace common placeholders with actual workspace root.
    */
   static sanitizePath(rawPath: string, workspace?: string): string {
     let sanitized = rawPath.trim();
@@ -138,6 +139,22 @@ export class PathSanitizer {
     sanitized = sanitized.replace(/contains.*JSX.*code/i, '');
     sanitized = sanitized.replace(/for.*form.*component/i, '');
     sanitized = sanitized.replace(/^(description|path|file):\s*/i, '');
+
+    // NEW: Replace common placeholders with actual workspace root
+    const placeholders = [
+      { pattern: /^\/path\/to\//i, replace: 'src/' },
+      { pattern: /^your-project\//i, replace: '' },
+      { pattern: /^{PROJECT_ROOT}\//i, replace: 'src/' },
+      { pattern: /^\{workspacePath\}\//i, replace: '' },
+      { pattern: /^\.\/src\//i, replace: 'src/' },
+      { pattern: /^\.\/components\//i, replace: 'src/components/' },
+    ];
+
+    for (const { pattern, replace } of placeholders) {
+      if (pattern.test(sanitized)) {
+        sanitized = sanitized.replace(pattern, replace);
+      }
+    }
 
     // If empty after cleaning, it was definitely a description
     if (sanitized.length === 0) {
