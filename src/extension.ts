@@ -1226,10 +1226,22 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     workspace: workspaceFolder,
                   };
 
+                  // Format: show command code, then stacked buttons for quick refactor
+                  const commandCode = `/refactor ${filepath}`;
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `Pattern detected: **${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)\n\n\`\`\`\n${commandCode}\n\`\`\``,
+                  });
+                  
+                  // Show stacked button options
                   postChatMessage({
                     command: 'question',
-                    question: `Would you like me to refactor this file to apply the **${patternResult.pattern}** pattern?`,
-                    options: [`🔧 Refactor to Apply Pattern`, `📋 Show Preview`, `❌ Skip`],
+                    question: '',
+                    options: [
+                      `🔧 Refactor Now`,
+                      `📋 Show Preview`,
+                      `❌ Skip`,
+                    ],
                   });
                 }
               } catch (err) {
@@ -2139,7 +2151,7 @@ ${fileContent}
             
             // Handle pattern refactoring answers
             const refactorContext = (chatPanel as any)._currentRefactorContext;
-            if (refactorContext && answer === '🔧 Refactor to Apply Pattern') {
+            if (refactorContext && answer === '🔧 Refactor Now') {
               const { filepath, code, pattern, workspace } = refactorContext;
               
               try {
@@ -2199,7 +2211,7 @@ ${fileContent}
             }
 
             // Handle "Show Preview" for refactoring
-            if (refactorContext && answer === '👁️ Show Full Preview') {
+            if (refactorContext && answer === '📋 Show Preview') {
               const { code, pattern } = refactorContext;
               
               try {

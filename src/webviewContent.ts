@@ -342,9 +342,10 @@ export function getWebviewContent(): string {
           }
           .question-buttons {
             display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+            flex-direction: column;
+            gap: 6px;
             margin-top: 12px;
+            align-items: flex-start;
           }
           .question-btn {
             padding: 8px 14px;
