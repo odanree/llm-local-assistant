@@ -163,7 +163,15 @@ export class SimpleFixer {
     const fixes: FixAction[] = [];
     let fixed = code;
 
-    // Pattern: const/let/var declarations that are never used
+    // CRITICAL FIX #2: Use AST-aware import detection
+    // Check for unused imports BEFORE using regex (which can't see JSX)
+    const importFixes = this.removeUnusedImportsASTAware(code);
+    if (importFixes.code !== fixed) {
+      fixed = importFixes.code;
+      fixes.push(...importFixes.fixes);
+    }
+
+    // Pattern: const/let/var declarations that are never used (variables, not imports)
     const unusedVarPattern = /^(const|let|var)\s+(\w+)\s*=/gm;
     const matches = Array.from(code.matchAll(unusedVarPattern));
 
@@ -179,6 +187,69 @@ export class SimpleFixer {
         fixes.push({
           type: 'unused-variable',
           description: `Commented out unused variable: ${varName}`,
+        });
+      }
+    }
+
+    return { code: fixed, fixed: fixes.length > 0, fixes };
+  }
+
+  /**
+   * CRITICAL FIX #2: AST-Aware Import Removal
+   * Detects unused imports by understanding JSX and scope, not just regex
+   * 
+   * The Problem: Regex can't see usage inside JSX tags
+   * import { Link } from 'react-router-dom'  ← Detected as import
+   * <Link to="/products">  ← JSX usage NOT detected by regex ❌
+   * 
+   * The Solution: Check for actual usage in code (including JSX)
+   */
+  private static removeUnusedImportsASTAware(code: string): FixResult {
+    const fixes: FixAction[] = [];
+    let fixed = code;
+
+    // Find all import statements
+    const importPattern = /import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]/g;
+    let importMatch;
+    const importsToCheck = [];
+
+    while ((importMatch = importPattern.exec(code)) !== null) {
+      const namedImports = importMatch[1]; // { Item1, Item2 }
+      const defaultImport = importMatch[2]; // SomethingDefault
+      const importLine = importMatch[0];
+
+      if (namedImports) {
+        // Parse named imports
+        const names = namedImports.split(',').map(n => n.trim().split(/\s+as\s+/)[1] || n.trim());
+        names.forEach(name => {
+          if (name) {
+            importsToCheck.push({ name, importLine });
+          }
+        });
+      } else if (defaultImport) {
+        importsToCheck.push({ name: defaultImport, importLine });
+      }
+    }
+
+    // For each import, check if it's actually used
+    for (const { name, importLine } of importsToCheck) {
+      // Create a regex that matches the name as a word boundary
+      // This catches:
+      // - Variable usage: myVar
+      // - JSX tag: <MyComponent />
+      // - Function call: myFunc()
+      // - Property access: obj.myProp
+      const usagePattern = new RegExp(`\\b${name}\\b(?!\\s*:)`);
+      
+      // Remove the import statement itself from the search
+      const codeWithoutImport = code.replace(importLine, '');
+      
+      // If NOT found in the rest of the code, it's unused
+      if (!usagePattern.test(codeWithoutImport)) {
+        fixed = fixed.replace(importLine + '\n', '');
+        fixes.push({
+          type: 'unused-import',
+          description: `Removed unused import: ${name}`,
         });
       }
     }
