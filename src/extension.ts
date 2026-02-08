@@ -95,10 +95,13 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
 async function loadArchitectureRules(): Promise<string | undefined> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
+    console.log('[.lla-rules] No workspace folders found');
     return undefined;
   }
 
   const workspace = folders[0];
+  const workspacePath = workspace.uri.fsPath;
+  console.log(`[.lla-rules] Checking workspace: ${workspacePath}`);
 
   // Priority order:
   // 1. .lla-rules (LLM Local Assistant - primary)
@@ -108,18 +111,26 @@ async function loadArchitectureRules(): Promise<string | undefined> {
   for (const filename of filenames) {
     try {
       const rulesUri = vscode.Uri.joinPath(workspace.uri, filename);
+      const rulesPath = rulesUri.fsPath;
+      console.log(`[.lla-rules] Attempting to read: ${rulesPath}`);
+      
       const content = await vscode.workspace.fs.readFile(rulesUri);
       const text = new TextDecoder().decode(content);
+      const lines = text.split('\n').length;
 
-      console.log(`✓ Loaded ${filename} from workspace`);
+      console.log(`✓ [.lla-rules] Successfully loaded ${filename} (${lines} lines, ${content.byteLength} bytes)`);
+      console.log(`[.lla-rules] First line: ${text.split('\n')[0].substring(0, 80)}`);
       return text;
     } catch (error) {
       // File doesn't exist, try next
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.log(`[.lla-rules] ${filename} not found: ${errorMsg}`);
       continue;
     }
   }
 
   // No rules file found
+  console.log(`[.lla-rules] No .lla-rules or .cursorrules file found in workspace`);
   return undefined;
 }
 
@@ -160,10 +171,15 @@ function postChatMessage(message: any): void {
  * Open the LLM Chat panel
  */
 function openLLMChat(context: vscode.ExtensionContext): void {
+  console.log('[openChat] Starting chat panel...');
+  
   if (chatPanel) {
+    console.log('[openChat] Chat panel already exists, revealing...');
     chatPanel.reveal(vscode.ViewColumn.Two);
     return; // Panel already exists, just reveal it - don't reset HTML or history
   }
+
+  console.log('[openChat] Creating new webview panel');
 
   // Create webview panel
   chatPanel = vscode.window.createWebviewPanel(
@@ -175,6 +191,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
       retainContextWhenHidden: true, // Keep panel alive when hidden to preserve chat history
     }
   );
+
+  console.log('[openChat] ✓ Webview panel created successfully');
 
   // Set the webview's initial html content ONLY on first creation
   chatPanel.webview.html = getWebviewContent();
@@ -2570,21 +2588,29 @@ function getActiveWorkspace(): vscode.Uri | undefined {
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext) {
-  console.log('LLM Local Assistant is now active!');
+  console.log('╔════════════════════════════════════════╗');
+  console.log('║  LLM Local Assistant Activating...     ║');
+  console.log('╚════════════════════════════════════════╝');
 
   // Initialize LLM client with config
   const config = getLLMConfig();
 
-  // Load architecture rules from .cursorrules if available
+  // Load architecture rules from .lla-rules or .cursorrules
+  console.log('[Extension] Loading architecture rules...');
   const rules = await loadArchitectureRules();
   if (rules) {
     config.architectureRules = rules;
+    console.log('[Extension] ✓ Architecture rules loaded and injected into LLMConfig');
+  } else {
+    console.log('[Extension] ℹ No .lla-rules or .cursorrules file found (optional)');
   }
 
   llmClient = new LLMClient(config);
+  console.log('[Extension] ✓ LLM Client initialized');
 
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();
+  console.log(`[Extension] Workspace: ${wsFolder?.fsPath || 'none'}`);
 
   // Initialize Executor (Planner is now created per-command, stateless)
   wsFolder = getActiveWorkspace();
