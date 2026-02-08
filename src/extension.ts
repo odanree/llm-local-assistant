@@ -1155,8 +1155,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     semanticAnalysis.couplingProblems.map(c => `- ${c.type}: ${c.suggestion}`).join('\n')
                   }\n\n`;
                 }
+
+                // Check if file is already a service (prevent circular extraction suggestions)
+                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
                 
-                if (semanticAnalysis.suggestedExtractions.length > 0) {
+                if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   report += `**Suggested Extractions:**\n${
                     semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
                   }\n\n`;
@@ -1191,6 +1194,9 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
                   });
                   report += `\n`;
+                } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
+                  // File is a service - show architectural guidance instead of extraction suggestions
+                  report += `**ℹ️ Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
                 }
                 
                 postChatMessage({
@@ -1202,8 +1208,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 // If there are suggested extractions, show buttons to apply them
                 // BUT: Don't suggest extraction if file is already a service (in src/services/)
                 // This prevents circular refactoring (extracting from already-extracted code)
-                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
-                
                 if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   // Store analysis for extraction buttons
                   (chatPanel as any)._currentRefactorData = {
@@ -1217,13 +1221,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     command: 'question',
                     question: `Would you like to extract a service?`,
                     options: semanticAnalysis.suggestedExtractions.map(s => `Extract: ${s}`),
-                  });
-                } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
-                  // File is already a service - don't suggest further extraction
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `ℹ️ **This file is already a service** (in \`src/services/\`)\n\nFurther extraction isn't recommended as it may create circular dependencies or duplicate abstractions. Consider refactoring this service directly if needed.`,
-                    success: true,
                   });
                 }
 
