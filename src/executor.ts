@@ -910,8 +910,34 @@ export class Executor {
     startTime: number,
     workspace?: vscode.Uri
   ): Promise<StepResult> {
+    // CONTEXT-AWARE PLANNING: Add diagnostic logging for debugging
+    console.log(`[Executor.executeRead] Step details:`, {
+      stepId: step.stepId,
+      action: step.action,
+      path: step.path,
+      targetFile: (step as any).targetFile,
+      command: (step as any).command,
+      description: step.description,
+    });
+
     if (!step.path) {
-      throw new Error('Read step requires path');
+      // Fallback: Check targetFile property
+      if ((step as any).targetFile) {
+        (step as any).path = (step as any).targetFile;
+      } else {
+        // No path found - log detailed error for debugging
+        console.error(`[Executor.executeRead] CRITICAL: No path in READ step`, {
+          step,
+          keys: Object.keys(step),
+        });
+        throw new Error(
+          `Read step requires path. Step received: ${JSON.stringify({
+            action: step.action,
+            description: step.description,
+            stepId: step.stepId,
+          })}`
+        );
+      }
     }
 
     // CRITICAL FIX: Use workspace from plan, not just this.config.workspace

@@ -431,12 +431,26 @@ Use only read/write/run/delete actions. No analyze/review/suggestwrite.`;
 
   /**
    * Extract target file from step block
+   * CRITICAL: Must handle various formats that LLM might output
    */
   private extractTargetFile(text: string): string | undefined {
-    const targetMatch = text.match(/(?:Target|File|Path)[:\s]+([^\n]+)/i);
-    if (targetMatch) {
-      return targetMatch[1].trim();
+    // Try multiple patterns for extracting file paths
+    const patterns = [
+      /(?:Target|File|Path)[:\s]+([^\n]+)/i,           // "Path: src/file.tsx"
+      /(?:- Path|File Path|Target File)[:\s]+([^\n]+)/i, // "- Path: src/file.tsx"
+      /src\/[^\n]+/,                                    // Direct path match "src/..."
+      /(?:write|read|modify|update|create)[:\s]+([^\n]+)/i, // "write: src/file.tsx"
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const path = (match[1] || match[0]).trim();
+        // Clean up the path
+        return path.replace(/^[-*]\s+/, '').replace(/[`'"]([^`'"]+)[`'"]/g, '$1').trim();
+      }
     }
+
     return undefined;
   }
 
