@@ -13,10 +13,12 @@ import { ServiceExtractor } from './serviceExtractor';
 import { RefactoringExecutor } from './refactoringExecutor';
 import { PatternDetector } from './patternDetector';
 import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
+import { Refiner } from './refiner';
+import { PlanParser } from './planParser';
+import { WorkspaceDetector } from './utils';
 import * as path from 'path';
 
 let llmClient: LLMClient;
-let planner: Planner;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let architecturePatterns: ArchitecturePatterns;
@@ -143,7 +145,8 @@ function postChatMessage(message: any): void {
   chatPanel?.webview.postMessage(message);
   
   // Store in chat history for persistence across panel switches
-  if (message.command === 'addMessage' && message.text) {
+  // Skip storage if message has skipHistory flag (e.g., startup help text)
+  if (message.command === 'addMessage' && message.text && !message.skipHistory) {
     chatHistory.push({
       role: message.role || 'assistant',
       content: message.text,
@@ -178,12 +181,13 @@ function openLLMChat(context: vscode.ExtensionContext): void {
   // Show agent mode command help ONLY on first open
   setTimeout(() => {
     if (!helpShown) {
-      postChatMessage({
+      chatPanel?.webview.postMessage({
         command: 'addMessage',
         text: `**Agent Mode Commands:**\n\n` +
           `🤖 **Planning & Execution:**\n` +
           `- /plan <task> — Create a multi-step action plan\n` +
-          `- /approve — Execute the current plan\n` +
+          `- /execute — Execute the current plan step-by-step\n` +
+          `- /approve — Acknowledge and approve the plan\n` +
           `- /reject — Discard the current plan\n\n` +
           `📚 **Codebase Context:**\n` +
           `- /context show structure — Show project file organization\n` +
@@ -206,12 +210,13 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
           `- /check-model — Show configured model and available models on server\n\n` +
-          `⚠️ **Disabled in v2.0.3 (Code Generation Limitations):**\n` +
-          `- /plan — Use Cursor, Windsurf, or manual implementation\n` +
-          `- /design-system — Use Cursor, Windsurf, or manual implementation\n` +
-          `- /approve — Tied to disabled /plan and /design-system`,
+          `⚠️ **Re-enabled in v3.0 (Phase 3-4 - Differential Prompting):**\n` +
+          `- /plan — Action plan generation with step-by-step guidance\n` +
+          `- /design-system — Full system architecture design\n` +
+          `- /approve — Acknowledge and approve generated content`,
         type: 'info',
         success: true,
+        skipHistory: true, // Don't store startup help in history
       });
       helpShown = true;
     }
@@ -241,33 +246,112 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /plan command
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
-            // AGENT MODE: /plan <task>
-            // DISABLED for v2.0.3: Code generation has infinite loop bugs
-            // Use better tools: Cursor, Windsurf, or manual implementation
+            // PHASE 6: /plan command — With multi-folder workspace detection
             if (planMatch) {
-              postChatMessage({
-                command: 'addMessage',
-                error: `/plan is disabled in v2.0.3 due to code generation limitations.
+              const userRequest = planMatch[1];
+              
+              console.log('[/plan] Command triggered:', userRequest);
 
-LLM-based code generation has known issues:
-- ❌ Infinite loop in validation (generates same broken code repeatedly)
-- ❌ Can't consistently follow constraints (detects error but regenerates identically)
-- ❌ Incomplete implementations (skeleton code, not working features)
-- ✅ Better tools exist for this task
+              try {
+                // Check if VS Code has multiple folders open (multi-folder workspace)
+                const folders = vscode.workspace.workspaceFolders;
+                console.log('[/plan] Folders in workspace:', folders?.length || 0);
 
-**Recommended alternatives:**
-1. **Cursor / Windsurf** - Better multi-file context, understands constraints
-2. **Manual implementation** - Now that you understand the pattern needed
-3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
+                // If multiple folders, ask user which one
+                if (folders && folders.length > 1) {
+                  console.log('[/plan] Multiple folders detected. Showing selection prompt.');
+                  postChatMessage({
+                    command: 'question',
+                    question: `📁 **Multiple folders detected.** Which project should I create the plan for?`,
+                    options: folders.map(f => f.name),
+                  });
+                  
+                  // Store for handling the answer
+                  (chatPanel as any)._planFolders = folders;
+                  (chatPanel as any)._pendingPlanRequest = userRequest;
+                  return;
+                }
 
-**This extension excels at:**
-- /refactor — Pattern detection & analysis
-- /suggest-patterns — Find architectural patterns
-- /rate-architecture — Score code quality
-- Architecture analysis & recommendations
+                // Single folder or use default
+                const selectedFolder = folders?.[0];
+                if (!selectedFolder) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: 'No workspace folder open.',
+                    success: false,
+                  });
+                  return;
+                }
 
-See /help for available commands.`,
-              });
+                console.log('[/plan] Single folder. Proceeding with:', selectedFolder.name);
+
+                // Generate plan in selected folder
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `📋 Generating plan for: "${userRequest}"`,
+                  type: 'info',
+                });
+
+                try {
+                  // Use Planner (not Refiner) for planning tasks
+                  // Planner is for non-deterministic intent decomposition
+                  // Refiner is for deterministic code transformation
+                  const planner = new Planner({
+                    llmCall: async (prompt: string) => {
+                      const response = await llmClient.sendMessage(prompt);
+                      if (!response.success) {
+                        throw new Error(response.error || 'LLM call failed');
+                      }
+                      return response.message || '';
+                    },
+                    onProgress: (stage: string, details: string) => {
+                      chatPanel?.webview.postMessage({
+                        command: 'addMessage',
+                        text: `⟳ ${stage}: ${details}`,
+                        type: 'info',
+                      });
+                    },
+                  });
+
+                  const plan = await planner.generatePlan(
+                    userRequest,
+                    selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
+                    selectedFolder.name         // CRITICAL: Pass workspace name
+                  );
+                  
+                  // Store plan for /execute command
+                  (chatPanel as any)._currentPlan = plan;
+
+                  // Format plan for display
+                  let planDisplay = plan.steps
+                    .map(
+                      (s) =>
+                        `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
+                        `${s.description}\n` +
+                        (s.targetFile ? `📄 Target: \`${s.targetFile}\`\n` : '') +
+                        `✓ Expected: ${s.expectedOutcome}`
+                    )
+                    .join('\n\n');
+
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                    success: true,
+                  });
+                } catch (err) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
+                    success: false,
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
               return;
             }
 
@@ -324,17 +408,67 @@ See /help for available commands.`,
             // Check for /approve command
             const approveMatch = text.match(/^\/approve/);
 
-            // DISABLED for v2.0.3: /plan and /design-system are disabled
+            // PHASE 4: /approve command — Acknowledge approved plans
             if (approveMatch) {
               postChatMessage({
                 command: 'addMessage',
-                error: `/approve is disabled because /plan and /design-system are disabled in v2.0.3.
-
-Code generation has infinite loop bugs that prevent safe execution.
-Use better tools: Cursor, Windsurf, or manual implementation.
-
-See /help for available commands.`,
+                text: `✅ Plan approved! Use \`/execute\` to run the steps, or \`/reject\` to discard it.`,
+                success: true,
               });
+              return;
+            }
+
+            // Check for /execute command
+            const executeMatch = text.match(/^\/execute/);
+
+            // PHASE 4: /execute command — Execute the current plan step-by-step
+            if (executeMatch) {
+              const currentPlan = (chatPanel as any)._currentPlan;
+              if (!currentPlan) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: 'No plan to execute. Use /plan <task> to generate one first.',
+                  success: false,
+                });
+                return;
+              }
+
+              postChatMessage({
+                command: 'addMessage',
+                text: `⚙️ Executing plan: "${currentPlan.taskDescription}"\n\nRunning ${currentPlan.steps.length} steps...`,
+                type: 'info',
+              });
+
+              try {
+                executor.executePlan(currentPlan).then((result) => {
+                  if (result.success) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      text: `✅ Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
+                      success: true,
+                    });
+                    delete (chatPanel as any)._currentPlan;
+                  } else {
+                    postChatMessage({
+                      command: 'addMessage',
+                      error: `Plan execution failed: ${result.error || 'Unknown error'}`,
+                      success: false,
+                    });
+                  }
+                }).catch((err) => {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+                    success: false,
+                  });
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error starting execution: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
               return;
             }
 
@@ -1199,32 +1333,87 @@ ${patternResult.reasoning}
             
             // Check for /design-system command
             const designMatch = text.match(/^\/design-system\s+(.+)$/);
-            // DISABLED for v2.0.3: Code generation has infinite loop bugs
-            // Use better tools: Cursor, Windsurf, or manual implementation
+            
+            // PHASE 4: /design-system command — Re-enabled with Refiner differential prompting
             if (designMatch) {
+              const featureRequest = designMatch[1];
+              const wsFolder = vscode.workspace.workspaceFolders?.[0];
+              if (!wsFolder) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: 'No workspace folder open.',
+                  success: false,
+                });
+                return;
+              }
+
               postChatMessage({
                 command: 'addMessage',
-                error: `/design-system is disabled in v2.0.3 due to code generation limitations.
-
-LLM-based code generation has known issues:
-- ❌ Infinite loop in validation (generates same broken code repeatedly)
-- ❌ Can't consistently follow constraints (detects error but regenerates identically)
-- ❌ Incomplete implementations (skeleton code, not working features)
-- ✅ Better tools exist for this task
-
-**Recommended alternatives:**
-1. **Cursor / Windsurf** - Better multi-file context, understands constraints
-2. **Manual implementation** - Now that you understand the pattern needed
-3. **VS Code + GitHub Copilot** - Context-aware, less prone to loops
-
-**This extension excels at:**
-- /refactor — Pattern detection & analysis
-- /suggest-patterns — Find architectural patterns
-- /rate-architecture — Score code quality
-- Architecture analysis & recommendations
-
-See /help for available commands.`,
+                text: `🏗️ Generating system design for: "${featureRequest}"\n\n(Using Refiner differential prompting — Phase 4)`,
+                type: 'info',
               });
+
+              try {
+                // Create Refiner instance with LLM callbacks
+                const refiner = new Refiner({
+                  projectRoot: wsFolder.uri.fsPath,
+                  workspaceName: wsFolder.name,
+                  maxRetries: 3,
+                  llmCall: async (systemPrompt: string, userMessage: string) => {
+                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                // Generate design using Refiner
+                const designPrompt = `Design a complete system architecture for:
+
+${featureRequest}
+
+Provide:
+1. **Components**: Main components and their responsibilities
+2. **Data Flow**: How data flows between components
+3. **File Structure**: Recommended file organization
+4. **Dependencies**: Required packages and versions
+5. **API Design**: If applicable, REST endpoint structure
+6. **State Management**: How to manage application state
+7. **Error Handling**: Error handling strategy
+8. **Testing**: Testing approach and key test cases
+
+Format as a structured design document with code examples.`;
+
+                const result = await refiner.generateCode(designPrompt, undefined, undefined);
+
+                if (result.success && result.code) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `✅ System design generated successfully!\n\n${result.code}`,
+                    success: true,
+                  });
+                } else {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `Failed to generate design: ${result.error || result.explanation}`,
+                    success: false,
+                  });
+                }
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error generating design: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
               return;
             }
 
@@ -1938,6 +2127,102 @@ ${fileContent}
                 break;
               }
             }
+
+            // Handle /plan folder selection
+            const planFolders = (chatPanel as any)._planFolders;
+            const pendingPlanRequest = (chatPanel as any)._pendingPlanRequest;
+            
+            if (planFolders && pendingPlanRequest && planFolders.some((f: any) => f.name === answer)) {
+              try {
+                console.log('[/plan] Folder selected:', answer);
+                
+                // Find the selected folder
+                const selectedFolder = planFolders.find((f: any) => f.name === answer);
+                
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `✅ Using folder: **${selectedFolder.name}**\n\n📋 Generating plan for: "${pendingPlanRequest}"`,
+                  type: 'info',
+                });
+
+                // Create Refiner instance with selected folder
+                const refiner = new Refiner({
+                  projectRoot: selectedFolder.uri.fsPath,
+                  workspaceName: selectedFolder.name,
+                  maxRetries: 3,
+                  llmCall: async (systemPrompt: string, userMessage: string) => {
+                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                // Use Planner for planning (not Refiner)
+                const planner = new Planner({
+                  llmCall: async (prompt: string) => {
+                    const response = await llmClient.sendMessage(prompt);
+                    if (!response.success) {
+                      throw new Error(response.error || 'LLM call failed');
+                    }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({
+                      command: 'addMessage',
+                      text: `⟳ ${stage}: ${details}`,
+                      type: 'info',
+                    });
+                  },
+                });
+
+                const plan = await planner.generatePlan(
+                  pendingPlanRequest,
+                  selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
+                  selectedFolder.name         // CRITICAL: Pass workspace name
+                );
+                (chatPanel as any)._currentPlan = plan;
+
+                // Format plan for display
+                let planDisplay = plan.steps
+                  .map(
+                    (s) =>
+                      `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
+                      `${s.description}\n` +
+                      (s.targetFile ? `📄 Target: \`${s.targetFile}\`\n` : '') +
+                      `✓ Expected: ${s.expectedOutcome}`
+                  )
+                  .join('\n\n');
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `✅ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                  success: true,
+                });
+                
+                // Clear state
+                (chatPanel as any)._planFolders = null;
+                (chatPanel as any)._pendingPlanRequest = null;
+                break;
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+                (chatPanel as any)._planFolders = null;
+                (chatPanel as any)._pendingPlanRequest = null;
+                break;
+              }
+            }
             
             // Check if this is a workspace selection for /suggest-patterns
             const suggestPatternsWorkspaces = (chatPanel as any)._suggestPatternsWorkspaces;
@@ -2291,15 +2576,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();
 
-  // Initialize Planner and Executor
+  // Initialize Executor (Planner is now created per-command, stateless)
   wsFolder = getActiveWorkspace();
-  planner = new Planner({
-    llmClient,
-    maxSteps: 10,
-    timeout: 120000, // Increased to 120s for longer-running planning operations
-    workspace: wsFolder, // For codebase awareness (Priority 2.2)
-    codebaseIndex, // Phase 3.3.2: For dependency detection and context
-  });
   
   const gitClient = wsFolder ? new GitClient(wsFolder) : undefined;
 
@@ -2364,6 +2642,22 @@ export async function activate(context: vscode.ExtensionContext) {
   architecturePatterns = new ArchitecturePatterns();
   patternDetector = new PatternDetector(llmClient);
   patternRefactoringGenerator = new PatternRefactoringGenerator(llmClient);
+
+  // CRITICAL FIX (Issue #2): Listen for workspace folder changes
+  // Update executor config globally when user selects a different folder
+  // This prevents stale workspace state in RetryContext
+  const workspaceFolderListener = vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+      const newWorkspace = vscode.workspace.workspaceFolders[0].uri;
+      // Update executor config with new workspace
+      // This ensures this.config.workspace is always current
+      if (executor) {
+        executor['config'].workspace = newWorkspace;
+        console.log(`[Extension] Workspace changed to: ${newWorkspace.fsPath}`);
+      }
+    }
+  });
+  context.subscriptions.push(workspaceFolderListener);
   featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
   serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
