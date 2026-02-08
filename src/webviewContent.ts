@@ -162,14 +162,55 @@ export function getWebviewContent(): string {
           buttonContainer.style.marginTop = '12px';
           
           msg.options.forEach((option) => {
-            const btn = document.createElement('button');
-            btn.className = 'question-btn';
-            btn.textContent = option;
-            btn.onclick = () => {
-              input.value = option.replace('Execute: ', '');
-              input.focus();
-            };
-            buttonContainer.appendChild(btn);
+            // Check if this is an Execute button
+            const isExecuteButton = option.startsWith('Execute: ');
+            
+            if (isExecuteButton) {
+              // Create row with command + button
+              const row = document.createElement('div');
+              row.className = 'command-row';
+              
+              // Extract command from "Execute: /refactor ..."
+              const command = option.substring('Execute: '.length);
+              
+              // Command code (left side, copyable)
+              const code = document.createElement('code');
+              code.style.fontFamily = 'monospace';
+              code.style.marginRight = '8px';
+              code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
+              code.style.padding = '4px 8px';
+              code.style.borderRadius = '3px';
+              code.style.userSelect = 'all';
+              code.style.cursor = 'text';
+              code.textContent = command;
+              row.appendChild(code);
+              
+              // Button - send /refactor command to trigger analysis + pattern detection
+              const btn = document.createElement('button');
+              btn.className = 'question-btn command-btn';
+              btn.textContent = '▶ Execute';
+              btn.onclick = () => {
+                console.log('[Webview] Execute button from /suggest-patterns:', command);
+                // Send /refactor command - this will run pattern detection
+                chat.innerHTML += '<div class="msg user">' + command + '</div>';
+                commandHistory.push(command);
+                historyIndex = commandHistory.length;
+                vscode.postMessage({ command: 'sendMessage', text: command });
+              };
+              row.appendChild(btn);
+              
+              buttonContainer.appendChild(row);
+            } else {
+              // Regular button
+              const btn = document.createElement('button');
+              btn.className = 'question-btn';
+              btn.textContent = option;
+              btn.onclick = () => {
+                input.value = option.replace('Execute: ', '');
+                input.focus();
+              };
+              buttonContainer.appendChild(btn);
+            }
           });
           
           div.appendChild(buttonContainer);
