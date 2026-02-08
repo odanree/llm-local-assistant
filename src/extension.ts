@@ -1206,6 +1206,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     filepath,
                     code,
                     analysis: semanticAnalysis,
+                    workspaceFolder,
                   };
 
                   postChatMessage({
@@ -2069,7 +2070,7 @@ ${fileContent}
             // Check if this is an extraction action response
             const extractionData = (chatPanel as any)._currentExtraction;
             if (extractionData && ['Execute', 'Cancel'].includes(answer)) {
-              const { extraction, hookFile, serviceName, code } = extractionData;
+              const { extraction, hookFile, serviceName, code, workspaceFolder } = extractionData;
               
               try {
                 if (answer === 'Execute') {
@@ -2082,9 +2083,9 @@ ${fileContent}
                   const { extraction, hookFile, serviceName, code } = extractionData;
 
                   try {
-                    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                    // workspaceFolder is now passed through extractionData
                     if (!workspaceFolder) {
-                      throw new Error('No workspace folder open');
+                      throw new Error('No workspace folder available');
                     }
 
                     // Write service file to src/services/ directory
@@ -2319,7 +2320,7 @@ ${fileContent}
             const refactorData = (chatPanel as any)._currentRefactorData;
             if (refactorData && answer.startsWith('Extract: ')) {
               const extractionName = answer.replace('Extract: ', '');
-              const { filepath, code } = refactorData;
+              const { filepath, code, workspaceFolder } = refactorData;
               
               try {
                 chatPanel?.webview.postMessage({
@@ -2361,6 +2362,7 @@ ${fileContent}
                   hookFile: filepath,
                   serviceName,
                   code,
+                  workspaceFolder,
                 };
 
                 // Show extraction preview with action buttons
