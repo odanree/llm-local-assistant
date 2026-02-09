@@ -117,6 +117,10 @@ export class Planner {
         throw new Error('LLM could not generate a plan for this request');
       }
 
+      // DEBUG: Log raw LLM response to see Qwen output format
+      console.log('[Planner] Raw LLM Response: ', llmResponse);
+      console.log('[Planner] Response length:', llmResponse.length);
+
       // Parse the response into structured steps
       const steps = this.parseSteps(llmResponse);
 
