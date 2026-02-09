@@ -586,15 +586,17 @@ export class Executor {
       );
     }
 
-    // Pattern 5: Zod Validation - Schema must be defined, not inline validation
-    const hasZodImport = /import\s+.*z\s*from\s+['"]zod['"]/.test(content);
-    const hasZodSchema = /z\.object\s*\(|z\.parse|z\.parseAsync/.test(content);
-    const hasInlineValidation = /if\s*\(\s*![^)]*includes\s*\(|if\s*\(\s*![^)]*match\s*\(|if\s*\(\s*\w+\.length\s*</.test(content);
+    // Pattern 5: Validation Logic - Must have some form of input validation
+    // NOTE: Simple inline validation is preferred (NOT Zod). Zod was removed from form requirements.
+    // Validation can be done with simple if-checks in handlers: if (!email.includes('@')) { ... }
+    const hasValidationLogic = /if\s*\(\s*!/.test(content) || 
+                               /setErrors\s*\(/.test(content) ||
+                               /validate/.test(content);
     
-    if (hasInlineValidation && !hasZodSchema) {
+    if (!hasValidationLogic && content.includes('email')) {
       errors.push(
-        `❌ Pattern 5 violation: Using inline validation instead of Zod schema. ` +
-        `Define: const loginSchema = z.object({ email: z.string().email(), ... })`
+        `⚠️ Pattern 5 info: Consider adding basic validation. ` +
+        `Example: if (!email.includes('@')) { setErrors(...); return; }`
       );
     }
 
@@ -1823,14 +1825,22 @@ Validator will REJECT if any pattern is missing.
 ## REQUIRED: Form Component Patterns (7 Mandatory)
 
 1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
-2. **Handler Typing** - Use FormEventHandler type: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { ... }
-3. **Consolidator Pattern** - Single handleChange function: const { name, value } = e.currentTarget; setFormData(prev => ({ ...prev, [name]: value }))
-4. **Submit Handler** - Use onSubmit on form element: <form onSubmit={handleSubmit}> with handleSubmit: FormEventHandler<HTMLFormElement>
-5. **Zod Validation** - Define schema: const schema = z.object({ email: z.string().email(), password: z.string().min(8) })
-6. **Error State** - Track field errors: const [errors, setErrors] = useState<Record<string, string>>({})
-7. **Semantic Markup** - Use proper form HTML: <input name="email" type="email" /> with name attributes
+2. **Event Typing** - Use FormEvent types:
+   - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
+   - Form: const handleSubmit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); ... }
+3. **Consolidator Pattern** - Single handleChange function that updates state: setFormData(prev => ({ ...prev, [name]: value }))
+4. **Submit Handler** - Use onSubmit on <form> element: <form onSubmit={handleSubmit}>
+5. **Error Tracking** - Use local error state: const [errors, setErrors] = useState<Record<string, string>>({})
+6. **Input Validation** - Simple validation in handlers (NOT Zod): if (!email.includes('@')) { setErrors(...); return; }
+7. **Semantic Form Markup** - Use proper HTML: <input name="email" type="email" required /> with name attributes
 
-CRITICAL: Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
+CRITICAL RULES:
+- DO NOT use Zod, yup, or external schema validation in form components
+- Validation is simple: check string length, email format, etc in event handlers
+- Keep form logic simple and lean
+- No external dependencies for validation (useState is enough)
+
+Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
 
 `;
         console.log(`[Executor] ⚠️ Fallback: Injecting hardcoded form patterns for ${fileName}`);

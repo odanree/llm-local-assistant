@@ -146,12 +146,18 @@ Form components are data-critical and require strict adherence to these 7 patter
   return <form onSubmit={handleSubmit}>...</form>;
   ```
 
-**5. Zod Validation**: Always use Zod schema for form validation (not inline validators)
+**5. Simple Validation Logic**: Add basic validation in handlers (NOT Zod - keep components lean)
   ```typescript
-  const loginSchema = z.object({
-    email: z.string().email('Invalid email'),
-    password: z.string().min(8, 'Password too short'),
-  });
+  const handleChange: FormEventHandler<HTMLInputElement> = (e) => {
+    const { name, value } = e.currentTarget;
+    // Simple validation
+    if (name === 'email' && value && !value.includes('@')) {
+      setErrors(prev => ({ ...prev, [name]: 'Invalid email' }));
+    } else {
+      setErrors(prev => ({ ...prev, [name]: '' }));
+    }
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
   ```
 
 **6. Error State Tracking**: Track field-level errors separately and display near inputs
