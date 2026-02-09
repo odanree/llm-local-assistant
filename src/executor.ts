@@ -73,8 +73,8 @@ export class Executor {
     }
 
     // CRITICAL FIX: Use workspace from plan context, not executor config
-    // This fixes the "RefactorTest selection not persisting" bug  
-    const planWorkspaceUri = plan.workspacePath 
+    // This fixes the "RefactorTest selection not persisting" bug
+    const planWorkspaceUri = plan.workspacePath
       ? vscode.Uri.file(plan.workspacePath)
       : this.config.workspace;
 
@@ -99,7 +99,7 @@ export class Executor {
     // Check if workspace is greenfield (empty) and enforce READ constraints
     const workspaceExists = await this.checkWorkspaceExists(planWorkspaceUri);
     const hasInitialization = plan.steps.some(s => s.action === 'write');
-    
+
     if (!workspaceExists && !hasInitialization) {
       // Greenfield workspace with no initialization - inform user
       this.config.onMessage?.(
@@ -224,7 +224,7 @@ export class Executor {
         if (!result!.success) {
           plan.status = 'failed';
           plan.currentStep = step.stepId;
-          const failureMsg = retryCount > 0 
+          const failureMsg = retryCount > 0
             ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
             : `Step ${step.stepId} failed on first attempt`;
           return {
@@ -247,7 +247,7 @@ export class Executor {
         // Terminal failure at this step: mark as failed and break execution
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error(`[Executor] Terminal failure at step ${step.stepId}: ${errorMsg}`);
-        
+
         plan.results?.set(step.stepId, {
           success: false,
           stepId: step.stepId,
@@ -269,19 +269,19 @@ export class Executor {
     }
 
     plan.status = 'completed';
-    
+
     // Generate post-execution handover summary (Danh's Product Thinking)
     const filesCreated = plan.steps
       .filter(s => s.action === 'write')
       .map(s => s.path)
       .filter((p): p is string => !!p);
-    
+
     const handover = generateHandoverSummary(
       plan.results!,
       plan.steps.map(s => s.description).join('; '),
       filesCreated
     );
-    
+
     return {
       success: true,
       completedSteps: succeededSteps,
@@ -460,7 +460,7 @@ export class Executor {
       // If file has function parameters that accept objects but no Zod validation
       const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(content);
       const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
-      
+
       if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
         errors.push(
           `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
@@ -490,7 +490,7 @@ export class Executor {
     }
 
     // PATTERN: Check for mixed resolver libraries
-    if ((content.includes('yupResolver') && content.includes('z.object')) || 
+    if ((content.includes('yupResolver') && content.includes('z.object')) ||
         (content.includes('yupResolver') && content.includes('zod'))) {
       errors.push(
         `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
@@ -510,20 +510,20 @@ export class Executor {
     // Extract all imported items and namespaces
     const importedItems = new Set<string>();
     const importedNamespaces = new Set<string>();
-    
+
     content.replace(/import\s+{([^}]+)}/g, (_, items) => {
       items.split(',').forEach((item: string) => {
         importedItems.add(item.trim());
       });
       return '';
     });
-    
+
     // Also capture namespace imports (import * as X)
     content.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
       importedNamespaces.add(namespace.trim());
       return '';
     });
-    
+
     // And default imports
     content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
       importedNamespaces.add(name.trim());
@@ -541,7 +541,7 @@ export class Executor {
       }
       return '';
     });
-    
+
     // Check if all used namespaces are imported
     Array.from(namespaceUsages).forEach((namespace) => {
       if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
@@ -613,17 +613,17 @@ export class Executor {
     importedItems.forEach((item) => {
       // Skip common React hooks that might be used indirectly
       if (['React', 'Component'].includes(item)) return;
-      
+
       // Check if this import is actually used in the code
       // Pattern: used as identifier (standalone), not just in strings/comments
       const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
       const usageMatches = content.match(usagePattern) || [];
-      
+
       if (usageMatches.length === 0) {
         unusedImports.push(item);
       }
     });
-    
+
     if (unusedImports.length > 0) {
       unusedImports.forEach((unused) => {
         errors.push(
@@ -714,7 +714,7 @@ export class Executor {
     if (step.action === 'write' && step.path) {
       const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
       const parentDir = filePath.fsPath.substring(0, filePath.fsPath.lastIndexOf('/'));
-      
+
       try {
         // Check if parent directory exists
         await vscode.workspace.fs.stat(vscode.Uri.file(parentDir));
@@ -829,7 +829,7 @@ export class Executor {
         
         // Testing frameworks
         /jest|mocha|vitest|pytest|pytest-|cargo\s+test|go\s+test|mix\s+test/,
-        
+
         // Build tools
         /webpack|rollup|vite|tsc|typescript|babel/,
         /gradle|maven|make|cmake/,
@@ -859,13 +859,21 @@ export class Executor {
         );
         console.log(`[Executor] User answered: ${answer}`);
 
+        // CRITICAL FIX: Check the actual answer string, not just return step
         if (answer === 'No, skip this step') {
+          console.log(`[Executor] User chose to skip this step`);
           return null;
         } else if (answer === 'Cancel execution') {
+          console.log(`[Executor] User chose to cancel execution`);
           throw new Error('User cancelled execution');
+        } else if (answer === 'Yes, proceed') {
+          console.log(`[Executor] User approved, proceeding with: ${step.command}`);
+          return step; // User approved, continue with step
+        } else {
+          // If no answer (callback failed), default to proceeding
+          console.log(`[Executor] No answer received, defaulting to proceed`);
+          return step;
         }
-        // If 'Yes, proceed' or no answer, return step to continue execution
-        return step;
       }
     }
 
@@ -947,7 +955,7 @@ export class Executor {
 
     try {
       let result: StepResult;
-      
+
       switch (step.action) {
         case 'read':
           result = await this.executeRead(step, startTime, stepWorkspace);
@@ -1022,12 +1030,12 @@ export class Executor {
 
   /**
    * ✅ SURGICAL REFACTOR: Pre-Flight Contract Check
-   * 
+   *
    * Runs BEFORE any normalization or sanitization.
    * Enforces state-aware constraints based on workspace conditions.
-   * 
+   *
    * ✅ SENIOR FIX: "Angrier" Executor with strict path rules
-   * 
+   *
    * Purpose: Catch unrecoverable contract violations early
    * - READ operations on greenfield (empty) workspaces
    * - Paths with critical formatting issues (ellipses)
@@ -1038,11 +1046,11 @@ export class Executor {
 
   /**
    * Validate step dependencies (DAG: Directed Acyclic Graph)
-   * 
+   *
    * NEW: Dependency-Linked Schema
    * Forces LLM to explicitly state what each step depends on.
    * Prevents "smushed" steps and ensures proper sequencing.
-   * 
+   *
    * If Step B depends on Step A, and Step A hasn't been completed yet,
    * this throws an error to block Step B's execution.
    */
@@ -1114,7 +1122,7 @@ export class Executor {
 
   /**
    * ✅ SURGICAL REFACTOR: Check if workspace exists
-   * 
+   *
    * Determines if workspace has any files (greenfield check)
    */
   private async checkWorkspaceExists(workspaceUri: vscode.Uri): Promise<boolean> {
@@ -1130,12 +1138,12 @@ export class Executor {
 
   /**
    * ✅ SURGICAL REFACTOR: Intelligent Strategy Switching
-   * 
+   *
    * When READ fails with ENOENT (file not found), suggests alternative actions:
    * - If file doesn't exist → WRITE (create it)
    * - If path looks like template → init with template
    * - Otherwise → null (can't fix)
-   * 
+   *
    * Returns correction signal for Executor to use in retry
    */
   private attemptStrategySwitch(
@@ -1177,12 +1185,12 @@ export class Executor {
 
   /**
    * Validate Step Contract (Danh's Fix B: Pre-Flight Check)
-   * 
+   *
    * Purpose: Catch interface violations BEFORE execution:
    * - "Manual" value in path or command fields (hallucination)
    * - Missing path for file-based actions
    * - Missing command for run actions
-   * 
+   *
    * Returns error message if contract violated, undefined if valid
    */
   private validateStepContract(step: PlanStep): void {
@@ -1243,17 +1251,17 @@ export class Executor {
 
     // Remove trailing ellipses
     let cleaned = path.replace(/\.{2,}$/, '');
-    
+
     // Remove accidental quotes and backticks
     cleaned = cleaned.replace(/^[`'"]|[`'"]$/g, '');
-    
+
     // Remove trailing commas and semicolons
     cleaned = cleaned.replace(/[,;]$/, '');
-    
+
     // Normalize placeholder paths
     // Convert /path/to/filename.tsx → src/filename.tsx
     cleaned = cleaned.replace(/^\/path\/to\//, 'src/');
-    
+
     // Trim whitespace
     cleaned = cleaned.trim();
 
@@ -1359,7 +1367,7 @@ export class Executor {
 
     try {
       const structure = await this.readDirRecursive(baseUri, basePath);
-      
+
       return {
         stepId: step.stepId,
         success: true,
@@ -1389,7 +1397,7 @@ export class Executor {
         if (name.startsWith('.')) {
           continue; // Skip hidden files
         }
-        
+
         const isDir = type === vscode.FileType.Directory;
         const icon = isDir ? '📁' : '📄';
         lines.push(`${indent}${icon} ${name}${isDir ? '/' : ''}`);
@@ -1416,7 +1424,7 @@ export class Executor {
    */
   private shouldAskForWrite(filePath: string): boolean {
     const fileName = filePath.split('/').pop() || '';
-    
+
     // Files that warrant confirmation
     const riskPatterns = [
       // Core config files
@@ -1426,7 +1434,7 @@ export class Executor {
       /pnpm-lock\.yaml$/,
       /tsconfig\.json$/,
       /jsconfig\.json$/,
-      
+
       // Build configs
       /webpack\.config/,
       /vite\.config/,
@@ -1434,24 +1442,24 @@ export class Executor {
       /next\.config/,
       /nuxt\.config/,
       /gatsby\.config/,
-      
+
       // Linter/Formatter configs
       /\.eslintrc/,
       /\.prettierrc/,
       /\.stylelintrc/,
       /\.editorconfig/,
-      
+
       // CI/CD configs
       /\.github\/workflows\//,
       /\.gitlab-ci\.yml/,
       /\.travis\.yml/,
       /Jenkinsfile/,
-      
+
       // Environment and secrets
       /\.env/,
       /\.secrets/,
       /credentials/,
-      
+
       // Critical data files
       /database\.json/,
       /config\.json/,
@@ -1460,16 +1468,16 @@ export class Executor {
       /\.dockerignore$/,
       /Dockerfile$/,
       /docker-compose\.ya?ml$/,
-      
+
       // Root-level files that are typically important
       /^README\.md$/,
       /^LICENSE$/,
       /^Makefile$/,
     ];
-    
+
     // Check if file matches any risk pattern
     const isRisky = riskPatterns.some(pattern => pattern.test(fileName));
-    
+
     return isRisky;
   }
 
@@ -1493,7 +1501,7 @@ export class Executor {
     if (this.shouldAskForWrite(step.path)) {
       console.log(`[Executor] Detected risky write to: ${step.path}`);
       console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
-      
+
       const answer = await this.config.onQuestion?.(
         `About to write to important file: \`${step.path}\`\n\nThis is a critical configuration or data file. Should I proceed with writing?`,
         ['Yes, write the file', 'No, skip this step', 'Cancel execution']
@@ -1516,18 +1524,18 @@ export class Executor {
     // Build a detailed prompt that asks for code-only output
     // CONTRACT INJECTION: Inject step description as source of truth for intent
     let prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
-    
+
     // CRITICAL: Use step.description as primary requirement (intent preservation)
     // This bridges the planning → execution gap by injecting the actual requirement
-    const intentRequirement = step.description 
+    const intentRequirement = step.description
       ? `REQUIREMENT: ${step.description}\n\n`
       : '';
-    
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
     const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
-    
+
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
@@ -1563,17 +1571,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
 
     const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
-    
+
     try {
       // Extract content and clean up if it's code
       let content = response.message || '';
-      
+
       // DETECTION: Check if LLM ignored instructions and provided markdown/documentation
       const hasMarkdownBackticks = content.includes('```');
       const hasExcessiveComments = (content.match(/^\/\//gm) || []).length > 5; // More than 5 comment lines at start
       const hasMultipleFileInstructions = (content.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
       const hasYAMLOrConfigMarkers = content.includes('---') || content.includes('package.json') || content.includes('tsconfig');
-      
+
       if (hasMarkdownBackticks) {
         // LLM wrapped code in markdown - extract it
         const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
@@ -1581,7 +1589,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           content = codeBlockMatch[1];
         }
       }
-      
+
       if (isCodeFile && (hasExcessiveComments || hasMultipleFileInstructions || hasYAMLOrConfigMarkers)) {
         // LLM provided documentation/setup instructions instead of just code
         // This will be caught by validation as unparseable, triggering auto-fix
@@ -1590,7 +1598,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           'info'
         );
       }
-      
+
       // For code files, try to extract just the code portion
       if (isCodeFile && !hasMarkdownBackticks) {
         // Remove common explanation patterns (but preserve code)
@@ -1600,22 +1608,22 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '') // Remove Setup sections
           .trim();
       }
-      
+
       // ============================================================================
       // GATEKEEPER: Validate code BEFORE writing to disk
       // LLM output is a PROPOSAL, not final. Must pass validation gates before committing.
       // ============================================================================
-      
+
       let finalContent = content;
-      
+
       if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
         this.config.onMessage?.(
           `🔍 Validating ${step.path}...`,
           'info'
         );
-        
+
         const validationResult = await this.validateGeneratedCode(step.path, content, step);
-        
+
         if (!validationResult.valid && validationResult.errors) {
           // ❌ VALIDATION FAILED - Try auto-correction up to MAX_VALIDATION_ITERATIONS
           let validationAttempt = 1;
@@ -1623,15 +1631,15 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           let lastValidationErrors = validationResult.errors;
           let loopDetected = false;
           const previousErrors: string[] = [];
-          
+
           while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
             const errorList = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
-            
+
             this.config.onMessage?.(
               `❌ Validation failed (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
               'error'
             );
-            
+
             // LOOP DETECTION: Check if same errors are repeating
             if (previousErrors.length > 0 && JSON.stringify(lastValidationErrors.sort()) === JSON.stringify(previousErrors.sort())) {
               this.config.onMessage?.(
@@ -1642,7 +1650,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               break;
             }
             previousErrors.push(...lastValidationErrors);
-            
+
             // If last attempt, give up
             if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
               const remainingErrors = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
@@ -1652,17 +1660,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               );
               throw new Error(`Validation failed after ${this.MAX_VALIDATION_ITERATIONS} attempts.\n${remainingErrors}`);
             }
-            
+
             // Attempt auto-correction
             this.config.onMessage?.(
               `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
               'info'
             );
-            
+
             // SMART AUTO-CORRECTION: Try to fix common issues without LLM first
             const canAutoFix = SmartAutoCorrection.isAutoFixable(lastValidationErrors);
             let correctedContent: string;
-            
+
             if (canAutoFix) {
               // Try smart auto-correction first
               this.config.onMessage?.(
@@ -1670,7 +1678,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 'info'
               );
               const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastValidationErrors, step.path);
-              
+
               // Validate the smart-fixed code
               const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step);
               if (smartValidation.valid) {
@@ -1687,12 +1695,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   'info'
                 );
                 const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
-                
+
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
                   throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
                 }
-                
+
                 correctedContent = fixResponse.message || '';
                 const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
                 if (codeBlockMatch) {
@@ -1706,22 +1714,22 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 'info'
               );
               const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
-              
+
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {
                 throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
               }
-              
+
               correctedContent = fixResponse.message || '';
               const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
               if (codeBlockMatch) {
                 correctedContent = codeBlockMatch[1];
               }
             }
-            
+
             // Re-validate the corrected code
             const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
-            
+
             if (nextValidation.valid) {
               // ✅ Auto-correction succeeded
               this.config.onMessage?.(
@@ -1731,13 +1739,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               finalContent = correctedContent;
               break;
             }
-            
+
             // Validation still failing - prepare for next iteration
             currentContent = correctedContent;
             lastValidationErrors = nextValidation.errors || [];
             validationAttempt++;
           }
-          
+
           if (loopDetected) {
             throw new Error(`Validation loop detected - infinite correction cycle prevented. Please fix manually.`);
           }
@@ -1749,24 +1757,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           );
         }
       }
-      
+
       // Show preview of final (validated) content
       if (this.config.onStepOutput && finalContent.length > 0) {
-        const preview = finalContent.length > 200 
+        const preview = finalContent.length > 200
           ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
           : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
         this.config.onStepOutput(step.stepId, preview, false);
       }
-      
+
       // PRE-WRITE ARCHITECTURE VALIDATION (Phase 3.4.6)
       // Check if code violates layer-based architecture rules before writing
       const archValidator = new ArchitectureValidator();
       const archValidation = archValidator.validateAgainstLayer(finalContent, step.path);
-      
+
       if (archValidation.hasViolations) {
         const report = archValidator.generateErrorReport(archValidation);
         this.config.onMessage?.(report, 'error');
-        
+
         if (archValidation.recommendation === 'skip') {
           // High-severity violations - skip this file
           this.config.onMessage?.(
@@ -1785,13 +1793,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             `🔧 Attempting to fix architecture violations...`,
             'info'
           );
-          
+
           const violationDesc = archValidation.violations
             .map(v => `- ${v.type}: ${v.message}\n  Suggestion: ${v.suggestion}`)
             .join('\n');
-          
+
           const fixPrompt = `The code you generated has ARCHITECTURE VIOLATIONS in ${step.path}:\n\n${violationDesc}\n\nPlease FIX these violations and provide ONLY the corrected code. No explanations, no markdown.`;
-          
+
           const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
           if (fixResponse.success) {
             let fixedContent = fixResponse.message || finalContent;
@@ -1799,7 +1807,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             if (codeBlockMatch) {
               fixedContent = codeBlockMatch[1];
             }
-            
+
             // Re-validate the fixed code
             const revalidation = archValidator.validateAgainstLayer(fixedContent, step.path);
             if (!revalidation.hasViolations || revalidation.recommendation === 'allow') {
@@ -1813,11 +1821,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 fixedBytes[i] = fixedContent.charCodeAt(i);
               }
               await vscode.workspace.fs.writeFile(filePath, fixedBytes);
-              
+
               if (this.config.codebaseIndex) {
                 this.config.codebaseIndex.addFile(filePath.fsPath, fixedContent);
               }
-              
+
               return {
                 stepId: step.stepId,
                 success: true,
@@ -1826,7 +1834,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               };
             }
           }
-          
+
           // If LLM fix didn't work, skip this file
           this.config.onMessage?.(
             `⏭️ Could not auto-fix architecture violations. Skipping ${step.path}.`,
@@ -1840,13 +1848,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           };
         }
       }
-      
+
       // NOW safe to write (only reached if validation passed or non-code file)
       const bytes = new Uint8Array(finalContent.length);
       for (let i = 0; i < finalContent.length; i++) {
         bytes[i] = finalContent.charCodeAt(i);
       }
-      
+
       await vscode.workspace.fs.writeFile(filePath, bytes);
 
       // Phase 3.3.2: Track file in CodebaseIndex for next steps
@@ -1908,7 +1916,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           env[key] = value;
         }
       }
-      
+
       // Ensure PATH includes homebrew and common locations
       // macOS homebrew is typically at /opt/homebrew/bin
       // Windows uses ; separator, Unix uses :
@@ -1929,7 +1937,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             '/sbin',
             env.PATH || '',
           ];
-      
+
       env.PATH = pathParts.filter(p => p).join(pathSeparator);
 
       // CRITICAL: On Windows, ensure SystemRoot is set (required to find cmd.exe)
