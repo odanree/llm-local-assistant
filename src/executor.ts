@@ -114,6 +114,16 @@ export class Executor {
         // Run atomic contract validation BEFORE any normalization/sanitization
         this.preFlightCheck(step, workspaceExists);
 
+        // ✅ NEW: Dependency Validation (DAG Support)
+        // Track completed step IDs and validate dependencies
+        const completedStepIds = new Set<string>();
+        for (const completed of plan.results?.values() ?? []) {
+          if (completed.success && plan.steps[completed.stepId - 1]?.id) {
+            completedStepIds.add(plan.steps[completed.stepId - 1].id);
+          }
+        }
+        this.validateDependencies(step, completedStepIds);
+
         // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
         // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
         if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
@@ -1025,6 +1035,35 @@ export class Executor {
    * - Paths without extensions
    * - Action mismatches with workspace state
    */
+
+  /**
+   * Validate step dependencies (DAG: Directed Acyclic Graph)
+   * 
+   * NEW: Dependency-Linked Schema
+   * Forces LLM to explicitly state what each step depends on.
+   * Prevents "smushed" steps and ensures proper sequencing.
+   * 
+   * If Step B depends on Step A, and Step A hasn't been completed yet,
+   * this throws an error to block Step B's execution.
+   */
+  private validateDependencies(step: PlanStep, completedStepIds: Set<string>): void {
+    // Only validate if step has dependencies
+    if (!step.dependsOn || step.dependsOn.length === 0) {
+      return;
+    }
+
+    // Check each dependency
+    for (const depId of step.dependsOn) {
+      if (!completedStepIds.has(depId)) {
+        throw new Error(
+          `DEPENDENCY_VIOLATION: Step "${step.id}" depends on "${depId}" which hasn't been completed yet. ` +
+          `Steps must be executed in dependency order. ` +
+          `Check that all dependencies are satisfied before this step.`
+        );
+      }
+    }
+  }
+
   private preFlightCheck(step: PlanStep, workspaceExists: boolean): void {
     // ✅ GREENFIELD GUARD: No READ on empty workspace without prior WRITE
     if (!workspaceExists && step.action === 'read') {

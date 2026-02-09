@@ -55,6 +55,12 @@ export function assertValidActionType(action: unknown): ActionTypeString {
 
 /**
  * ExecutionStep: The minimal contract between Planner and Executor
+ * 
+ * NEW: Dependency-Linked Schema (DAG Support)
+ * - `id` (string): Semantic identifier for the step (e.g., "store-creation")
+ * - `dependsOn` (string[]): List of step IDs this step depends on
+ * 
+ * This forces the LLM to explicitly state dependencies, preventing "smushed" steps.
  */
 export interface ExecutionStep {
   /** Unique identifier for this step */
@@ -62,6 +68,9 @@ export interface ExecutionStep {
 
   /** Sequential step number (1-indexed) */
   stepNumber: number;
+
+  /** Semantic ID for this step (e.g., "store-creation", "install-deps") */
+  id?: string;
 
   /** The action to perform (must be from ActionType) */
   action: ActionTypeString;
@@ -77,6 +86,9 @@ export interface ExecutionStep {
 
   /** Step IDs this step depends on (for ordering) */
   dependencies?: number[];
+
+  /** Semantic IDs this step depends on (DAG support) */
+  dependsOn?: string[];
 
   /** Command to run (for RUN actions) */
   command?: string;
