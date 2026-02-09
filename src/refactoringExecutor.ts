@@ -3,6 +3,7 @@ import { Executor, ExecutorConfig } from './executor';
 import { ServiceExtractor, RefactoringPlan, ServiceExtraction } from './serviceExtractor';
 import { LLMClient } from './llmClient';
 import { SmartValidator } from './services/smartValidator';
+import { PromptEngine } from './services/promptEngine';
 
 /**
  * Phase 3.4.4: LLM-Guided Refactoring
@@ -836,8 +837,8 @@ export function debounce<T extends (...args: any[]) => any>(
 
   /**
    * Build prompt with architectural hints for correction
-   * This is the "Knowledge Anchor" for v3.0 self-correction
-   * Provides the 32B model with specific guidance based on detected errors
+   * Now enhanced with Heuristic RAG to provide grounded references
+   * This is the "10/10 Perfect Run" enhancement from Danh
    */
   private buildArchitecturalHintsPrompt(
     failedAttempt: string,
@@ -890,7 +891,8 @@ export function debounce<T extends (...args: any[]) => any>(
 
     const hintsText = hints.join('\n');
 
-    return `You are a TypeScript/React refactoring expert fixing code generation errors.
+    // Build base correction prompt
+    let basePrompt = `You are a TypeScript/React refactoring expert fixing code generation errors.
 
 TASK: Fix the semantic errors in the failed code using architectural hints.
 
@@ -922,6 +924,19 @@ REMEMBER:
 - Types imported with 'import type { }'
 - All variables defined before use
 - All imports from real npm packages`;
+
+    // ENHANCEMENT: Apply Heuristic RAG hydration
+    // This adds explicit reference samples that the model's attention mechanism
+    // will prioritize over its fuzzy training data
+    const hydratedPrompt = PromptEngine.hydratePrompt({
+      filePath,
+      fileDescription: stepDescription,
+      basePrompt,
+    });
+
+    this.log(`RAG hydration applied: ${hydratedPrompt.appliedRules.join(', ')}`);
+
+    return hydratedPrompt.augmented;
   }
 
   /**
