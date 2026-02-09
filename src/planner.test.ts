@@ -23,15 +23,22 @@ describe('Planner', () => {
 
   describe('generatePlan', () => {
     it('should generate a plan with steps from user request', async () => {
-      const planResponse = `
-**Step 1: read**
-- Description: Read existing code
-- Expected outcome: Understand structure
-
-**Step 2: write**
-- Description: Write new code
-- Expected outcome: Feature implemented
-`;
+      const planResponse = `[
+  {
+    "step": 1,
+    "action": "read",
+    "description": "Read existing code",
+    "path": "src/App.tsx",
+    "expectedOutcome": "Understand structure"
+  },
+  {
+    "step": 2,
+    "action": "write",
+    "description": "Write new code",
+    "path": "src/components/LoginForm.tsx",
+    "expectedOutcome": "Feature implemented"
+  }
+]`;
 
       mockLLMCall.mockResolvedValue(planResponse);
 
@@ -59,31 +66,19 @@ describe('Planner', () => {
     });
 
     it('should throw if no steps extracted from response', async () => {
-      mockLLMCall.mockResolvedValue('Just random text with no structured steps at all');
+      mockLLMCall.mockResolvedValue('Just random text with no JSON array');
 
       await expect(planner.generatePlan('Ambiguous task')).rejects.toThrow(
-        'No steps could be extracted'
+        'PLANNER_ERROR'
       );
     });
 
     it('should extract steps with action types', async () => {
-      const planResponse = `
-**Step 1: read**
-- Description: Read code
-- Expected outcome: Code read
-
-**Step 2: write**
-- Description: Write code
-- Expected outcome: Code written
-
-**Step 3: run**
-- Description: Run tests
-- Expected outcome: Tests pass
-
-**Step 4: analyze**
-- Description: Analyze
-- Expected outcome: Analyzed
-`;
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read code", "path": "src/App.tsx", "expectedOutcome": "Code read"},
+  {"step": 2, "action": "write", "description": "Write code", "path": "src/New.tsx", "expectedOutcome": "Code written"},
+  {"step": 3, "action": "run", "description": "Run tests", "command": "npm test", "expectedOutcome": "Tests pass"}
+]`;
 
       mockLLMCall.mockResolvedValue(planResponse);
 
@@ -96,15 +91,22 @@ describe('Planner', () => {
     });
 
     it('should have executor-compatible step structure', async () => {
-      const planResponse = `
-**Step 1: analyze**
-- Description: Analyze requirements
-- Expected outcome: Requirements clear
-
-**Step 2: read**
-- Description: Read existing code
-- Expected outcome: Code understood
-`;
+      const planResponse = `[
+  {
+    "step": 1,
+    "action": "read",
+    "description": "Analyze requirements",
+    "path": "README.md",
+    "expectedOutcome": "Requirements clear"
+  },
+  {
+    "step": 2,
+    "action": "read",
+    "description": "Read existing code",
+    "path": "src/App.tsx",
+    "expectedOutcome": "Code understood"
+  }
+]`;
 
       mockLLMCall.mockResolvedValue(planResponse);
 

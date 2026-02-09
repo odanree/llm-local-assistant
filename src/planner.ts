@@ -344,20 +344,42 @@ ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n
 ${contextSection}
 USER REQUEST: ${userRequest}
 
-OUTPUT THIS FORMAT (exactly):
+🔴 CRITICAL: Output ONLY a valid JSON array of steps. 
+DO NOT include bold text, bullet points, markdown, code blocks, or conversational filler. 
+Your entire response must start with '[' and end with ']'.
+NOTHING ELSE. Not even triple backticks.
 
-**Step 1: ACTION**
-- Description: What to do
-- Path/Command: Details
-- Expected: Result
+JSON FORMAT (exactly):
+[
+  {
+    "step": 1,
+    "action": "write",
+    "description": "What to do",
+    "path": "src/file.tsx",
+    "expectedOutcome": "File created"
+  },
+  {
+    "step": 2,
+    "action": "run",
+    "description": "Install dependencies",
+    "command": "npm install",
+    "dependsOn": ["step_1"],
+    "expectedOutcome": "All packages installed"
+  }
+]
 
-**Step 2: ACTION**
-- Description: What to do
-- Path/Command: Details
-- Depends on: step_1_id (if this step requires a previous step)
-- Expected: Result
+REQUIRED FIELDS (all steps):
+- step: Number (1, 2, 3...)
+- action: One of: write, read, run, delete
+- description: What this step does
 
-Output only the plan. No explanations.`;
+CONDITIONAL FIELDS:
+- path: Required for write/read/delete actions
+- command: Required for run actions
+- dependsOn: Optional array of step numbers this depends on (e.g., ["step_1"] or ["step_1", "step_2"])
+- expectedOutcome: Optional (defaults to "Step completed")
+
+Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
   }
 
   /**
@@ -386,112 +408,110 @@ Output only the plan. No explanations.`;
 
   /**
    * Parse LLM response into structured ExecutionStep objects
+   * NEW: JSON-based parsing instead of markdown
+   * 
+   * Handles:
+   * 1. Pure JSON array (expected)
+   * 2. Markdown code blocks (```json ... ```)
+   * 3. Markdown formatting that slipped through
    */
   private parseSteps(responseText: string): ExecutionStep[] {
+    // Step 1: Strip markdown code blocks if present
+    let cleaned = responseText
+      .replace(/```json\s*/g, '')
+      .replace(/```\s*/g, '')
+      .trim();
+
+    // Step 2: Find the JSON array boundaries
+    const startIdx = cleaned.indexOf('[');
+    const endIdx = cleaned.lastIndexOf(']');
+
+    if (startIdx === -1 || endIdx === -1 || startIdx >= endIdx) {
+      throw new Error(
+        'PLANNER_ERROR: Response did not contain a valid JSON array. ' +
+        'Expected format: [{ "step": 1, "action": "write", ... }, ...]'
+      );
+    }
+
+    // Step 3: Extract and parse JSON
+    const jsonBody = cleaned.substring(startIdx, endIdx + 1);
+    let parsedSteps: any[];
+    
+    try {
+      parsedSteps = JSON.parse(jsonBody);
+    } catch (err) {
+      throw new Error(
+        `PLANNER_ERROR: Failed to parse JSON response. ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    // Step 4: Convert parsed JSON to ExecutionStep objects
     const steps: ExecutionStep[] = [];
-
-    // Look for step patterns: "**Step N:** action"
-    const stepPatterns = [
-      // Qwen format: **[Step 1] ACTION** (highest priority - what Qwen actually outputs)
-      /\*\*\[Step\s+(\d+)\]\s*(\w+)\*\*/gi,
-      // Standard format: **Step 1: ACTION**
-      /\*\*Step\s+(\d+):\s*(\w+)\*\*/gi,
-      // Minimal format: Step 1: ACTION
-      /Step\s+(\d+):\s*(\w+)/gi,
-      // Numbered list format: 1. ACTION
-      /^\d+\.\s+(\w+)/gim,
-    ];
-
-    let stepMatches: RegExpExecArray | null = null;
-    let currentPattern = 0;
-
-    // Try each pattern
-    for (const pattern of stepPatterns) {
-      stepMatches = pattern.exec(responseText);
-      if (stepMatches) {
-        currentPattern = stepPatterns.indexOf(pattern);
-        break;
-      }
+    
+    if (!Array.isArray(parsedSteps)) {
+      throw new Error('PLANNER_ERROR: JSON root must be an array of steps');
     }
 
-    if (!stepMatches) {
-      // Fallback: split by "Step" and parse each block (handles Qwen format with or without colons)
-      const stepBlocks = responseText.split(/\*\*\[?Step\s+\d+\]?:?|Step\s+\d+:/i).slice(1);
+    for (let i = 0; i < parsedSteps.length; i++) {
+      const raw = parsedSteps[i];
+      const stepNumber = (raw.step || i + 1) as number;
 
-      stepBlocks.forEach((block, index) => {
-        const step = this.parseStepBlock(block, index + 1);
-        if (step) steps.push(step);
-      });
-
-      return steps;
-    }
-
-    // Parse with the matching pattern
-    const pattern = stepPatterns[currentPattern];
-    let match;
-    let stepNumber = 1;
-
-    while ((match = pattern.exec(responseText)) !== null) {
-      let action = (match[2] || 'read').toLowerCase();
-      
-      // SCHEMA ENFORCEMENT: Validate action against allowed types
+      // Validate action
+      let action = (raw.action || 'read').toLowerCase().trim();
       try {
         assertValidActionType(action);
-      } catch (err) {
-        // If action is invalid (like 'analyze' or 'review'), map to closest valid action
-        if (['analyze', 'review'].includes(action)) {
-          console.warn(`Warning: Action "${action}" is not executable. Planner should do this analysis itself.`);
-          // Skip this step since it shouldn't have been output
-          continue;
-        }
-        if (action === 'suggestwrite') {
-          console.warn(`Warning: Action "suggestwrite" should be "write". Correcting...`);
-          action = 'write';
-        }
-        // For unknown actions, skip
-        action = 'read'; // Default fallback
+      } catch {
+        console.warn(`Warning: Invalid action "${action}", defaulting to "read"`);
+        action = 'read';
       }
 
-      const startIndex = pattern.lastIndex;
+      // Extract dependencies (convert from array if present)
+      let dependsOn: string[] | undefined;
+      if (raw.dependsOn) {
+        if (Array.isArray(raw.dependsOn)) {
+          dependsOn = raw.dependsOn
+            .map((dep: any) => {
+              if (typeof dep === 'number') return `step_${dep}`;
+              return String(dep).toLowerCase();
+            });
+        } else if (typeof raw.dependsOn === 'string') {
+          // Handle comma-separated string like "step_1, step_2"
+          dependsOn = raw.dependsOn
+            .split(',')
+            .map(d => d.trim().toLowerCase());
+        }
+      }
 
-      // Find the next step or end of text (supports all formats: Qwen brackets with/without colons, numbered lists)
-      const nextStepMatch = /(?:\*\*\[?Step\s+\d+\]?:?|Step\s+\d+:|\n\d+\.)/i.exec(responseText.substring(startIndex));
-      const endIndex = nextStepMatch ? startIndex + nextStepMatch.index : responseText.length;
-      const stepContent = responseText.substring(startIndex, endIndex);
-
-      const description = this.extractDescription(stepContent);
-      const rawDependsOn = this.extractSemanticDependencies(stepContent);
-      
       // CRITICAL: Filter out self-referential dependencies
-      // If a step somehow includes its own ID in dependsOn, remove it
       const currentStepId = this.generateStepId(stepNumber);
-      const cleanDependsOn = rawDependsOn
-        ? rawDependsOn.filter(depId => depId !== currentStepId)
+      const cleanDependsOn = dependsOn
+        ? dependsOn.filter(depId => depId !== currentStepId)
         : undefined;
-      
-      // Warn if self-reference was detected (shouldn't happen, but catch it)
-      if (rawDependsOn && rawDependsOn.length > 0 && cleanDependsOn && 
-          rawDependsOn.length !== cleanDependsOn.length) {
+
+      // Warn if self-reference was detected
+      if (dependsOn && dependsOn.length > 0 && cleanDependsOn && 
+          dependsOn.length !== cleanDependsOn.length) {
         console.warn(`[PARSER] Warning: Step "${currentStepId}" had self-referential dependency, removed`);
       }
 
+      // Create ExecutionStep
       const step: ExecutionStep = {
         stepNumber,
         stepId: stepNumber,
-        id: currentStepId, // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
+        id: currentStepId,
         action: action as ActionTypeString,
-        description,
-        path: this.extractTargetFile(stepContent),
-        targetFile: this.extractTargetFile(stepContent), // For backward compat
-        command: this.extractCommand(stepContent), // CRITICAL: Extract command for run steps
-        expectedOutcome: this.extractExpectedOutcome(stepContent),
-        dependencies: this.extractDependencies(stepContent),
-        dependsOn: cleanDependsOn, // CRITICAL: Already filtered for self-references
+        description: (raw.description || '').trim(),
+        path: (raw.path || raw.filePath || undefined)?.trim(),
+        targetFile: (raw.path || raw.filePath || undefined)?.trim(),
+        command: (raw.command || undefined)?.trim(),
+        expectedOutcome: (raw.expectedOutcome || 'Step completed').trim(),
+        dependencies: undefined, // Deprecated - use dependsOn instead
+        dependsOn: cleanDependsOn,
       };
 
+      // Only add if step has a description
       if (step.description) {
         steps.push(step);
-        stepNumber++;
       }
     }
 
