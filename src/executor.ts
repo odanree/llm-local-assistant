@@ -384,6 +384,36 @@ export class Executor {
       errors.push(...patternErrors);
     }
 
+    // Check 4: CRITICAL - Cross-file contract validation (multi-step orchestration)
+    // Verify that imported symbols actually exist in their source files
+    if ((filePath.endsWith('.ts') || filePath.endsWith('.tsx')) && this.plan) {
+      try {
+        const validator = new ArchitectureValidator();
+        const contractResult = await validator.validateCrossFileContract(
+          content,
+          filePath,
+          this.config.workspace
+        );
+
+        if (contractResult.hasViolations) {
+          const contractErrors = contractResult.violations.map(
+            v =>
+              `❌ Cross-file Contract: ${v.message}. ${v.suggestion}`
+          );
+          errors.push(...contractErrors);
+          
+          if (contractResult.recommendation === 'skip') {
+            console.warn(
+              `[Executor] ⚠️ CRITICAL: Cross-file contract violations found in ${filePath}. Component/feature will not work correctly.`
+            );
+          }
+        }
+      } catch (error) {
+        console.warn(`[Executor] Cross-file validation error: ${error}`);
+        // Don't fail on validation errors, just log warning
+      }
+    }
+
     return {
       valid: errors.length === 0,
       errors: errors.length > 0 ? errors : undefined,

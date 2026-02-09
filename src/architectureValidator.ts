@@ -415,6 +415,166 @@ export class ArchitectureValidator {
   }
 
   /**
+   * Validate cross-file contracts: Do imported symbols actually exist in dependencies?
+   * CRITICAL for multi-step execution: Verifies component uses store API correctly
+   * 
+   * Example:
+   * - Component imports: `import { useLoginStore } from '../stores/loginStore'`
+   * - Component uses: `const { formState, setFormState } = useLoginStore()`
+   * - Store exports: `export const useLoginStore = create<T>()`
+   * - This validates: formState and setFormState actually exist in the store
+   */
+  public async validateCrossFileContract(
+    generatedCode: string,
+    filePath: string,
+    workspace: vscode.Uri
+  ): Promise<LayerValidationResult> {
+    const violations: LayerViolation[] = [];
+
+    // Extract all import statements
+    const importRegex = /import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]/g;
+    let match;
+    const imports: Array<{ symbols: string[]; source: string; isDefault: boolean }> = [];
+
+    while ((match = importRegex.exec(generatedCode)) !== null) {
+      const namedImports = match[1]; // Named exports: { a, b, c }
+      const defaultImport = match[2]; // Default: import X
+      const source = match[3]; // Path
+
+      if (namedImports) {
+        const symbols = namedImports
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s);
+        imports.push({ symbols, source, isDefault: false });
+      } else if (defaultImport) {
+        imports.push({ symbols: [defaultImport], source, isDefault: true });
+      }
+    }
+
+    // For each import, verify it exists in the source file
+    for (const imp of imports) {
+      try {
+        // Resolve source path relative to current file
+        const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+        let resolvedPath = imp.source;
+
+        // Handle relative paths
+        if (resolvedPath.startsWith('.')) {
+          // Resolve ../ and ./
+          resolvedPath = resolvedPath
+            .split('/')
+            .reduce((acc, part) => {
+              if (part === '.' || part === '') return acc;
+              if (part === '..') {
+                const parts = acc.split('/');
+                parts.pop();
+                return parts.join('/');
+              }
+              return acc + '/' + part;
+            }, currentDir);
+        }
+
+        // Try to read the source file
+        try {
+          const sourceUri = vscode.Uri.joinPath(workspace, resolvedPath);
+          const sourceContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(sourceUri));
+
+          // Extract what the source file exports
+          const exportRegex = /export\s+(?:const|function|interface|type)\s+(\w+)/g;
+          const sourceExports: Set<string> = new Set();
+          let exportMatch;
+
+          while ((exportMatch = exportRegex.exec(sourceContent)) !== null) {
+            sourceExports.add(exportMatch[1]);
+          }
+
+          // For named imports, verify each symbol exists in source exports
+          if (!imp.isDefault) {
+            for (const symbol of imp.symbols) {
+              // Check for exact match or pattern matching (e.g., useStore hook)
+              const exists = sourceExports.has(symbol);
+              const isHookPattern = symbol.startsWith('use') && 
+                                    Array.from(sourceExports).some(e => e.startsWith('use'));
+
+              if (!exists && !isHookPattern) {
+                violations.push({
+                  type: 'missing-export',
+                  import: symbol,
+                  message: `Symbol '${symbol}' not found in '${resolvedPath}'`,
+                  suggestion: `Available exports: ${Array.from(sourceExports).join(', ') || 'none'}`,
+                  severity: 'high',
+                });
+              }
+            }
+          }
+
+          // Extract usage of imported symbols in generated code
+          // Look for patterns like: const { x, y } = hookName() or hookName.method()
+          for (const symbol of imp.symbols) {
+            const usagePatterns = [
+              // Destructuring: const { x } = symbol()
+              new RegExp(`{[^}]*\\b${symbol}\\b[^}]*}\\s*=\\s*${symbol}\\(`, 'g'),
+              // Property access: symbol.method or symbol.property
+              new RegExp(`${symbol}\\.[a-zA-Z_][a-zA-Z0-9_]*`, 'g'),
+            ];
+
+            for (const pattern of usagePatterns) {
+              const usages = generatedCode.match(pattern) || [];
+              
+              // Extract accessed properties
+              for (const usage of usages) {
+                const propMatch = usage.match(/\.([a-zA-Z_][a-zA-Z0-9_]*)/);
+                if (propMatch) {
+                  const property = propMatch[1];
+                  // For Zustand stores, the export is the hook, but we should verify
+                  // that the accessed property makes sense (rough check)
+                  if (symbol.includes('Store') && !sourceContent.includes(property)) {
+                    violations.push({
+                      type: 'semantic-error',
+                      import: symbol,
+                      message: `Property '${property}' used on '${symbol}' but not found in store definition`,
+                      suggestion: `Verify '${property}' is defined in the store's state object`,
+                      severity: 'high',
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Source file not found or read failed - could be external package
+          if (!['node_modules', '@types', 'react', 'zustand', 'axios'].some(p => imp.source.includes(p))) {
+            violations.push({
+              type: 'missing-export',
+              import: imp.symbols[0],
+              message: `Cannot find module '${resolvedPath}' from '${filePath}'`,
+              suggestion: `Verify the import path is correct`,
+              severity: 'medium',
+            });
+          }
+        }
+      } catch (error) {
+        // Skip validation for this import if something goes wrong
+        console.warn(`[ArchitectureValidator] Error validating import: ${error}`);
+      }
+    }
+
+    const recommendation: 'allow' | 'fix' | 'skip' = violations.some(v => v.severity === 'high')
+      ? 'skip'
+      : violations.length > 0
+      ? 'fix'
+      : 'allow';
+
+    return {
+      hasViolations: violations.length > 0,
+      violations,
+      layer: 'cross-file-contracts',
+      recommendation,
+    };
+  }
+
+  /**
    * Generate human-readable error report
    */
   public generateErrorReport(result: LayerValidationResult): string {
