@@ -529,7 +529,11 @@ export class Executor {
     const importedItems = new Set<string>();
     const importedNamespaces = new Set<string>();
 
-    content.replace(/import\s+{([^}]+)}/g, (_, items) => {
+    // ✅ FIX: Handle mixed imports like "import React, { useState } from 'react'"
+    // Pattern: import [DefaultName] [, { NamedImports }] from 'module'
+    
+    // First, extract named imports (destructured)
+    content.replace(/import\s+(?:\w+\s*,\s*)?{([^}]+)}/g, (_, items) => {
       items.split(',').forEach((item: string) => {
         importedItems.add(item.trim());
       });
@@ -542,7 +546,7 @@ export class Executor {
       return '';
     });
 
-    // And default imports
+    // And default imports (import React from 'react')
     content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
       importedNamespaces.add(name.trim());
       return '';
@@ -572,8 +576,10 @@ export class Executor {
     });
 
     // Pattern: React/useState without import
-    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState')) {
-      if (!content.includes("import { useState")) {
+    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState') && !importedItems.has('useEffect')) {
+      // Check if useState is actually used in the code (not just mentioned in comments)
+      const useStateUsage = /\b(useState|useEffect)\s*\(/.test(content);
+      if (useStateUsage && !importedItems.has('useState')) {
         errors.push(
           `❌ Missing import: useState is used but not imported. ` +
           `Add: import { useState } from 'react'`
@@ -590,7 +596,8 @@ export class Executor {
 
     // Pattern: JSX without React import
     if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && content.includes('<')) {
-      if (!importedItems.has('React') && !content.includes("import React")) {
+      // React can be imported as default import or named import
+      if (!importedItems.has('React') && !importedNamespaces.has('React')) {
         // In newer React versions, this is optional, so just warn
         errors.push(
           `⚠️ Possible issue: JSX detected but no React import. ` +
