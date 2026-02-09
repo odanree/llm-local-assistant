@@ -3,6 +3,7 @@ import { Executor, ExecutorConfig } from './executor';
 import { ServiceExtractor, RefactoringPlan, ServiceExtraction } from './serviceExtractor';
 import { LLMClient } from './llmClient';
 import { SmartValidator } from './services/smartValidator';
+import { SemanticValidator } from './services/semanticValidator';
 import { PromptEngine } from './services/promptEngine';
 
 /**
@@ -697,19 +698,26 @@ test('description', async () => {
     let attemptNumber = 0;
 
     while (attemptNumber <= MAX_RETRIES) {
-      // Validate current attempt
+      // STEP 1: SmartValidator - Syntax and import validation
       const semanticErrors = SmartValidator.checkSemantics(currentContent);
 
-      if (semanticErrors.length === 0) {
+      // STEP 2: SemanticValidator - Deep code analysis (NEW)
+      // Catches name collisions, ghost calls, scope conflicts
+      const deepErrors = SemanticValidator.audit(currentContent);
+      const allErrors = [...semanticErrors, ...deepErrors];
+
+      if (allErrors.length === 0) {
         // Success!
-        this.log(`✅ Self-correction cycle complete on attempt ${attemptNumber + 1}`);
+        this.log(`✅ Self-correction cycle complete on attempt ${attemptNumber + 1} (all validations passed)`);
         return currentContent;
       }
 
       // Still has errors
       if (attemptNumber >= MAX_RETRIES) {
         // Max retries reached
-        const errorMessage = SmartValidator.formatErrors(semanticErrors);
+        const errorMessage = SmartValidator.formatErrors(semanticErrors) +
+          (deepErrors.length > 0 ? '\n\nDeep Semantic Issues:\n' + 
+            deepErrors.map(e => `${e.message}`).join('\n') : '');
         this.log(`❌ Max correction attempts (${MAX_RETRIES + 1}) reached`);
         throw new Error(
           `Self-correction failed after ${MAX_RETRIES + 1} attempts:\n${errorMessage}`
@@ -767,9 +775,24 @@ test('description', async () => {
     // Qwen 32B often generates: import clsx from 'classnames' (WRONG)
     // Golden template: import { clsx } from 'clsx'; (CORRECT)
     if (fileName === 'cn.ts' || fileName === 'cn.js') {
-      return `import { clsx, type ClassValue } from 'clsx';
+      return `/**
+ * Class name utility - Merges Tailwind classes with conflict resolution
+ * 
+ * CRITICAL EXPORTS (Do not rename or change):
+ * - Function name: cn (exported)
+ * - clsx: Named import from 'clsx' package (NOT default, NOT from 'classnames')
+ * - twMerge: Named import from 'tailwind-merge' package
+ * - ClassValue: Type import from 'clsx' package
+ */
+
+import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+/**
+ * Merge class names with Tailwind conflict resolution
+ * @param inputs - Class name values to merge
+ * @returns Merged class name string with proper Tailwind precedence
+ */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }`;
@@ -886,7 +909,10 @@ export function debounce<T extends (...args: any[]) => any>(
     hints.push(
       "- All imports must reference real npm packages (not made-up names)",
       "- All variables must be defined or imported before use",
-      "- All types must be properly imported when used in type positions"
+      "- All types must be properly imported when used in type positions",
+      "- Use '@/utils/cn' alias for utility imports (NOT relative paths like '../../')",
+      "- Path aliases: @/ = src/, @/components = src/components/, @/utils = src/utils/",
+      "- Always use absolute aliases, never relative paths starting with '../'"
     );
 
     const hintsText = hints.join('\n');
