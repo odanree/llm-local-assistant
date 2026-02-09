@@ -1911,17 +1911,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       
       // Ensure PATH includes homebrew and common locations
       // macOS homebrew is typically at /opt/homebrew/bin
-      const pathParts = [
-        '/opt/homebrew/bin',
-        '/usr/local/bin',
-        '/usr/bin',
-        '/bin',
-        '/usr/sbin',
-        '/sbin',
-        env.PATH || '',
-      ].filter(p => p); // Remove empty strings
+      // Windows uses ; separator, Unix uses :
+      const pathSeparator = process.platform === 'win32' ? ';' : ':';
+      const pathParts = process.platform === 'win32'
+        ? [
+            'C:\\Program Files\\nodejs',
+            'C:\\Program Files (x86)\\nodejs',
+            'C:\\Users\\odanree\\AppData\\Roaming\\npm',
+            env.PATH || '',
+          ]
+        : [
+            '/opt/homebrew/bin',
+            '/usr/local/bin',
+            '/usr/bin',
+            '/bin',
+            '/usr/sbin',
+            '/sbin',
+            env.PATH || '',
+          ];
       
-      env.PATH = pathParts.join(':');
+      env.PATH = pathParts.filter(p => p).join(pathSeparator);
 
       // CRITICAL FIX: Use platform-aware shell selection
       // /bin/bash doesn't exist on Windows, use shell: true instead
