@@ -204,6 +204,17 @@ STEP TYPES & CONSTRAINTS (MANDATORY):
 - run: Requires command. Executes shell commands.
 - delete: Requires path. Removes files.
 
+DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
+- EACH STEP MAY HAVE DEPENDENCIES: List step IDs that must complete first
+- Format: "Depends on: step_write_config, step_install_deps"
+- Use when a step requires output/results from previous steps
+- EXAMPLES:
+  * Step 2 installs packages → Step 3 (run tests) Depends on: step_run_install
+  * Step 1 creates config → Step 2 (read config) Depends on: step_write_config
+  * Step 1-2 independent → Step 3 Depends on: step_write_app, step_install_deps
+- If a step has NO dependencies (can run first or independently), omit this field
+- IMPORTANT: Declare dependencies explicitly - don't assume the executor will figure it out
+
 MANUAL VERIFICATION (IMPORTANT):
 - If a step requires human intervention (e.g., "test in browser", "verify visually"):
   * Do NOT create a step with action='read' or 'manual'
@@ -229,6 +240,7 @@ OUTPUT THIS FORMAT (exactly):
 **Step 2: ACTION**
 - Description: What to do
 - Path/Command: Details
+- Depends on: step_1_id (if this step requires a previous step)
 - Expected: Result
 
 Output only the plan. No explanations.`;
@@ -343,6 +355,7 @@ Output only the plan. No explanations.`;
         command: this.extractCommand(stepContent), // CRITICAL: Extract command for run steps
         expectedOutcome: this.extractExpectedOutcome(stepContent),
         dependencies: this.extractDependencies(stepContent),
+        dependsOn: this.extractSemanticDependencies(stepContent), // NEW: Semantic dependencies (DAG)
       };
 
       if (step.description) {
@@ -385,6 +398,7 @@ Output only the plan. No explanations.`;
       command: this.extractCommand(block), // CRITICAL: Extract command for run steps
       expectedOutcome: this.extractExpectedOutcome(block),
       dependencies: this.extractDependencies(block),
+      dependsOn: this.extractSemanticDependencies(block), // NEW: Semantic dependencies (DAG)
     };
   }
 
@@ -490,6 +504,41 @@ Output only the plan. No explanations.`;
         .map(n => parseInt(n.trim(), 10))
         .filter(n => !isNaN(n));
     }
+    return undefined;
+  }
+
+  /**
+   * Extract semantic dependencies from step (NEW: DAG Phase 2.2)
+   * 
+   * Looks for:
+   * - "Depends on: step_write_config, step_install_deps"
+   * - "Depends on step_xyz"
+   * - "Dependency: step_abc, step_def"
+   * 
+   * Returns array of step IDs, or undefined if none found.
+   */
+  private extractSemanticDependencies(text: string): string[] | undefined {
+    // Pattern 1: "Depends on: step_xyz, step_abc" or "Depends on step_xyz"
+    const depsMatch = text.match(/Depends\s+on[:\s]+([^.\n]+)/i);
+    if (depsMatch) {
+      const depText = depsMatch[1];
+      // Extract all step_xxx identifiers
+      const stepIds = depText.match(/step_[a-z0-9_]+/gi);
+      if (stepIds) {
+        return stepIds.map(id => id.toLowerCase());
+      }
+    }
+    
+    // Pattern 2: "Dependency: step_xyz, step_abc"
+    const depMatch2 = text.match(/Dependency[:\s]+([^.\n]+)/i);
+    if (depMatch2) {
+      const depText = depMatch2[1];
+      const stepIds = depText.match(/step_[a-z0-9_]+/gi);
+      if (stepIds) {
+        return stepIds.map(id => id.toLowerCase());
+      }
+    }
+    
     return undefined;
   }
 
