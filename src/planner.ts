@@ -235,6 +235,28 @@ Output only the plan. No explanations.`;
   }
 
   /**
+   * Generate deterministic semantic ID for a step
+   * 
+   * NEW: DAG Foundation (Phase 2)
+   * Semantic IDs are used as DAG node keys and dependency references.
+   * Format: step_[action]_[description_slug]
+   * Examples: step_write_config, step_install_deps, step_run_tests
+   */
+  private generateStepId(action: string, description: string): string {
+    // Sanitize description: lowercase, remove special chars, replace spaces with underscores
+    const descSlug = description
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')  // Remove special characters
+      .replace(/\s+/g, '_')            // Replace spaces with underscores
+      .replace(/_+/g, '_')              // Collapse multiple underscores
+      .substring(0, 20);                // Cap at 20 chars
+
+    // Build ID: step_[action]_[description]
+    return `step_${action}_${descSlug}`;
+  }
+
+  /**
    * Parse LLM response into structured ExecutionStep objects
    */
   private parseSteps(responseText: string): ExecutionStep[] {
@@ -309,11 +331,13 @@ Output only the plan. No explanations.`;
       const endIndex = nextStepMatch ? startIndex + nextStepMatch.index : responseText.length;
       const stepContent = responseText.substring(startIndex, endIndex);
 
+      const description = this.extractDescription(stepContent);
       const step: ExecutionStep = {
         stepNumber,
         stepId: stepNumber,
+        id: this.generateStepId(action, description), // NEW: Semantic ID for DAG
         action: action as ActionTypeString,
-        description: this.extractDescription(stepContent),
+        description,
         path: this.extractTargetFile(stepContent),
         targetFile: this.extractTargetFile(stepContent), // For backward compat
         command: this.extractCommand(stepContent), // CRITICAL: Extract command for run steps
@@ -349,11 +373,13 @@ Output only the plan. No explanations.`;
     // Note: If it says 'analyze' or 'review', we default to 'read' 
     // (schema enforcement: these should not appear in step output)
 
+    const description = this.extractDescription(block);
     return {
       stepNumber,
       stepId: stepNumber,
+      id: this.generateStepId(action, description), // NEW: Semantic ID for DAG
       action: action as ActionTypeString,
-      description: this.extractDescription(block),
+      description,
       path: this.extractTargetFile(block),
       targetFile: this.extractTargetFile(block), // For backward compat
       command: this.extractCommand(block), // CRITICAL: Extract command for run steps
