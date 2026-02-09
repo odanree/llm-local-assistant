@@ -632,9 +632,29 @@ npm run test:watch   # Auto-run on changes
 
 ## 📚 Documentation
 
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history
-- **[ROADMAP.md](ROADMAP.md)** - Future plans
+### Industry Standard
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and releases
+- **[ROADMAP.md](ROADMAP.md)** - Future development plans
 - **[LICENSE](LICENSE)** - MIT License
+
+### Architecture & Design
+- **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
+- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Form architecture rules and patterns
+
+### Project Setup & Configuration
+- **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation
+- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines
+
+### Troubleshooting & Reference
+- **[Model Comparison](docs/MODEL_COMPARISON.md)** - LLM model recommendations
+- **[Local Testing Guide](docs/LOCAL_TESTING_GUIDE.md)** - Testing setup
+- **[Release History](docs/RELEASE-COMPLETE.md)** - Detailed release notes
+
+### Development
+- **[Developer Guide](docs/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
+- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running code generation
+- **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace details
 
 ## 🐛 Troubleshooting
 
