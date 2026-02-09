@@ -1932,6 +1932,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       
       env.PATH = pathParts.filter(p => p).join(pathSeparator);
 
+      // CRITICAL: On Windows, ensure SystemRoot is set (required to find cmd.exe)
+      // Windows relies on SystemRoot (usually C:\Windows) to locate system commands
+      if (process.platform === 'win32' && !env.SystemRoot) {
+        env.SystemRoot = 'C:\\Windows';
+      }
+
       // CRITICAL FIX: Use platform-aware shell selection
       // /bin/bash doesn't exist on Windows, use shell: true instead
       const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
