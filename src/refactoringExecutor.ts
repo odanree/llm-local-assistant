@@ -775,27 +775,12 @@ test('description', async () => {
     // Qwen 32B often generates: import clsx from 'classnames' (WRONG)
     // Golden template: import { clsx } from 'clsx'; (CORRECT)
     if (fileName === 'cn.ts' || fileName === 'cn.js') {
-      return `/**
- * Class name utility - Merges Tailwind classes with conflict resolution
- * 
- * CRITICAL EXPORTS (Do not rename or change):
- * - Function name: cn (exported)
- * - clsx: Named import from 'clsx' package (NOT default, NOT from 'classnames')
- * - twMerge: Named import from 'tailwind-merge' package
- * - ClassValue: Type import from 'clsx' package
- */
-
+      return `import { twMerge } from 'tailwind-merge';
 import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
 
-/**
- * Merge class names with Tailwind conflict resolution
- * @param inputs - Class name values to merge
- * @returns Merged class name string with proper Tailwind precedence
- */
-export function cn(...inputs: ClassValue[]) {
+export const cn = (...inputs: ClassValue[]) => {
   return twMerge(clsx(inputs));
-}`;
+};`;
     }
 
     // constants.ts - Common constants file
