@@ -525,6 +525,63 @@ python -m vllm.entrypoints.openai.api_server \
 | `llama2-uncensored` | ⭐⭐⭐⭐ | Good general analysis |
 | `neural-chat` | ⭐⭐⭐⭐ | Fast, decent quality |
 
+### Architecture Rules (Optional Quality Enforcement)
+
+The extension is fully customizable and does **not enforce quality** by default. You decide whether to enable pattern validation.
+
+#### How It Works
+
+1. **No rules**: Extension works normally, LLM generates code without validation
+2. **With rules**: Extension validates generated code against your custom patterns
+3. **Opt-in**: You control what gets validated and when
+
+#### Using Architecture Rules
+
+**Step 1: View Example Rules**
+```
+The extension includes example rules in: examples/.lla-rules
+View this file to see available patterns (forms, components, state management, etc.)
+```
+
+**Step 2: Copy to Your Workspace**
+```bash
+# Copy the example rules to your workspace root:
+cp examples/.lla-rules /path/to/your/workspace/.lla-rules
+```
+
+**Step 3: Customize for Your Project**
+Edit `.lla-rules` in your workspace root to define:
+- Form component patterns (7 required patterns)
+- Component architecture rules
+- API design standards
+- Validation requirements
+- Code style guidelines
+
+**Step 4: Enable Validation**
+Once `.lla-rules` exists in your workspace, the extension automatically:
+- Injects rules into LLM context during code generation
+- Validates generated code against your patterns
+- Rejects code that violates rules
+- Asks LLM to regenerate with compliance
+
+#### Example: Form Component Validation
+
+If you include the "Form Component Architecture" section in `.lla-rules`, the extension will enforce these 7 patterns:
+
+1. **State Interface** - `interface LoginFormState {}`
+2. **Handler Typing** - `FormEventHandler<HTMLFormElement>`
+3. **Consolidator Pattern** - Single `handleChange` function
+4. **Submit Handler** - `onSubmit` on `<form>` element
+5. **Zod Validation** - Schema-based validation
+6. **Error State Tracking** - Field-level errors
+7. **Semantic Markup** - Proper HTML form elements
+
+**No `.lla-rules` file?** Extension works fine without it - just no pattern validation.
+
+#### For More Details
+
+See [docs/FORM_COMPONENT_PATTERNS.md](docs/FORM_COMPONENT_PATTERNS.md) for detailed explanation of each pattern and why they matter.
+
 ## 🔒 Privacy & Security
 
 ✅ **100% Local & Private**
