@@ -11,6 +11,7 @@ import { validateExecutionStep } from './types/executor';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
 import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
+import { GOLDEN_TEMPLATES } from './constants/templates';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -1542,6 +1543,21 @@ export class Executor {
       ? `REQUIREMENT: ${step.description}\n\n`
       : '';
 
+    // GOLDEN TEMPLATE INJECTION: For known files, inject exact template to copy
+    let goldenTemplateSection = '';
+    const fileName = step.path.split('/').pop() || '';
+    if (fileName === 'cn.ts' || fileName === 'cn.js') {
+      goldenTemplateSection = `GOLDEN TEMPLATE (copy this exactly - do NOT modify):
+\`\`\`typescript
+${GOLDEN_TEMPLATES.CN_UTILITY}
+\`\`\`
+
+Your ONLY job: Output this code exactly. Do NOT modify it.
+
+`;
+      console.log(`[Executor] ✅ Injecting golden template for ${fileName}`);
+    }
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
@@ -1550,7 +1566,7 @@ export class Executor {
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}STRICT REQUIREMENTS:
+${intentRequirement}${goldenTemplateSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
