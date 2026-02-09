@@ -140,6 +140,22 @@ export class Planner {
         sortedSteps = steps;
       }
 
+      // CRITICAL: Scaffold Dependency Check (Danh's "Last Mile" Gap)
+      // If rules require utilities like cn(), verify they exist in workspace
+      // If missing, prepend WRITE steps to create them
+      if (workspacePath) {
+        const scaffoldSteps = await this.checkScaffoldDependencies(
+          sortedSteps,
+          workspacePath,
+          userRequest
+        );
+        // Prepend any missing scaffold steps
+        if (scaffoldSteps.length > 0) {
+          console.log(`[Planner] Prepending ${scaffoldSteps.length} scaffold dependency steps`);
+          sortedSteps = [...scaffoldSteps, ...sortedSteps];
+        }
+      }
+
       const plan: TaskPlan = {
         taskId: `plan-${Date.now()}`,
         userRequest,
@@ -341,6 +357,15 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
+
+COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
+📌 ALL components must:
+  - Extend standard HTML attributes (type, disabled, aria-label, etc.)
+  - Accept className?: string prop for style extensibility
+  - Use cn() utility from src/utils/cn.ts to merge custom classes
+  - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
+  - Merge styles with: <button className={cn('px-4 py-2', className)}>
+
 ${contextSection}
 USER REQUEST: ${userRequest}
 
@@ -753,5 +778,83 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     // Fallback: return first paragraph
     const lines = text.split('\n\n')[0];
     return lines || 'Plan generated based on user request';
+  }
+
+  /**
+   * CRITICAL: Scaffold Dependency Check (Danh's "Last Mile" Gap)
+   * 
+   * Problem: Agent knows it should use cn() but doesn't verify it exists.
+   * Solution: Check for mandatory utilities in rules, create if missing.
+   * 
+   * Logic:
+   * 1. Scan rules for required utilities (cn(), clsx, etc.)
+   * 2. Check if utilities exist in workspace
+   * 3. Prepend WRITE steps for missing utilities
+   * 4. Ensure components can use what they need
+   */
+  private async checkScaffoldDependencies(
+    steps: ExecutionStep[],
+    workspacePath: string,
+    userRequest: string
+  ): Promise<ExecutionStep[]> {
+    const scaffoldSteps: ExecutionStep[] = [];
+    const fs = require('fs');
+    const path = require('path');
+
+    // Mandatory utilities that should exist if generating components/utilities
+    const mandatoryUtilities = [
+      {
+        name: 'cn utility',
+        path: 'src/utils/cn.ts',
+        check: (content: string) => content.includes('cn') && (content.includes('components') || content.includes('Component')),
+        template: `/**
+ * cn() - Tailwind CSS class merging utility
+ * Combines classNames intelligently, with Tailwind conflict resolution
+ */
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]): string {
+  return twMerge(clsx(inputs));
+}
+`
+      }
+    ];
+
+    // Check if any step involves creating components or utilities
+    const isComponentTask = steps.some(
+      s => (s.path?.includes('src/components') || userRequest.toLowerCase().includes('component'))
+        && s.action === 'write'
+    );
+
+    if (!isComponentTask) {
+      return scaffoldSteps; // Not a component task, no scaffolding needed
+    }
+
+    // Check each mandatory utility
+    for (const utility of mandatoryUtilities) {
+      const utilityPath = path.join(workspacePath, utility.path);
+      const utilityExists = fs.existsSync(utilityPath);
+
+      if (!utilityExists) {
+        console.log(`[Planner] Scaffold: Missing ${utility.name} at ${utility.path}, will create`);
+
+        // Create a WRITE step for the missing utility
+        const scaffoldStep: ExecutionStep = {
+          stepId: 0, // Will be renumbered by executor
+          stepNumber: 0, // Will be renumbered by executor
+          id: `scaffold-${utility.name.replace(/\s+/g, '-')}`,
+          action: 'write' as ActionTypeString,
+          path: utility.path,
+          description: `Create ${utility.name} utility (required for component styling)`,
+          expectedOutcome: `File created: ${utility.path}`,
+          command: utility.template, // Store template in command for executor
+        };
+
+        scaffoldSteps.push(scaffoldStep);
+      }
+    }
+
+    return scaffoldSteps;
   }
 }
