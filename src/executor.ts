@@ -1908,25 +1908,22 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     const workspaceUri = workspace || this.config.workspace;
 
     return new Promise<StepResult>((resolve) => {
-      // Build environment with full PATH, explicitly including homebrew paths
-      const env: { [key: string]: string } = {};
-      for (const key in process.env) {
-        const value = process.env[key];
-        if (value !== undefined) {
-          env[key] = value;
-        }
-      }
+      // Build environment: Start with full copy of process.env, then enhance
+      // This ensures all inherited environment variables are available
+      const env: { [key: string]: string } = { ...process.env };
 
       // Ensure PATH includes homebrew and common locations
       // macOS homebrew is typically at /opt/homebrew/bin
       // Windows uses ; separator, Unix uses :
       const pathSeparator = process.platform === 'win32' ? ';' : ':';
+      const existingPath = env.PATH || '';
+      
       const pathParts = process.platform === 'win32'
         ? [
             'C:\\Program Files\\nodejs',
             'C:\\Program Files (x86)\\nodejs',
             'C:\\Users\\odanree\\AppData\\Roaming\\npm',
-            env.PATH || '',
+            existingPath,
           ]
         : [
             '/opt/homebrew/bin',
@@ -1935,7 +1932,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             '/bin',
             '/usr/sbin',
             '/sbin',
-            env.PATH || '',
+            existingPath,
           ];
 
       env.PATH = pathParts.filter(p => p).join(pathSeparator);
@@ -1946,10 +1943,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         env.SystemRoot = 'C:\\Windows';
       }
 
+      // Log environment setup for debugging
+      console.log(`[Executor] Environment PATH: ${env.PATH?.substring(0, 100)}...`);
+      console.log(`[Executor] SystemRoot: ${env.SystemRoot}`);
+      console.log(`[Executor] Platform: ${process.platform}`);
+
       // CRITICAL FIX: Use platform-aware shell selection
       // /bin/bash doesn't exist on Windows, use shell: true instead
       const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
       const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-l', '-c', command];
+
+      console.log(`[Executor] Executing command: ${command}`);
+      console.log(`[Executor] Using shell: ${shell}`);
 
       const child = cp.spawn(shell, shellArgs, {
         cwd: workspaceUri.fsPath,
