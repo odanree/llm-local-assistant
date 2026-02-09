@@ -2454,8 +2454,11 @@ ${fileContent}
             
             // Regular question answer (not extraction)
             if (pendingQuestionResolve) {
+              console.log('[Extension] answerQuestion received, resolving pendingQuestionResolve with:', answer);
               pendingQuestionResolve(answer);
               pendingQuestionResolve = null;
+            } else {
+              console.log('[Extension] answerQuestion received but no pendingQuestionResolve waiting!');
             }
             break;
           }
@@ -2754,6 +2757,22 @@ export async function activate(context: vscode.ExtensionContext) {
           };
           console.log('[Extension] Message to send:', JSON.stringify(messageToSend));
           chatPanel.webview.postMessage(messageToSend);
+          
+          // DIAGNOSTIC: Log that we're waiting for response
+          console.log('[Extension] Waiting for user response... pendingQuestionResolve is set');
+          
+          // SAFETY: If no response within 30 seconds, auto-proceed with first option
+          // This prevents the executor from hanging forever
+          const timeoutId = setTimeout(() => {
+            console.log('[Extension] TIMEOUT: No user response to question after 30s, auto-proceeding with:', options[0]);
+            if (pendingQuestionResolve) {
+              pendingQuestionResolve(options[0]);
+              pendingQuestionResolve = null;
+            }
+          }, 30000);
+          
+          // Store timeout so we can clear it when answer arrives
+          (resolve as any)._timeoutId = timeoutId;
         } else {
           // If no chat panel, auto-proceed with first option (default behavior)
           console.log('[Extension] No chat panel for question, auto-proceeding with:', options[0]);
