@@ -212,11 +212,11 @@ export function getWebviewContent(): string {
                   console.log('[Webview] Execute button from /suggest-patterns:', command);
                   // Send /refactor command - this will run pattern detection
                   chat.innerHTML += '<div class="msg user">' + command + '</div>';
-                commandHistory.push(command);
-                historyIndex = commandHistory.length;
-                vscode.postMessage({ command: 'sendMessage', text: command });
-              };
-              row.appendChild(btn);
+                  commandHistory.push(command);
+                  historyIndex = commandHistory.length;
+                  vscode.postMessage({ command: 'sendMessage', text: command });
+                };
+                row.appendChild(btn);
               
               buttonContainer.appendChild(row);
             } else {
