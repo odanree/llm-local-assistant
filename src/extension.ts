@@ -358,8 +358,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
                   postChatMessage({
                     command: 'addMessage',
-                    text: `✅ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                    text: `✅ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
                     success: true,
+                    options: ['Execute', 'Reject'],
                   });
                 } catch (err) {
                   postChatMessage({
@@ -2455,6 +2456,94 @@ ${fileContent}
             if (pendingQuestionResolve) {
               pendingQuestionResolve(answer);
               pendingQuestionResolve = null;
+            }
+            break;
+          }
+
+          case 'buttonPressed': {
+            // Handle button clicks from plan approval/rejection
+            const buttonName = message.buttonName;
+            
+            if (buttonName === 'Execute') {
+              // Execute the current plan
+              (chatPanel as any)._manualExecuteTriggered = true;
+              // Trigger /execute command
+              const executeMessage = {
+                command: 'sendMessage',
+                text: '/execute',
+              };
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: '▶️ Executing plan from button click...',
+                type: 'info',
+              });
+              // Recursively process this as a sendMessage
+              await (async () => {
+                // Process /execute command
+                try {
+                  const currentPlan = (chatPanel as any)._currentPlan;
+                  if (!currentPlan) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      error: 'No plan to execute. Use /plan <task> to generate one first.',
+                      success: false,
+                    });
+                    return;
+                  }
+
+                  postChatMessage({
+                    command: 'addMessage',
+                    text: `⚙️ Executing plan: "${currentPlan.userRequest || 'Unnamed Task'}"\n\nRunning ${currentPlan.steps.length} steps...`,
+                    type: 'info',
+                  });
+
+                  try {
+                    executor.executePlan(currentPlan).then((result) => {
+                      if (result.success) {
+                        postChatMessage({
+                          command: 'addMessage',
+                          text: `✅ Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
+                          success: true,
+                        });
+                        delete (chatPanel as any)._currentPlan;
+                      } else {
+                        postChatMessage({
+                          command: 'addMessage',
+                          error: `Plan execution failed: ${result.error || 'Unknown error'}`,
+                          success: false,
+                        });
+                      }
+                    }).catch((err) => {
+                      postChatMessage({
+                        command: 'addMessage',
+                        error: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+                        success: false,
+                      });
+                    });
+                  } catch (err) {
+                    postChatMessage({
+                      command: 'addMessage',
+                      error: `Error executing plan: ${err instanceof Error ? err.message : String(err)}`,
+                      success: false,
+                    });
+                  }
+                } catch (err) {
+                  postChatMessage({
+                    command: 'addMessage',
+                    error: `${err instanceof Error ? err.message : String(err)}`,
+                    success: false,
+                  });
+                }
+              })();
+              
+            } else if (buttonName === 'Reject') {
+              // Reject the current plan
+              delete (chatPanel as any)._currentPlan;
+              postChatMessage({
+                command: 'addMessage',
+                text: '❌ Plan rejected. Use `/plan <task>` to generate a new one.',
+                type: 'info',
+              });
             }
             break;
           }
