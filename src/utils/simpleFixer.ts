@@ -203,10 +203,55 @@ export class SimpleFixer {
    * <Link to="/products">  ← JSX usage NOT detected by regex ❌
    * 
    * The Solution: Check for actual usage in code (including JSX)
+   * 
+   * SEMANTIC PROTECTION: Protected React hooks that are ALWAYS valid
    */
   private static removeUnusedImportsASTAware(code: string): FixResult {
     const fixes: FixAction[] = [];
     let fixed = code;
+
+    // React core hooks that must NEVER be removed (they're always semantically valid)
+    const PROTECTED_HOOKS = new Set([
+      'useState',
+      'useEffect',
+      'useContext',
+      'useReducer',
+      'useCallback',
+      'useMemo',
+      'useRef',
+      'useLayoutEffect',
+      'useImperativeHandle',
+      'useDebugValue',
+      'useDeferredValue',
+      'useTransition',
+      'useId',
+    ]);
+
+    /**
+     * Guard: Semantic check for React hook usage
+     * React hooks MUST be called with parentheses: useState(), useEffect(), etc.
+     * This protects against false positives in validators
+     */
+    const isImportActuallyUsed = (importName: string, fileContent: string): boolean => {
+      // React hooks: Check for function call pattern hookName()
+      if (PROTECTED_HOOKS.has(importName)) {
+        // Pattern: hookName( or hookName () - React hooks are always called
+        const hookUsagePattern = new RegExp(`\\b${importName}\\s*\\(`, 'g');
+        if (hookUsagePattern.test(fileContent)) {
+          return true;
+        }
+        
+        // If it's a protected hook and NOT found, something is wrong with the code
+        // Better to keep it than remove it (prevents the validator paradox)
+        // The LLM will fix the actual logic error, not the fixer
+        console.log(`[SimpleFixer] Protected hook '${importName}' - not obviously used, but keeping it to avoid false positive removal`);
+        return true; // Assume it's used - let LLM handle actual logic errors
+      }
+
+      // For non-hook imports, use standard word boundary check
+      const usagePattern = new RegExp(`\\b${importName}\\b(?!\\s*:)`);
+      return usagePattern.test(fileContent);
+    };
 
     // Find all import statements
     const importPattern = /import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]/g;
@@ -233,24 +278,20 @@ export class SimpleFixer {
 
     // For each import, check if it's actually used
     for (const { name, importLine } of importsToCheck) {
-      // Create a regex that matches the name as a word boundary
-      // This catches:
-      // - Variable usage: myVar
-      // - JSX tag: <MyComponent />
-      // - Function call: myFunc()
-      // - Property access: obj.myProp
-      const usagePattern = new RegExp(`\\b${name}\\b(?!\\s*:)`);
-      
       // Remove the import statement itself from the search
       const codeWithoutImport = code.replace(importLine, '');
       
-      // If NOT found in the rest of the code, it's unused
-      if (!usagePattern.test(codeWithoutImport)) {
+      // Use semantic guard to check if import is truly used
+      if (!isImportActuallyUsed(name, codeWithoutImport)) {
+        // Only remove if we're confident it's unused
         fixed = fixed.replace(importLine + '\n', '');
         fixes.push({
           type: 'unused-import',
           description: `Removed unused import: ${name}`,
         });
+      } else if (PROTECTED_HOOKS.has(name)) {
+        // Protected hook - log that we're keeping it
+        console.log(`[SimpleFixer] Kept protected hook: ${name}`);
       }
     }
 
