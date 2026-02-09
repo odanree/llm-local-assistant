@@ -71,9 +71,8 @@ export function getWebviewContent(): string {
         // Find the current command being typed
         const lastSlash = beforeCursor.lastIndexOf('/');
         
-        // ONLY intercept Tab if typing a command (has / before cursor)
+        // Only handle autocomplete if we found a / and it's before cursor
         if (lastSlash !== -1 && lastSlash < cursorPos) {
-          e.preventDefault();
           const partialCommand = beforeCursor.substring(lastSlash);
           
           // Check if input changed since last tab press
@@ -91,14 +90,17 @@ export function getWebviewContent(): string {
             autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
           }
           
+          // If we have matches, do autocomplete and prevent default
           if (autocompleteMatches.length > 0) {
+            e.preventDefault();
             const match = autocompleteMatches[autocompleteIndex];
             const newInput = beforeCursor.substring(0, lastSlash) + match + currentInput.substring(cursorPos);
             input.value = newInput;
             input.setSelectionRange(beforeCursor.substring(0, lastSlash).length + match.length, beforeCursor.substring(0, lastSlash).length + match.length);
           }
+          // If no matches, let Tab proceed normally (send message)
         }
-        // If no / in input, Tab sends message (accessibility feature)
+        // If no /, let Tab proceed normally (send message)
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         // ArrowUp: restore previous command
