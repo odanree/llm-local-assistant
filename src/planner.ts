@@ -359,18 +359,20 @@ Output only the plan. No explanations.`;
    * Format: step_[action]_[description_slug]
    * Examples: step_write_config, step_install_deps, step_run_tests
    */
-  private generateStepId(action: string, description: string): string {
-    // Sanitize description: lowercase, remove special chars, replace spaces with underscores
-    const descSlug = description
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9\s-]/g, '')  // Remove special characters
-      .replace(/\s+/g, '_')            // Replace spaces with underscores
-      .replace(/_+/g, '_')              // Collapse multiple underscores
-      .substring(0, 20);                // Cap at 20 chars
-
-    // Build ID: step_[action]_[description]
-    return `step_${action}_${descSlug}`;
+  /**
+   * Generate step ID for DAG dependency tracking
+   * CRITICAL: Must match format that LLM outputs in dependencies
+   * LLM outputs: "Depends on: step_1, step_2"
+   * So we use simple numeric format: step_1, step_2, step_3
+   * 
+   * Option B: Simple numeric IDs (SELECTED)
+   * - Simpler and cleaner than semantic IDs
+   * - Matches LLM output format exactly
+   * - Better contract between LLM and Executor
+   * - stepNumber is 1-indexed (first step = 1)
+   */
+  private generateStepId(stepNumber: number): string {
+    return `step_${stepNumber}`;
   }
 
   /**
@@ -452,7 +454,7 @@ Output only the plan. No explanations.`;
       const step: ExecutionStep = {
         stepNumber,
         stepId: stepNumber,
-        id: this.generateStepId(action, description), // NEW: Semantic ID for DAG
+        id: this.generateStepId(stepNumber), // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
         action: action as ActionTypeString,
         description,
         path: this.extractTargetFile(stepContent),
@@ -495,7 +497,7 @@ Output only the plan. No explanations.`;
     return {
       stepNumber,
       stepId: stepNumber,
-      id: this.generateStepId(action, description), // NEW: Semantic ID for DAG
+      id: this.generateStepId(stepNumber), // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
       action: action as ActionTypeString,
       description,
       path: this.extractTargetFile(block),
