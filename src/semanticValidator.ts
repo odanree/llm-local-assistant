@@ -6,6 +6,7 @@ import {
   getApplicableProfiles,
   ValidatorProfile,
 } from './services/ValidatorProfiles';
+import { DomainAwareAuditor } from './services/DomainAwareAuditor';
 
 export interface SemanticValidationError {
   type:
@@ -54,6 +55,13 @@ export class SemanticValidator {
     const errors: SemanticValidationError[] = [];
 
     try {
+      // STEP 0: DOMAIN DETECTION & SUPPRESSION RULES
+      // Detect which domain this code belongs to
+      const domain = DomainAwareAuditor.findDomain(code);
+      const suppressedRules = domain
+        ? DomainAwareAuditor.getSuppressedRules(code)
+        : [];
+
       // STEP 1: Apply rule-based validation (ValidatorProfiles)
       // This is pattern-based, not AST-dependent
       errors.push(...this.validateByProfiles(code));
@@ -70,14 +78,61 @@ export class SemanticValidator {
           console.log(`[SemanticValidator] AST parsing skipped: ${astError.message}`);
         }
       }
+
+      // STEP 3: RULE FILTERING (Domain-Aware)
+      // Filter out errors that are suppressed for this domain
+      // This prevents infrastructure files from being bullied by component rules
+      const filteredErrors = this.filterErrorsByDomain(
+        errors,
+        suppressedRules,
+        domain?.id
+      );
+
+      // Deduplicate errors (same location + message)
+      return this.deduplicateErrors(filteredErrors);
     } catch (e) {
       if (e instanceof Error) {
         console.log(`[SemanticValidator] Validation error: ${e.message}`);
       }
+      return this.deduplicateErrors(errors);
+    }
+  }
+
+  /**
+   * STEP 3: Filter errors based on domain context
+   * Removes errors that are suppressed for this domain
+   * 
+   * EXAMPLE: Infrastructure domain suppresses ClassValue unused warnings
+   * because they're needed for type safety, even if "unused"
+   */
+  private filterErrorsByDomain(
+    errors: SemanticValidationError[],
+    suppressedRules: string[],
+    domainId?: string
+  ): SemanticValidationError[] {
+    if (!domainId || suppressedRules.length === 0) {
+      return errors; // No domain context, return all errors
     }
 
-    // Deduplicate errors (same location + message)
-    return this.deduplicateErrors(errors);
+    return errors.filter((error) => {
+      // Check if this error matches any suppressed rule
+      for (const suppressedRule of suppressedRules) {
+        // Match by:
+        // 1. Error message containing the rule name
+        // 2. Rule ID if present
+        if (
+          error.message.toLowerCase().includes(suppressedRule.toLowerCase()) ||
+          error.ruleId === suppressedRule
+        ) {
+          // This error is suppressed for this domain
+          console.log(
+            `[SemanticValidator] Suppressed for ${domainId}: ${error.message}`
+          );
+          return false; // Filter it out
+        }
+      }
+      return true; // Keep this error
+    });
   }
 
   /**
