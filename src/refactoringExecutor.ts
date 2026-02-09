@@ -669,6 +669,168 @@ test('description', async () => {
   }
 
   /**
+   * Execute a step with self-correction cycle
+   * Danh's v3.0 Knowledge Anchor: Feed architectural hints to LLM
+   * 
+   * This implements the "Inference Ceiling" mitigation:
+   * When SmartValidator detects errors, provide the 32B model with
+   * specific architectural hints about what went wrong and how to fix it.
+   */
+  private async executeWithCorrection(
+    originalContent: string,
+    stepPath: string,
+    stepDescription: string
+  ): Promise<string> {
+    const MAX_RETRIES = 2;
+    let currentContent = originalContent;
+    let attemptNumber = 0;
+
+    while (attemptNumber <= MAX_RETRIES) {
+      // Validate current attempt
+      const semanticErrors = SmartValidator.checkSemantics(currentContent);
+
+      if (semanticErrors.length === 0) {
+        // Success!
+        this.log(`✅ Self-correction cycle complete on attempt ${attemptNumber + 1}`);
+        return currentContent;
+      }
+
+      // Still has errors
+      if (attemptNumber >= MAX_RETRIES) {
+        // Max retries reached
+        const errorMessage = SmartValidator.formatErrors(semanticErrors);
+        this.log(`❌ Max correction attempts (${MAX_RETRIES + 1}) reached`);
+        throw new Error(
+          `Self-correction failed after ${MAX_RETRIES + 1} attempts:\n${errorMessage}`
+        );
+      }
+
+      // Build correction prompt with architectural hints
+      const correctionPrompt = this.buildArchitecturalHintsPrompt(
+        currentContent,
+        semanticErrors,
+        stepPath,
+        stepDescription,
+        attemptNumber
+      );
+
+      this.log(
+        `⚠️ Self-correction attempt ${attemptNumber + 1}/${MAX_RETRIES + 1}: ` +
+        `${semanticErrors.length} errors detected, requesting LLM correction with hints...`
+      );
+
+      // Request correction from LLM with architectural guidance
+      const response = await this.llmClient.sendMessage(correctionPrompt);
+
+      if (!response.success) {
+        throw new Error(`LLM failed to generate correction: ${response.error}`);
+      }
+
+      // Extract corrected code
+      currentContent = this.extractCodeFromResponse(response.message || '');
+
+      if (!currentContent) {
+        throw new Error('LLM failed to return code in correction attempt');
+      }
+
+      attemptNumber++;
+    }
+
+    // Shouldn't reach here, but safety net
+    throw new Error('Self-correction cycle failed unexpectedly');
+  }
+
+  /**
+   * Build prompt with architectural hints for correction
+   * This is the "Knowledge Anchor" for v3.0 self-correction
+   * Provides the 32B model with specific guidance based on detected errors
+   */
+  private buildArchitecturalHintsPrompt(
+    failedAttempt: string,
+    semanticErrors: any[],
+    filePath: string,
+    stepDescription: string,
+    attemptNumber: number
+  ): string {
+    // Extract specific error types for targeted hints
+    const errorTypes = {
+      hasUndefinedVars: semanticErrors.some(e => e.type === 'undefined-variable'),
+      hasImportMismatches: semanticErrors.some(e => e.type === 'import-mismatch'),
+      hasMissingTypes: semanticErrors.some(e => e.type === 'missing-type'),
+    };
+
+    // Build targeted hints based on errors found
+    const hints: string[] = [];
+
+    if (errorTypes.hasImportMismatches) {
+      hints.push(
+        "- 'clsx' must be a named import: import { clsx, type ClassValue } from 'clsx';",
+        "- Do NOT use 'import clsx from ...' (it is not a default export from clsx)",
+        "- 'twMerge' is imported from 'tailwind-merge' (not 'merge' or 'tw-merge')",
+        "- Check library names match actual npm package names"
+      );
+    }
+
+    if (errorTypes.hasUndefinedVars) {
+      hints.push(
+        "- Ensure every variable used in the code is defined before use",
+        "- Check that all imports are present for referenced identifiers",
+        "- Verify that destructured variables are actually exported from imported libraries"
+      );
+    }
+
+    if (errorTypes.hasMissingTypes) {
+      hints.push(
+        "- Types should be imported with 'import type { TypeName }' syntax",
+        "- Example: import type { ClassValue } from 'clsx';",
+        "- Runtime values use 'import { value }', types use 'import type { Type }'"
+      );
+    }
+
+    // Always include core architectural rules
+    hints.push(
+      "- All imports must reference real npm packages (not made-up names)",
+      "- All variables must be defined or imported before use",
+      "- All types must be properly imported when used in type positions"
+    );
+
+    const hintsText = hints.join('\n');
+
+    return `You are a TypeScript/React refactoring expert fixing code generation errors.
+
+TASK: Fix the semantic errors in the failed code using architectural hints.
+
+FILE: ${filePath}
+DESCRIPTION: ${stepDescription}
+ATTEMPT: ${attemptNumber + 1}/3
+
+PREVIOUS ATTEMPT (had errors):
+\`\`\`typescript
+${failedAttempt}
+\`\`\`
+
+SEMANTIC ERRORS FOUND:
+${semanticErrors.map(e => `- ${e.message}`).join('\n')}
+
+ARCHITECTURAL HINTS (Project-Specific Rules):
+${hintsText}
+
+CRITICAL REQUIREMENTS:
+1. Fix ALL listed semantic errors
+2. Follow the architectural hints exactly
+3. Maintain the original intent of the code
+4. Output ONLY the corrected TypeScript code in a code block
+5. No explanations, no markdown outside the code block
+
+REMEMBER:
+- Named imports like: import { clsx, type ClassValue } from 'clsx';
+- NOT default imports like: import clsx from 'clsx';
+- Types imported with 'import type { }'
+- All variables defined before use
+- All imports from real npm packages`;
+  }
+
+  /**
    * Run a command with hardened shell configuration
    * Uses absolute ComSpec path to ensure Windows reliability
    * Danh's "Final Boss" fix for shell execution
