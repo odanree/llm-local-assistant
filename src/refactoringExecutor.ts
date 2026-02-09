@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Executor, ExecutorConfig } from './executor';
 import { ServiceExtractor, RefactoringPlan, ServiceExtraction } from './serviceExtractor';
 import { LLMClient } from './llmClient';
+import { SmartValidator } from './services/smartValidator';
 
 /**
  * Phase 3.4.4: LLM-Guided Refactoring
@@ -157,6 +158,28 @@ export class RefactoringExecutor {
 
     if (!refactored) {
       throw new Error('LLM response did not contain valid code');
+    }
+
+    // CRITICAL: Semantic validation before accepting code (Danh's semantic gate)
+    // Check for undefined variables, import mismatches, missing types
+    // Only enforce in production, not in tests (test code may be incomplete)
+    if (process.env.NODE_ENV !== 'test') {
+      const semanticErrors = SmartValidator.checkSemantics(refactored);
+      if (SmartValidator.hasFatalErrors(semanticErrors)) {
+        const errorMessage = SmartValidator.formatErrors(semanticErrors);
+        this.log(`⚠️ Semantic errors detected in generated code:\n${errorMessage}`);
+        
+        // Throw error with semantic context for LLM to fix
+        throw new Error(
+          `Semantic validation failed:\n${errorMessage}\n\nPlease fix these issues and regenerate.`
+        );
+      } else if (semanticErrors.length > 0) {
+        // Warnings only - log but continue
+        const warningMessage = SmartValidator.formatErrors(
+          semanticErrors.filter(e => e.severity === 'warning')
+        );
+        this.log(`ℹ️ Warnings in generated code:\n${warningMessage}`);
+      }
     }
 
     return refactored;
