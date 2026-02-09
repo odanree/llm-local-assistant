@@ -375,21 +375,26 @@ Output only the plan. No explanations.`;
 
   /**
    * Extract target file from step block
-   * CRITICAL: Must handle various formats that LLM might output
+   * CRITICAL: Must reject sentence fragments, only accept valid file paths
    */
   private extractTargetFile(text: string): string | undefined {
     // Try multiple patterns for extracting file paths
     const patterns = [
-      /(?:Target|File|Path)[:\s]+([^\n]+)/i,           // "Path: src/file.tsx"
-      /(?:- Path|File Path|Target File)[:\s]+([^\n]+)/i, // "- Path: src/file.tsx"
-      /src\/[^\n]+/,                                    // Direct path match "src/..."
-      /(?:write|read|modify|update|create)[:\s]+([^\n]+)/i, // "write: src/file.tsx"
+      // Only match if followed by file extension or valid path structure
+      /(?:Target|File|Path)[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i,    // "Path: src/file.tsx" (must have extension)
+      /(?:- Path|File Path|Target File)[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i, // "- Path: src/file.tsx"
+      /src\/[^\n]+\.[a-z]{2,}/,                                     // Direct path "src/..." (must have extension)
+      /(?:write|read|modify|update|create)[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i, // "write: src/file.tsx"
     ];
 
     for (const pattern of patterns) {
       const match = text.match(pattern);
       if (match) {
         const path = (match[1] || match[0]).trim();
+        // Reject if contains common sentence markers or stops
+        if (path.includes(' for ') || path.includes(' the ') || path.includes('component.')) {
+          continue; // Skip sentences, only accept paths
+        }
         // Clean up the path
         return path.replace(/^[-*]\s+/, '').replace(/[`'"]([^`'"]+)[`'"]/g, '$1').trim();
       }
