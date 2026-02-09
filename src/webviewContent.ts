@@ -47,8 +47,11 @@ export function getWebviewContent(): string {
       bufferTimeout = null;
     }
     function sendMessage() {
+      console.log('[Webview] sendMessage called');
       const msg = input.value.trim();
+      console.log('[Webview] Message value:', msg);
       if (msg) {
+        console.log('[Webview] Sending message');
         chat.innerHTML += '<div class="msg user">' + msg + '</div>';
         commandHistory.push(msg);
         historyIndex = commandHistory.length;
@@ -60,7 +63,9 @@ export function getWebviewContent(): string {
     }
     send.addEventListener('click', sendMessage);
     input.addEventListener('keydown', (e) => {
+      console.log('[Webview] Key pressed:', e.key);
       if (e.key === 'Enter' && !e.shiftKey) {
+        console.log('[Webview] Enter key detected');
         e.preventDefault();
         sendMessage();
       } else if (e.key === 'Tab') {
