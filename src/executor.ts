@@ -836,6 +836,7 @@ export class Executor {
       // CRITICAL: Hard blockers that must be fixed
       if (
         error.includes('❌') ||  // Explicit error marker
+        (error.includes('Pattern') && error.includes('violation')) ||  // Form pattern violations
         error.includes('Missing import') ||
         error.includes('Syntax error') ||
         error.includes('unclosed') ||
@@ -1761,6 +1762,47 @@ Your ONLY job: Output this code exactly. Do NOT modify it.
       console.log(`[Executor] ✅ Injecting golden template for ${fileName}`);
     }
 
+    // FORM COMPONENT PATTERN INJECTION: Critical for form generation
+    // Extract and inject form patterns from .lla-rules if this is a form component
+    let formPatternSection = '';
+    const isFormComponent = fileName.includes('Form');
+    if (isFormComponent) {
+      const llmConfig = this.config.llmClient.getConfig();
+      const architectureRules = llmConfig.architectureRules || '';
+      
+      // Extract Form Component Architecture section from .lla-rules
+      const formPatternMatch = architectureRules.match(/###\s+Form Component Architecture[\s\S]*?(?=###\s+|$)/);
+      if (formPatternMatch) {
+        formPatternSection = `
+## REQUIRED: Form Component Patterns
+
+${formPatternMatch[0]}
+
+CRITICAL: ALL 7 PATTERNS ARE MANDATORY FOR FORM COMPONENTS.
+Validator will REJECT if any pattern is missing.
+
+`;
+        console.log(`[Executor] ✅ Injecting form component patterns for ${fileName}`);
+      } else {
+        // Fallback: Inject form patterns directly if not in rules
+        formPatternSection = `
+## REQUIRED: Form Component Patterns (7 Mandatory)
+
+1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
+2. **Handler Typing** - Use FormEventHandler type: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { ... }
+3. **Consolidator Pattern** - Single handleChange function: const { name, value } = e.currentTarget; setFormData(prev => ({ ...prev, [name]: value }))
+4. **Submit Handler** - Use onSubmit on form element: <form onSubmit={handleSubmit}> with handleSubmit: FormEventHandler<HTMLFormElement>
+5. **Zod Validation** - Define schema: const schema = z.object({ email: z.string().email(), password: z.string().min(8) })
+6. **Error State** - Track field errors: const [errors, setErrors] = useState<Record<string, string>>({})
+7. **Semantic Markup** - Use proper form HTML: <input name="email" type="email" /> with name attributes
+
+CRITICAL: Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
+
+`;
+        console.log(`[Executor] ⚠️ Fallback: Injecting hardcoded form patterns for ${fileName}`);
+      }
+    }
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
@@ -1769,7 +1811,7 @@ Your ONLY job: Output this code exactly. Do NOT modify it.
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${goldenTemplateSection}STRICT REQUIREMENTS:
+${intentRequirement}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
