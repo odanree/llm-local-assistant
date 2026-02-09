@@ -667,4 +667,48 @@ test('description', async () => {
     const timestamp = new Date().toLocaleTimeString();
     this.executionLog.push(`[${timestamp}] ${message}`);
   }
+
+  /**
+   * Run a command with hardened shell configuration
+   * Uses absolute ComSpec path to ensure Windows reliability
+   * Danh's "Final Boss" fix for shell execution
+   */
+  private async runCommand(command: string, cwd: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // Use the exact ComSpec path confirmed by diagnostic tool
+      // Fallback to default Windows path if not found
+      const SHELL_PATH = process.env.ComSpec || 'C:\\WINDOWS\\system32\\cmd.exe';
+
+      const { exec } = require('child_process');
+      
+      // Execute with hardened configuration
+      exec(
+        command,
+        {
+          cwd,
+          env: {
+            ...process.env,  // Spread all existing environment vars
+            SystemRoot: process.env.SystemRoot || 'C:\\WINDOWS',  // Anchor: kernel path
+            PATH: process.env.PATH || '',  // Anchor: tool discovery
+            // On non-Windows, exec handles shell naturally
+            // On Windows, the shell property below ensures cmd.exe is used
+          },
+          shell: SHELL_PATH,  // Force to verified ComSpec path (Windows only, ignored on Unix)
+          timeout: 30000,  // 30 second timeout
+        },
+        (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            // Real command error (plumbing is working, command itself failed)
+            const errorMessage = stderr || error.message || 'Unknown error';
+            this.log(`❌ Command failed: ${errorMessage}`);
+            reject(new Error(errorMessage));
+            return;
+          }
+
+          this.log(`✅ Command succeeded: ${command}`);
+          resolve(stdout);
+        }
+      );
+    });
+  }
 }
