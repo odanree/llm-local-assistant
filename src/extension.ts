@@ -458,7 +458,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
               postChatMessage({
                 command: 'addMessage',
-                text: `⚙️ Executing plan: "${currentPlan.taskDescription}"\n\nRunning ${currentPlan.steps.length} steps...`,
+                text: `⚙️ Executing plan: "${currentPlan.userRequest || 'Unnamed Task'}"\n\nRunning ${currentPlan.steps.length} steps...`,
                 type: 'info',
               });
 
