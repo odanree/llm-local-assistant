@@ -1514,7 +1514,14 @@ export class Executor {
     }
 
     // Build a detailed prompt that asks for code-only output
+    // CONTRACT INJECTION: Inject step description as source of truth for intent
     let prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
+    
+    // CRITICAL: Use step.description as primary requirement (intent preservation)
+    // This bridges the planning → execution gap by injecting the actual requirement
+    const intentRequirement = step.description 
+      ? `REQUIREMENT: ${step.description}\n\n`
+      : '';
     
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
@@ -1524,17 +1531,17 @@ export class Executor {
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${prompt}
-
-STRICT REQUIREMENTS:
-1. Output ONLY valid, executable code for this file
-2. NO markdown backticks, NO code blocks, NO explanations
-3. NO documentation, NO comments about what you're doing
-4. NO instructions for other files
-5. Start with the first line of code immediately
-6. End with the last line of code
-7. Every line must be syntactically valid for a ${fileExtension} file
-8. This code will be parsed as pure code - nothing else matters
+${intentRequirement}STRICT REQUIREMENTS:
+1. Implement the exact logic described in the REQUIREMENT above
+2. Output ONLY valid, executable code for this file
+3. NO markdown backticks, NO code blocks, NO explanations
+4. NO documentation, NO comments about what you're doing
+5. NO instructions for other files
+6. Start with the first line of code immediately
+7. End with the last line of code
+8. Every line must be syntactically valid for a ${fileExtension} file
+9. This code will be parsed as pure code - nothing else matters
+10. Validate: Does this code fulfill the REQUIREMENT stated above?
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';
