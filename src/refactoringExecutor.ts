@@ -142,11 +142,48 @@ export class RefactoringExecutor {
   }
 
   /**
-   * Generate refactored code using LLM
+   * Generate refactored code with semantic retry loop
+   * Feeds semantic errors back to LLM for automatic correction
    */
   private async generateRefactoredCode(plan: RefactoringPlan, code: string): Promise<string> {
-    const prompt = this.buildRefactoringPrompt(plan, code);
+    return this.generateRefactoredCodeWithRetry(plan, code, code, 0);
+  }
 
+  /**
+   * Recursive retry handler with semantic feedback loop
+   * Max 3 attempts to generate semantically correct code
+   */
+  private async generateRefactoredCodeWithRetry(
+    plan: RefactoringPlan,
+    originalCode: string,
+    currentCode: string,
+    attemptNumber: number
+  ): Promise<string> {
+    const MAX_ATTEMPTS = 3;
+
+    // Build the prompt for this attempt
+    let prompt: string;
+    if (attemptNumber === 0) {
+      // First attempt: normal refactoring prompt
+      prompt = this.buildRefactoringPrompt(plan, originalCode);
+      this.log(`[Generation Attempt ${attemptNumber + 1}/${MAX_ATTEMPTS}] Generating refactored code...`);
+    } else {
+      // Retry attempt: include semantic error feedback
+      const semanticErrors = SmartValidator.checkSemantics(currentCode);
+      if (semanticErrors.length === 0) {
+        // No errors on retry - shouldn't happen, but return code
+        return currentCode;
+      }
+
+      const errorSummary = SmartValidator.formatErrors(semanticErrors);
+      prompt = this.buildCorrectionPrompt(plan, originalCode, currentCode, errorSummary);
+      this.log(
+        `[Generation Attempt ${attemptNumber + 1}/${MAX_ATTEMPTS}] ` +
+        `Correcting ${semanticErrors.length} semantic errors...`
+      );
+    }
+
+    // Send to LLM
     const response = await this.llmClient.sendMessage(prompt);
 
     if (!response.success) {
@@ -160,29 +197,90 @@ export class RefactoringExecutor {
       throw new Error('LLM response did not contain valid code');
     }
 
-    // CRITICAL: Semantic validation before accepting code (Danh's semantic gate)
-    // Check for undefined variables, import mismatches, missing types
-    // Only enforce in production, not in tests (test code may be incomplete)
+    // Semantic validation
     if (process.env.NODE_ENV !== 'test') {
       const semanticErrors = SmartValidator.checkSemantics(refactored);
+
       if (SmartValidator.hasFatalErrors(semanticErrors)) {
-        const errorMessage = SmartValidator.formatErrors(semanticErrors);
-        this.log(`⚠️ Semantic errors detected in generated code:\n${errorMessage}`);
-        
-        // Throw error with semantic context for LLM to fix
-        throw new Error(
-          `Semantic validation failed:\n${errorMessage}\n\nPlease fix these issues and regenerate.`
-        );
+        // Still has errors
+        if (attemptNumber < MAX_ATTEMPTS - 1) {
+          // Retry with error feedback
+          this.log(
+            `⚠️ Generation attempt ${attemptNumber + 1} had semantic errors. Retrying...`
+          );
+          return this.generateRefactoredCodeWithRetry(
+            plan,
+            originalCode,
+            refactored,
+            attemptNumber + 1
+          );
+        } else {
+          // Max attempts reached
+          const errorMessage = SmartValidator.formatErrors(semanticErrors);
+          this.log(
+            `❌ Max retry attempts reached. Final errors:\n${errorMessage}`
+          );
+          throw new Error(
+            `Semantic validation failed after ${MAX_ATTEMPTS} attempts:\n${errorMessage}`
+          );
+        }
       } else if (semanticErrors.length > 0) {
-        // Warnings only - log but continue
+        // Warnings only - log but accept
         const warningMessage = SmartValidator.formatErrors(
           semanticErrors.filter(e => e.severity === 'warning')
         );
-        this.log(`ℹ️ Warnings in generated code:\n${warningMessage}`);
+        this.log(`ℹ️ Generated code has minor warnings:\n${warningMessage}`);
       }
     }
 
+    // Success!
+    if (attemptNumber > 0) {
+      this.log(`✅ Semantic validation passed on attempt ${attemptNumber + 1}`);
+    }
     return refactored;
+  }
+
+  /**
+   * Build correction prompt with specific semantic errors
+   * Feeds error context back to LLM for targeted fixes
+   */
+  private buildCorrectionPrompt(
+    plan: RefactoringPlan,
+    originalCode: string,
+    failedAttempt: string,
+    semanticErrors: string
+  ): string {
+    return `You are a TypeScript/React refactoring expert.
+
+TASK: Fix the semantic errors in the refactored code and regenerate.
+
+ORIGINAL CODE:
+\`\`\`typescript
+${originalCode}
+\`\`\`
+
+PREVIOUS ATTEMPT (had errors):
+\`\`\`typescript
+${failedAttempt}
+\`\`\`
+
+SEMANTIC ERRORS FOUND:
+${semanticErrors}
+
+CRITICAL FIXES NEEDED:
+- Ensure all variables used are defined or imported
+- Check import statements match actual library names
+  * clsx is exported from 'clsx' package, not 'classnames'
+  * twMerge is exported from 'tailwind-merge' package
+- Import types as \`import type { TypeName }\` when used in type positions
+- Do NOT use undefined variables
+
+REQUIREMENTS:
+- Output ONLY valid TypeScript code in a code block
+- No explanations or markdown outside code block
+- All imports must reference actual libraries
+- All types must be properly imported
+- All variables must be defined before use`;
   }
 
   /**
