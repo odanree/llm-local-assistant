@@ -698,17 +698,22 @@ test('description', async () => {
     let currentContent = originalContent;
     let attemptNumber = 0;
 
+    // CONTEXT-AWARE VALIDATION: Determine file type and applicable rules
+    const fileContext = this.determineFileContext(stepPath, stepDescription);
+    console.log(`[RefactoringExecutor] File context: ${JSON.stringify(fileContext)}`);
+
     while (attemptNumber <= MAX_RETRIES) {
-      // GOLDEN OVERRIDE: For cn.ts, if content matches template, pass validation immediately
-      const fileName = stepPath.split('/').pop() || '';
-      if ((fileName === 'cn.ts' || fileName === 'cn.js') && currentContent.trim() === GOLDEN_TEMPLATES.CN_UTILITY.trim()) {
-        console.log(`[RefactoringExecutor] ✅ GOLDEN OVERRIDE: Content matches golden template perfectly`);
-        this.log(`✅ Golden override: Content matches template exactly - PASS validation`);
-        return currentContent;
+      // CONTEXT-AWARE GOLDEN OVERRIDE: Match template based on file type rules
+      if (fileContext.type === 'utility' && fileContext.hasGoldenTemplate) {
+        if (currentContent.trim() === GOLDEN_TEMPLATES.CN_UTILITY.trim()) {
+          console.log(`[RefactoringExecutor] ✅ CONTEXT-AWARE GOLDEN OVERRIDE: Utility matches golden template`);
+          this.log(`✅ Context-aware override: Utility matches golden template - PASS validation`);
+          return currentContent;
+        }
       }
 
       // STEP 1: SmartValidator - Syntax and import validation
-      const semanticErrors = SmartValidator.checkSemantics(currentContent);
+      const semanticErrors = SmartValidator.checkSemantics(currentContent, fileContext);
 
       // STEP 2: SemanticValidator - Deep code analysis (NEW)
       // Catches name collisions, ghost calls, scope conflicts
@@ -766,6 +771,89 @@ test('description', async () => {
 
     // Shouldn't reach here, but safety net
     throw new Error('Self-correction cycle failed unexpectedly');
+  }
+
+  /**
+   * CONTEXT-AWARE VALIDATION: Determine file type and applicable rules
+   * 
+   * Danh's insight: Rules should be context-based, not name-based.
+   * Scales to any file type, not just hardcoded names.
+   * 
+   * Returns: File context with applicable rules and golden template info
+   */
+  private determineFileContext(filePath: string, description: string): {
+    type: 'utility' | 'component' | 'hook' | 'form' | 'unknown';
+    rules: string[];
+    hasGoldenTemplate: boolean;
+    requireNamedImports: string[];
+    requireClassNameProp: boolean;
+    forbidZod: boolean;
+  } {
+    const context = {
+      type: 'unknown' as 'utility' | 'component' | 'hook' | 'form' | 'unknown',
+      rules: [] as string[],
+      hasGoldenTemplate: false,
+      requireNamedImports: [] as string[],
+      requireClassNameProp: false,
+      forbidZod: false,
+    };
+
+    // RULE-BASED CLASSIFICATION: Determine file type by path + content
+
+    // UTILITIES: src/utils/
+    if (filePath.includes('src/utils/')) {
+      context.type = 'utility';
+      context.forbidZod = true; // Utilities never use Zod
+      context.rules.push('No Zod schemas');
+      context.rules.push('Require named imports for utilities');
+      context.rules.push('Export functions or constants only');
+
+      // Check if this is a known utility with golden template
+      const fileName = filePath.split('/').pop() || '';
+      if (fileName === 'cn.ts' || fileName === 'cn.js') {
+        context.hasGoldenTemplate = true;
+        context.requireNamedImports = ['clsx', 'twMerge'];
+        context.rules.push('Apply golden template: cn.ts');
+      } else if (fileName === 'constants.ts' || fileName === 'constants.js') {
+        context.hasGoldenTemplate = true;
+        context.rules.push('Apply golden template: constants.ts');
+      }
+    }
+
+    // COMPONENTS: src/components/
+    else if (filePath.includes('src/components/')) {
+      context.type = 'component';
+      context.rules.push('Require className?: string prop');
+      context.rules.push('Require cn() usage for class merging');
+      context.rules.push('Use interfaces for props, NOT Zod');
+      context.requireClassNameProp = true;
+
+      // Check for specific component types
+      if (description.includes('Button') || description.includes('button')) {
+        context.rules.push('Extends ButtonHTMLAttributes');
+        context.rules.push('Require variant prop support');
+      }
+    }
+
+    // HOOKS: src/hooks/
+    else if (filePath.includes('src/hooks/')) {
+      context.type = 'hook';
+      context.rules.push('Require exported function starting with use');
+      context.rules.push('Allow useState/useReducer/useContext');
+      context.rules.push('No JSX, functions only');
+    }
+
+    // FORMS: Detect by description or path
+    else if (filePath.includes('form') || description.toLowerCase().includes('form')) {
+      context.type = 'form';
+      context.rules.push('Allow Zod schemas (form validation only)');
+      context.rules.push('Use useForm hook');
+      context.rules.push('Require error handling');
+    }
+
+    console.log(`[determineFileContext] Classified: type=${context.type}, rules=[${context.rules.join(', ')}]`);
+
+    return context;
   }
 
   /**

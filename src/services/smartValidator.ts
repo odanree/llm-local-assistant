@@ -25,21 +25,36 @@ export class SmartValidator {
   /**
    * Performs semantic analysis on generated code
    * Returns array of semantic errors found
+   * 
+   * Now context-aware: Applies rules based on file type
    */
-  public static checkSemantics(content: string): SemanticError[] {
+  public static checkSemantics(
+    content: string, 
+    fileContext?: {
+      type: string;
+      requireNamedImports?: string[];
+      forbidZod?: boolean;
+      rules?: string[];
+    }
+  ): SemanticError[] {
     const errors: SemanticError[] = [];
 
     // Check 1: Undefined variables (most critical)
     errors.push(...this.checkUndefinedVariables(content));
 
-    // Check 2: Import mismatches
-    errors.push(...this.checkImportMismatches(content));
+    // Check 2: Import mismatches (context-aware)
+    errors.push(...this.checkImportMismatches(content, fileContext));
 
     // Check 3: Missing type imports
     errors.push(...this.checkMissingTypeImports(content));
 
     // Check 4: Unused imports (warning only)
     errors.push(...this.checkUnusedImports(content));
+
+    // Check 5: Context-specific rules (NEW)
+    if (fileContext?.forbidZod) {
+      errors.push(...this.checkForbiddenZod(content, fileContext));
+    }
 
     return errors;
   }
@@ -117,8 +132,39 @@ export class SmartValidator {
    * // Should be: import { clsx, type ClassValue } from 'clsx';
    * ```
    */
-  private static checkImportMismatches(content: string): SemanticError[] {
+  private static checkImportMismatches(
+    content: string,
+    fileContext?: { type?: string; requireNamedImports?: string[] }
+  ): SemanticError[] {
     const errors: SemanticError[] = [];
+
+    // CONTEXT-AWARE: If file requires specific named imports, verify them
+    if (fileContext?.requireNamedImports && fileContext.requireNamedImports.length > 0) {
+      for (const requiredImport of fileContext.requireNamedImports) {
+        // Check if this import is used
+        if (content.includes(`${requiredImport}(`)) {
+          // Used in code, so must be named import
+          const namedPattern = new RegExp(`import\\s+.*\\{.*${requiredImport}.*\\}.*from\\s+['"][^'"]*['"]`);
+          const defaultPattern = new RegExp(`import\\s+${requiredImport}\\s+from\\s+['"][^'"]*['"]`);
+
+          if (defaultPattern.test(content)) {
+            errors.push({
+              type: 'import-mismatch',
+              variable: requiredImport,
+              message: `❌ CONTEXT-AWARE CHECK: '${requiredImport}' must be a named import in this file type. Found default import.`,
+              severity: 'error'
+            });
+          } else if (!namedPattern.test(content)) {
+            errors.push({
+              type: 'import-mismatch',
+              variable: requiredImport,
+              message: `❌ CONTEXT-AWARE CHECK: '${requiredImport}' is used but not imported as named import`,
+              severity: 'error'
+            });
+          }
+        }
+      }
+    }
 
     // CRITICAL CHECK 1: Default import of clsx is WRONG
     // clsx is a named export, NOT a default export
@@ -398,5 +444,27 @@ export class SmartValidator {
    */
   public static hasFatalErrors(errors: SemanticError[]): boolean {
     return errors.some(err => err.severity === 'error');
+  }
+
+  /**
+   * Check 5: Context-specific rules
+   * For utilities: Forbid Zod (utilities should never validate with Zod)
+   */
+  private static checkForbiddenZod(
+    content: string,
+    fileContext: { type?: string; forbidZod?: boolean }
+  ): SemanticError[] {
+    const errors: SemanticError[] = [];
+
+    if (fileContext?.forbidZod && content.includes('z.object')) {
+      errors.push({
+        type: 'import-mismatch',
+        variable: 'Zod',
+        message: `❌ CONTEXT-AWARE RULE: Utilities should NOT use Zod schemas. Zod is for forms/validation only.`,
+        severity: 'error'
+      });
+    }
+
+    return errors;
   }
 }
