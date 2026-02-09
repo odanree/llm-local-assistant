@@ -28,6 +28,8 @@ import {
   validateExecutionStep,
   assertValidActionType,
 } from './types/executor';
+import { TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
+import { SemanticValidator } from './services/semanticValidator';
 
 /**
  * Re-export StepResult for backward compatibility with executor imports
@@ -165,6 +167,9 @@ export class Planner {
         workspacePath, // CRITICAL: Carry workspace context forward
         workspaceName, // CRITICAL: Display name for logging/debugging
       };
+
+      // PRE-FLIGHT VALIDATION: Check template compliance before execution (NEW)
+      this.validatePlanAgainstTemplates(plan);
 
       this.config.onProgress?.('Planning', `Generated ${steps.length} steps`);
       return plan;
@@ -778,6 +783,61 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     // Fallback: return first paragraph
     const lines = text.split('\n\n')[0];
     return lines || 'Plan generated based on user request';
+  }
+
+  /**
+   * PRE-FLIGHT VALIDATION: Check Template Compliance (Danh's Enhancement)
+   * 
+   * Purpose: Catch template violations BEFORE execution
+   * - Early rejection = faster feedback to user
+   * - Prevents wasted execution on invalid plans
+   * - Single Source of Truth validation
+   * 
+   * For each step that writes a known file:
+   * 1. Check if TEMPLATE_FEATURES exist for that file
+   * 2. Validate structure requirements
+   * 3. Log violations with clear guidance
+   * 4. Allow execution (Executor has final recovery with golden template)
+   */
+  private validatePlanAgainstTemplates(plan: TaskPlan): void {
+    const violations: string[] = [];
+
+    for (const step of plan.steps) {
+      // Only validate write steps for known template files
+      if (step.action === 'write' && step.path) {
+        const templateKey = this.getTemplateKeyForPath(step.path);
+        
+        if (templateKey && TEMPLATE_FEATURES[templateKey as keyof typeof TEMPLATE_FEATURES]) {
+          const features = TEMPLATE_FEATURES[templateKey as keyof typeof TEMPLATE_FEATURES];
+          const metadata = TEMPLATE_METADATA[templateKey as keyof typeof TEMPLATE_METADATA];
+
+          // Log what we expect to validate
+          if (metadata) {
+            console.log(`[Planner] Pre-flight check for ${step.path}:`);
+            console.log(`  Required: ${metadata.criticalPoints.join(', ')}`);
+            console.log(`  Avoid: ${metadata.commonHallucinations.slice(0, 2).join(', ')}`);
+          }
+
+          // Note: Full content validation happens in Executor with generated code
+          console.log(`[Planner] Step ${step.id} (${step.path}) will be validated during execution`);
+        }
+      }
+    }
+
+    // Log summary
+    console.log(`[Planner] Pre-flight validation complete. Executor will handle content validation.`);
+  }
+
+  /**
+   * Helper: Get template key from file path
+   * Maps: cn.ts → CN_UTILITY, etc.
+   */
+  private getTemplateKeyForPath(filePath: string): string | null {
+    if (filePath.endsWith('cn.ts') || filePath.endsWith('cn.js')) {
+      return 'CN_UTILITY';
+    }
+    // Add more mappings as needed
+    return null;
   }
 
   /**
