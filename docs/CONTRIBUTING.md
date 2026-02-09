@@ -64,13 +64,19 @@ src/
 ├── llmClient.ts         # LLM communication: streaming, non-streaming, history
 └── webviewContent.ts    # Chat UI: HTML/CSS/JS webview content
 
-Documentation (root):
+Root (Industry-Standard Only):
 ├── README.md            # User-facing guide
-├── ARCHITECTURE.md      # Technical design & data flows
-├── ROADMAP.md           # Product vision & phases
-├── QUICK_REFERENCE.md   # Developer cheat sheet
 ├── CHANGELOG.md         # Version history
-└── PROJECT_STATUS.md    # Project state & cleanup summary
+├── ROADMAP.md           # Product vision & phases
+└── LICENSE              # MIT License
+
+Documentation (/docs/):
+├── ARCHITECTURE.md                    # Technical design & data flows
+├── FORM_COMPONENT_PATTERNS.md         # Form architecture rules
+├── CONTRIBUTING.md                    # This file
+├── DEVELOPER_GUIDE_V1.2.0.md         # Developer guide
+├── ROOT_ORGANIZATION_RULES.md         # Repository organization guidelines
+└── ... (other project docs)
 
 Build & Config:
 ├── package.json         # Dependencies, scripts, VS Code config
@@ -78,6 +84,8 @@ Build & Config:
 ├── webpack.config.js    # Bundler config
 └── eslint.config.mjs    # Linter config
 ```
+
+**See [ROOT_ORGANIZATION_RULES.md](./ROOT_ORGANIZATION_RULES.md)** for repository organization guidelines when adding new documentation.
 
 ---
 
@@ -315,10 +323,29 @@ When reporting bugs, include:
 
 ---
 
+## Repository Organization
+
+The project follows strict organization rules to keep the repository clean and professional.
+
+**Root Directory Rule**: Only industry-standard files (README.md, CHANGELOG.md, ROADMAP.md, LICENSE)
+
+All project-specific documentation goes in `/docs/` folder.
+
+**When adding documentation**:
+1. Check [ROOT_ORGANIZATION_RULES.md](./ROOT_ORGANIZATION_RULES.md)
+2. Create in `/docs/` directory, not root
+3. Update README.md with link if it's user-facing
+4. Reference from appropriate doc sections if it's developer-focused
+
+If root gets bloated with multiple `.md` files, apply the cleanup checklist in ROOT_ORGANIZATION_RULES.md.
+
+---
+
 ## Resources
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Technical deep dive
-- **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Developer commands
+- **[ROOT_ORGANIZATION_RULES.md](./ROOT_ORGANIZATION_RULES.md)** - Repository organization guidelines
+- **[DEVELOPER_GUIDE_V1.2.0.md](./DEVELOPER_GUIDE_V1.2.0.md)** - Developer reference
 - **[VS Code Extension API](https://code.visualstudio.com/api)** - Official docs
 - **[OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat)** - LLM endpoint spec
 

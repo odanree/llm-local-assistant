@@ -644,7 +644,10 @@ npm run test:watch   # Auto-run on changes
 ### Project Setup & Configuration
 - **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation
 - **[Installation Guide](docs/INSTALL.md)** - Setup instructions
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & repository organization
+
+### Repository Organization
+- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping root clean (reference when root gets bloated)
 
 ### Troubleshooting & Reference
 - **[Model Comparison](docs/MODEL_COMPARISON.md)** - LLM model recommendations
