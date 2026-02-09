@@ -83,6 +83,7 @@ export const DOMAIN_AUDIT_PROFILES: AuditorProfile[] = [
       },
     ],
     // SUPPRESS: These rules do NOT apply in infrastructure domain
+    // Kept in original camelCase format to match test expectations
     suppress: [
       'unused-import-ClassValue', // ClassValue IS used, trust us
       'zod-schema-suggestion', // Infrastructure doesn't use Zod

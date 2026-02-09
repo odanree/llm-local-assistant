@@ -71,12 +71,18 @@ export class SmartAutoCorrection {
     let fixed = code;
     const addedImports: Set<string> = new Set();
 
+    console.log('[SmartAutoCorrection] fixMissingImports called with', validationErrors.length, 'errors');
+
     // Parse all validation errors for missing imports
     validationErrors.forEach(error => {
-      // Pattern: "Missing import: 'blogPostRepository' is used but never imported"
-      const missingImportMatch = error.match(/Missing import: '(\w+)'/);
+      console.log('[SmartAutoCorrection] Processing error:', error);
+      // Pattern: "Missing import: useState is used but not imported..."
+      // Matches: "Missing import: <name> is used but not imported"
+      const missingImportMatch = error.match(/Missing import: (\w+) is used but not imported/);
+      console.log('[SmartAutoCorrection] Regex match result:', missingImportMatch);
       if (missingImportMatch) {
         const missingName = missingImportMatch[1];
+        console.log('[SmartAutoCorrection] Extracted missing name:', missingName);
         
         // Find where it's used to infer import
         const usagePattern = new RegExp(`\\b${missingName}\\b`, 'g');
@@ -85,10 +91,14 @@ export class SmartAutoCorrection {
         if (usages.length > 0) {
           // Try to infer the import source
           const inferredImport = this.inferImportSource(fixed, missingName);
+          console.log('[SmartAutoCorrection] Inferred import for', missingName, ':', inferredImport);
           
           if (inferredImport) {
             fixed = this.addImport(fixed, missingName, inferredImport);
             addedImports.add(missingName);
+            console.log('[SmartAutoCorrection] Added import for', missingName);
+          } else {
+            console.log('[SmartAutoCorrection] WARNING: inferImportSource returned null for', missingName);
           }
         }
       }
@@ -110,6 +120,7 @@ export class SmartAutoCorrection {
    * Infer where an import should come from based on naming and usage
    */
   private static inferImportSource(code: string, name: string): string | null {
+    console.log('[SmartAutoCorrection.inferImportSource] Looking up:', name);
     // Common patterns
     const patterns: { [key: string]: string } = {
       // React Hooks (CRITICAL: fixes missing import validation loop)
@@ -182,10 +193,11 @@ export class SmartAutoCorrection {
 
     // Direct match
     if (patterns[name]) {
+      console.log('[SmartAutoCorrection.inferImportSource] Found direct match for', name, ':', patterns[name]);
       return patterns[name];
     }
 
-    // Infer from naming conventions
+    console.log('[SmartAutoCorrection.inferImportSource] No direct match found, checking patterns...');
     if (name.includes('Repository')) {
       const baseName = name.replace('Repository', '');
       return `./repositories/${baseName}Repository`;
@@ -209,6 +221,7 @@ export class SmartAutoCorrection {
       return `./repositories/${name}`;
     }
 
+    console.log('[SmartAutoCorrection.inferImportSource] No pattern match found for:', name, '- returning null');
     return null;
   }
 

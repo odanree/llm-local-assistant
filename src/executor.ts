@@ -478,11 +478,16 @@ export class Executor {
     }
 
     // Check Rule: Validation with Zod
-    // CRITICAL: Do NOT suggest Zod for UI components (per .lla-rules)
-    // Exception: Allow Zod for Form components (form data validation)
+    // CRITICAL: Do NOT suggest Zod for UI components or simple utilities (per .lla-rules)
+    // Exception: Allow Zod for Form components (form data validation) and domain logic
+    // Utilities like cn.ts, helpers.ts are exempt - they're simple transforms, not validators
+    const isUtilityFile = filePath.includes('/utils/') || filePath.match(/\.(util|helper)\.ts$/);
     if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
-      if (!isComponent || (isComponent && isFormComponent)) {
-        // Only suggest for non-components or form components
+      // Skip Zod suggestion for utility files - they don't need runtime validation
+      if (isUtilityFile) {
+        // Silently skip for utilities
+      } else if (!isComponent || (isComponent && isFormComponent)) {
+        // Only suggest for non-component/non-utility code or form components
         errors.push(
           `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
           `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
@@ -628,11 +633,16 @@ export class Executor {
       if (['React', 'Component'].includes(item)) return;
 
       // Check if this import is actually used in the code
-      // Pattern: used as identifier (standalone), not just in strings/comments
-      const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
-      const usageMatches = content.match(usagePattern) || [];
+      // Pattern 1: Used as value/identifier: Item.x or Item(...) or Item[...]
+      const valueUsagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+      const valueMatches = content.match(valueUsagePattern) || [];
+      
+      // Pattern 2: Used as type annotation (e.g., : ClassValue or ClassValue[])
+      const typeUsagePattern = new RegExp(`[:\\s<]${item}[\\s\\[,>]`, 'g');
+      const typeMatches = content.match(typeUsagePattern) || [];
 
-      if (usageMatches.length === 0) {
+      // If used in either value or type position, it's not unused
+      if (valueMatches.length === 0 && typeMatches.length === 0) {
         unusedImports.push(item);
       }
     });

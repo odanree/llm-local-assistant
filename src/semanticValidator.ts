@@ -117,22 +117,70 @@ export class SemanticValidator {
     return errors.filter((error) => {
       // Check if this error matches any suppressed rule
       for (const suppressedRule of suppressedRules) {
+        const rulePattern = suppressedRule.toLowerCase();
+        const errorMsg = error.message.toLowerCase();
+        const ruleId = error.ruleId?.toLowerCase() || '';
+        
         // Match by:
-        // 1. Error message containing the rule name
-        // 2. Rule ID if present
-        if (
-          error.message.toLowerCase().includes(suppressedRule.toLowerCase()) ||
-          error.ruleId === suppressedRule
-        ) {
-          // This error is suppressed for this domain
+        // 1. Direct rule ID match
+        if (ruleId === rulePattern) {
           console.log(
-            `[SemanticValidator] Suppressed for ${domainId}: ${error.message}`
+            `[SemanticValidator] Suppressed for ${domainId} (ruleId match): ${error.message}`
+          );
+          return false; // Filter it out
+        }
+        
+        // 2. Semantic matching - check if error is related to the suppressed rule
+        //    e.g., 'unused-type-classvalue' matches "Unused import: 'type ClassValue'"
+        if (this.semanticMatch(errorMsg, rulePattern)) {
+          console.log(
+            `[SemanticValidator] Suppressed for ${domainId} (semantic match): ${error.message}`
           );
           return false; // Filter it out
         }
       }
       return true; // Keep this error
     });
+  }
+
+  /**
+   * Semantic matching for suppression rules
+   * Matches error messages to suppression patterns more intelligently
+   */
+  private semanticMatch(errorMsg: string, rulePattern: string): boolean {
+    // Normalize both for comparison
+    const normalizedMsg = errorMsg.toLowerCase();
+    const normalizedRule = rulePattern.toLowerCase();
+    
+    // Direct substring match
+    if (normalizedMsg.includes(normalizedRule)) return true;
+    
+    // Extract key terms from the rule pattern (e.g., 'unused-import-classvalue' → ['unused', 'import', 'classvalue'])
+    const ruleTerms = normalizedRule.split(/[-_]/).filter(t => t.length > 0);
+    
+    // Check if all terms appear in the error message (in any order)
+    // This allows flexible matching like:
+    // 'unused-import-ClassValue' matches "Unused import: 'type ClassValue' is imported but never used"
+    if (ruleTerms.length > 0) {
+      const allTermsPresent = ruleTerms.every(term => normalizedMsg.includes(term));
+      if (allTermsPresent) return true;
+    }
+    
+    // Match against specific known patterns
+    // e.g., 'ClassValue' (from rule) appears anywhere in the error
+    const keywordPatterns = [
+      { rule: /classvalue/i, error: /classvalue|ClassValue/i },
+      { rule: /zod/, error: /zod|validation.*schema/i },
+      { rule: /any.*type/, error: /any.*type|found.*any/i },
+    ];
+    
+    for (const pattern of keywordPatterns) {
+      if (pattern.rule.test(rulePattern) && pattern.error.test(errorMsg)) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   /**

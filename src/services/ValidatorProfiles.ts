@@ -99,12 +99,16 @@ export const VALIDATOR_PROFILES: Record<string, ValidatorProfile> = {
       'React components must define props with TypeScript interfaces (not Zod schemas)',
     selector: (content: string) => {
       // Match React functional components or FC types
-      return (
+      // BUT exclude infrastructure helpers (clsx, twMerge utilities)
+      const isComponent =
         (content.includes('React.FC') ||
           content.includes('React.FC<') ||
           (content.includes('export const') && content.includes('function '))) &&
-        content.includes('interface') // They already define an interface
-      );
+        content.includes('interface'); // They already define an interface
+
+      const isInfrastructure = content.includes('clsx(') || content.includes('twMerge(') || content.includes('ClassValue');
+      
+      return isComponent && !isInfrastructure; // Only apply to actual React components
     },
     forbidden: [
       /const\s+\w+Props\s*=\s*z\.object/, // Zod schema for simple component props
@@ -164,7 +168,15 @@ export const VALIDATOR_PROFILES: Record<string, ValidatorProfile> = {
     message:
       "Infrastructure helpers must use named imports: import { clsx } from 'clsx' and import { twMerge } from 'tailwind-merge'",
     severity: 'error',
-    suppressLinterIds: ['zod-suggestion', 'unused-type-ClassValue'],
+    suppressLinterIds: [
+      'unused-import-ClassValue',
+      'zod-suggestion',
+      'zod-schema-suggestion',
+      'define-validation-schemas',
+      'no-unused-vars-ClassValue',
+      'no-any',
+      'found-any-type',
+    ],
     /**
      * Pattern-Based Suppression (Danh's Architecture Fix #1):
      * Automatically suppress ClassValue warnings when clsx/twMerge are detected.
@@ -270,8 +282,11 @@ export const VALIDATOR_PROFILES: Record<string, ValidatorProfile> = {
     name: 'Type Safety - No Any/Unknown',
     description: 'Exported functions/classes must not use "any" or "unknown" types',
     selector: (content: string) => {
-      // Match files with exported code
-      return content.includes('export') && (content.includes('const') || content.includes('function'));
+      // Match files with exported code BUT exclude infrastructure helpers
+      // Infrastructure (clsx, twMerge) are allowed to use unknown[] patterns
+      const hasExports = content.includes('export') && (content.includes('const') || content.includes('function'));
+      const isInfrastructure = content.includes('clsx(') || content.includes('twMerge(') || content.includes('ClassValue');
+      return hasExports && !isInfrastructure; // Only apply to non-infrastructure code
     },
     forbidden: [
       /:\s*any\b/, // Explicit 'any' type
