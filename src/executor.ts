@@ -520,10 +520,121 @@ export class Executor {
   }
 
   /**
+   * Validate form components against .lla-rules 7 required patterns
+   */
+  private validateFormComponentPatterns(content: string, filePath: string): string[] {
+    const errors: string[] = [];
+    
+    // Only validate if this is a form component
+    if (!filePath.includes('Form') || !filePath.endsWith('.tsx')) {
+      return errors;
+    }
+
+    // Pattern 1: State Interface - Must have interface for form state
+    const hasStateInterface = /interface\s+\w+State\s*{/.test(content) || 
+                            /type\s+\w+State\s*=\s*{/.test(content);
+    if (!hasStateInterface) {
+      errors.push(
+        `❌ Pattern 1 violation: Missing state interface. ` +
+        `Forms require: interface LoginFormState { email: string; password: string; }`
+      );
+    }
+
+    // Pattern 2: Handler Typing - FormEventHandler must be used, not any
+    const hasFormEventHandler = /FormEventHandler\s*<\s*HTMLFormElement\s*>/.test(content);
+    const hasInlineHandler = /const\s+handle\w+\s*=\s*\(\s*e\s*:\s*any\s*\)/.test(content);
+    if (hasInlineHandler) {
+      errors.push(
+        `❌ Pattern 2 violation: Handler typed as 'any'. ` +
+        `Use: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { ... }`
+      );
+    }
+    if (!hasFormEventHandler && (content.includes('handleChange') || content.includes('handleSubmit'))) {
+      errors.push(
+        `⚠️ Pattern 2 warning: Handlers should use FormEventHandler<HTMLFormElement> type.`
+      );
+    }
+
+    // Pattern 3: Consolidator Pattern - Single handleChange function for multi-field forms
+    const handleChangeCount = (content.match(/const\s+handle\w+\s*=/g) || []).length;
+    const hasConsolidator = /\[name,\s*value\]\s*=\s*.*currentTarget/.test(content) ||
+                           /currentTarget.*name.*value/.test(content);
+    if (handleChangeCount > 1 && !hasConsolidator) {
+      errors.push(
+        `❌ Pattern 3 violation: Multiple handlers instead of consolidator. ` +
+        `Multi-field forms must use single handleChange: ` +
+        `const handleChange = (e) => { const { name, value } = e.currentTarget; }`
+      );
+    }
+
+    // Pattern 4: Submit Handler - onSubmit must be on <form>, not button click
+    const hasFormElement = /<form/.test(content);
+    const hasFormOnSubmit = /onSubmit\s*=\s*{?\s*handleSubmit/.test(content);
+    const hasButtonOnClick = /<button[^>]*onClick\s*=\s*{?\s*handle/.test(content);
+    
+    if (!hasFormOnSubmit && hasFormElement) {
+      errors.push(
+        `❌ Pattern 4 violation: Missing form onSubmit handler. ` +
+        `Use: <form onSubmit={handleSubmit}>` +
+        `Then: const handleSubmit: FormEventHandler<HTMLFormElement> = (e) => { e.preventDefault(); ... }`
+      );
+    }
+    if (hasButtonOnClick && !hasFormOnSubmit) {
+      errors.push(
+        `❌ Pattern 4 violation: Using button onClick instead of form onSubmit. ` +
+        `Forms should handle submission via: <form onSubmit={handleSubmit}>`
+      );
+    }
+
+    // Pattern 5: Zod Validation - Schema must be defined, not inline validation
+    const hasZodImport = /import\s+.*z\s*from\s+['"]zod['"]/.test(content);
+    const hasZodSchema = /z\.object\s*\(|z\.parse|z\.parseAsync/.test(content);
+    const hasInlineValidation = /if\s*\(\s*![^)]*includes\s*\(|if\s*\(\s*![^)]*match\s*\(|if\s*\(\s*\w+\.length\s*</.test(content);
+    
+    if (hasInlineValidation && !hasZodSchema) {
+      errors.push(
+        `❌ Pattern 5 violation: Using inline validation instead of Zod schema. ` +
+        `Define: const loginSchema = z.object({ email: z.string().email(), ... })`
+      );
+    }
+
+    // Pattern 6: Error State Tracking - Must track field-level errors
+    const hasErrorState = /useState\s*<\s*Record\s*<\s*string\s*,\s*string\s*>\s*>\s*\(\s*{}/.test(content);
+    const hasErrorDisplay = /\{errors\.\w+/.test(content) || /errors\[\w+\]/.test(content);
+    
+    if (!hasErrorState && (content.includes('validation') || content.includes('error'))) {
+      errors.push(
+        `⚠️ Pattern 6 warning: Consider tracking field-level errors. ` +
+        `Use: const [errors, setErrors] = useState<Record<string, string>>({})`
+      );
+    }
+
+    // Pattern 7: Semantic Form Markup - Input elements must have name attributes
+    const hasNamedInputs = /name\s*=\s*['"]\w+['"]/.test(content);
+    const hasInputElements = /<input|<textarea|<select/.test(content);
+    const hasMissingName = /<input[^>]*\/?>/.test(content) && !hasNamedInputs;
+    
+    if (hasInputElements && !hasNamedInputs) {
+      errors.push(
+        `❌ Pattern 7 violation: Input elements missing name attributes. ` +
+        `Use: <input type="email" name="email" value={formData.email} />`
+      );
+    }
+
+    return errors;
+  }
+
+  /**
    * Validate common code patterns and syntax issues
    */
   private validateCommonPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
+
+    // Check form component patterns first
+    const formErrors = this.validateFormComponentPatterns(content, filePath);
+    if (formErrors.length > 0) {
+      errors.push(...formErrors);
+    }
 
     // Extract all imported items and namespaces
     const importedItems = new Set<string>();

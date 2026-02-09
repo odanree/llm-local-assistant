@@ -1,5 +1,15 @@
 # .lla-rules - LLM Local Assistant Architecture Rules
 
+⚠️ **CRITICAL - READ FIRST**: These rules are NOT optional documentation. They are:
+- ✅ Injected into LLM context for code generation
+- ✅ Validated against generated code by the validator
+- ✅ Required before plan approval
+- ✅ Enforced at code generation time
+
+**For Form Components**: ALL 7 patterns are non-negotiable. Generated forms will be REJECTED if any pattern is missing.
+
+---
+
 ## File Structure & Layering
 
 ### Logic vs UI Separation
@@ -165,7 +175,7 @@ Form components are data-critical and require strict adherence to these 7 patter
 
 ## Code Generation Rules
 
-### Pre-Flight Check (Mandatory)
+### Pre-Flight Check (MANDATORY - NO EXCEPTIONS)
 Before generating ANY plan or component, the system MUST output:
 ```
 Pre-flight check: [List of rules that apply to this task]
@@ -173,16 +183,25 @@ Pre-flight check: [List of rules that apply to this task]
 - Component prop typing? [interface/Zod/None]
 - Accessibility required? [Yes/No]
 - Styling extensibility? [className prop required]
+- Is this a form component? [Yes/No - if YES, ALL 7 form patterns REQUIRED]
 - [Any other relevant rules]
 
 Deviations: [Justify any rule deviations for this specific task]
 ```
 
+### CRITICAL: Form Component Generation
+If generating ANY form component (file name containing "Form"):
+- **ALL 7 FORM PATTERNS ARE NON-NEGOTIABLE**
+- No exceptions, no partial compliance
+- If any pattern is missing, the generated code will be REJECTED
+- Validator will catch and require regeneration with all patterns
+
 ### Plan Generation
 - Output pre-flight check before plan
 - Validate each step against applicable rules
 - If a step violates rules, reject and explain
-- Example deviation: "Form component will use Zod (exception to rule #2) because it validates user input"
+- For form components: ensure ALL 7 patterns are in the plan
+- Example: "Step 2: Generate LoginForm.tsx with State Interface, Consolidator, handleSubmit, Zod schema, error tracking"
 
 ### Code Quality
 - Type safety: All components must have proper TypeScript types
@@ -190,6 +209,7 @@ Deviations: [Justify any rule deviations for this specific task]
 - Styling: Components must be style-extensible (className prop)
 - Accessibility: All interactive elements must be accessible
 - Testing: All utilities and logic must be testable
+- **Form Components**: All 7 patterns VERIFIED BY VALIDATOR
 
 ## Validation Strictness Levels
 
@@ -242,11 +262,20 @@ Pre-flight check: LoginForm component
 - Component prop typing? Zod (exception: top-level form)
 - Accessibility required? Yes (interactive element)
 - Styling extensibility? Yes (className prop required)
-- Must include: form validation, error handling
+- Is this a form component? YES - ALL 7 PATTERNS REQUIRED
 
-Deviations: Using Zod for form validation (exception to rule #2)
-Justification: Form validation is data-critical, Zod provides runtime type safety
-Plan: ✅ Approved
+Patterns to implement:
+1. ✅ State Interface: interface LoginFormState { email, password }
+2. ✅ Handler Typing: FormEventHandler<HTMLFormElement> for all handlers
+3. ✅ Consolidator: Single handleChange for all form fields
+4. ✅ Submit Handler: <form onSubmit={handleSubmit}>
+5. ✅ Zod Validation: const loginSchema = z.object(...)
+6. ✅ Error Tracking: useState<Record<string, string>>({})
+7. ✅ Semantic Markup: Input name attributes, proper form structure
+
+Deviations: None - all patterns required for form components
+Validator will REJECT if patterns are missing
+Plan: ✅ Approved (all 7 patterns will be implemented)
 ```
 
 ### Adding a Utility Function
