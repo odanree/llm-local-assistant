@@ -5,6 +5,7 @@ import { LLMClient } from './llmClient';
 import { SmartValidator } from './services/smartValidator';
 import { SemanticValidator } from './services/semanticValidator';
 import { PromptEngine } from './services/promptEngine';
+import { GOLDEN_TEMPLATES, TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
 
 /**
  * Phase 3.4.4: LLM-Guided Refactoring
@@ -772,15 +773,10 @@ test('description', async () => {
     const fileName = filePath.split('/').pop() || '';
 
     // cn.ts - The classic classname utility
-    // Qwen 32B often generates: import clsx from 'classnames' (WRONG)
-    // Golden template: import { clsx } from 'clsx'; (CORRECT)
+    // GOLDEN TEMPLATE - cn.ts from centralized Single Source of Truth
     if (fileName === 'cn.ts' || fileName === 'cn.js') {
-      return `import { twMerge } from 'tailwind-merge';
-import { clsx, type ClassValue } from 'clsx';
-
-export const cn = (...inputs: ClassValue[]) => {
-  return twMerge(clsx(inputs));
-};`;
+      this.log(`✅ Using centralized golden template CN_UTILITY for ${fileName}`);
+      return GOLDEN_TEMPLATES.CN_UTILITY;
     }
 
     // constants.ts - Common constants file

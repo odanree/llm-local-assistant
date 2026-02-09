@@ -12,7 +12,12 @@
  * 
  * Strategy: Intercept prompt generation and hydrate with grounded knowledge.
  * Result: Model's attention mechanism prioritizes explicit text over fuzzy training.
+ * 
+ * Single Source of Truth: References come from src/constants/templates.ts
+ * This prevents logic desync across Planner, Executor, PromptEngine, Validator.
  */
+
+import { GOLDEN_TEMPLATES, TEMPLATE_METADATA } from '../constants/templates';
 
 export interface PromptContext {
   filePath: string;
@@ -36,30 +41,23 @@ export class PromptEngine {
    * model's attention mechanism will prioritize over its own fuzzy training data.
    */
   private static readonly REFERENCE_SAMPLES: Record<string, string> = {
-    'cn.ts': `### MANDATORY REFERENCE FOR cn.ts
+    'cn.ts': `### MANDATORY REFERENCE FOR cn.ts (Single Source of Truth)
 
-**Library: clsx (Named Export)**
-- Correct: import { clsx, type ClassValue } from 'clsx';
-- WRONG: import clsx from 'clsx'; (not a default export)
-- WRONG: import clsx from 'classnames'; (wrong library)
-
-**Library: tailwind-merge (Named Export)**
-- Correct: import { twMerge } from 'tailwind-merge';
-- WRONG: import twMerge from 'tailwind-merge';
-- WRONG: import merge from 'tailwind-merge';
-
-**Function Pattern:**
+**Golden Template (From src/constants/templates.ts):**
 \`\`\`typescript
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+${GOLDEN_TEMPLATES.CN_UTILITY}
 \`\`\`
 
-**Key Points:**
-- ClassValue is a type from clsx (import as type)
-- twMerge() function merges Tailwind classes
-- clsx() combines class names
-- Order: clsx first, then twMerge`,
+**Critical Points (Do NOT deviate):**
+${TEMPLATE_METADATA.CN_UTILITY.criticalPoints.map(p => `- ${p}`).join('\n')}
+
+**Common Hallucinations (AVOID):**
+${TEMPLATE_METADATA.CN_UTILITY.commonHallucinations.map(h => `- ${h}`).join('\n')}
+
+**Why This Matters:**
+This exact pattern is used by Executor, Validator, and Planner.
+Any deviation causes logic desync.
+Follow this reference EXACTLY.`,
 
     'constants.ts': `### MANDATORY REFERENCE FOR constants.ts
 

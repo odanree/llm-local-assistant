@@ -296,4 +296,87 @@ export class SemanticValidator {
 
     return commonCalls.includes(name);
   }
+
+  /**
+   * Validate against Template Features (Single Source of Truth)
+   * 
+   * Instead of checking for exact string matches, verify that the code
+   * has all the REQUIRED FEATURES defined in the template metadata.
+   * 
+   * This prevents logic desync: if features match, the code is correct.
+   */
+  public static validateAgainstTemplateFeatures(
+    content: string,
+    templateFeatures: any
+  ): SemanticError[] {
+    const errors: SemanticError[] = [];
+
+    if (!templateFeatures) {
+      return errors;
+    }
+
+    // Check 1: All required imports present
+    if (templateFeatures.imports) {
+      for (const importSpec of templateFeatures.imports) {
+        const found = this.checkImportExists(content, importSpec);
+        if (!found) {
+          errors.push({
+            type: 'reference-error',
+            target: importSpec.name,
+            message: `❌ Missing required import: import ${
+              importSpec.type === 'type' ? 'type ' : ''
+            }{ ${importSpec.name} } from '${importSpec.from}';`,
+            severity: 'error'
+          });
+        }
+      }
+    }
+
+    // Check 2: All required exports present
+    if (templateFeatures.exports) {
+      for (const exportSpec of templateFeatures.exports) {
+        const found = this.checkExportExists(content, exportSpec);
+        if (!found) {
+          errors.push({
+            type: 'reference-error',
+            target: exportSpec.name,
+            message: `❌ Missing required export: ${exportSpec.pattern}`,
+            severity: 'error'
+          });
+        }
+      }
+    }
+
+    return errors;
+  }
+
+  /**
+   * Check if a specific import exists
+   */
+  private static checkImportExists(content: string, importSpec: any): boolean {
+    if (importSpec.type === 'type') {
+      // Check for: import type { Name } from 'library'
+      const pattern = new RegExp(
+        `import\\s+type\\s+.*\\b${importSpec.name}\\b.*from\\s+['"]${importSpec.from}['"]`,
+        'i'
+      );
+      return pattern.test(content);
+    } else {
+      // Check for: import { Name } from 'library'
+      const pattern = new RegExp(
+        `import\\s+.*\\b${importSpec.name}\\b.*from\\s+['"]${importSpec.from}['"]`,
+        'i'
+      );
+      return pattern.test(content);
+    }
+  }
+
+  /**
+   * Check if a specific export exists
+   */
+  private static checkExportExists(content: string, exportSpec: any): boolean {
+    // Check for the pattern (e.g., "export const cn")
+    const pattern = new RegExp(exportSpec.pattern, 'i');
+    return pattern.test(content);
+  }
 }
