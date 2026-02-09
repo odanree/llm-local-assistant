@@ -527,25 +527,32 @@ Output only the plan. No explanations.`;
    * CRITICAL: Must reject sentence fragments, only accept valid file paths
    */
   private extractTargetFile(text: string): string | undefined {
-    // Try multiple patterns for extracting file paths
-    const patterns = [
-      // Only match if followed by file extension or valid path structure
-      /(?:Target|File|Path)[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i,    // "Path: src/file.tsx" (must have extension)
-      /(?:- Path|File Path|Target File)[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i, // "- Path: src/file.tsx"
-      /src\/[^\n]+\.[a-z]{2,}/,                                     // Direct path "src/..." (must have extension)
-      /(?:write|read|modify|update|create)[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i, // "write: src/file.tsx"
-    ];
+    // CRITICAL: Match "- Path:" or "- Command:" FIRST before description
+    // This prevents grabbing description content as path
+    
+    // Pattern 1: Explicitly look for "- Path: " lines (highest priority)
+    const pathMatch = text.match(/^[\s]*-\s*(?:Path|File|Target)[:\s]+([^\n]+)$/im);
+    if (pathMatch) {
+      const path = pathMatch[1].trim();
+      // Only accept if it looks like a valid path (has file extension or src/ prefix)
+      if (path.includes('.') || path.includes('/')) {
+        return path.replace(/[`'"]([^`'"]+)[`'"]/g, '$1').trim();
+      }
+    }
 
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        const path = (match[1] || match[0]).trim();
-        // Reject if contains common sentence markers or stops
-        if (path.includes(' for ') || path.includes(' the ') || path.includes('component.')) {
-          continue; // Skip sentences, only accept paths
-        }
-        // Clean up the path
-        return path.replace(/^[-*]\s+/, '').replace(/[`'"]([^`'"]+)[`'"]/g, '$1').trim();
+    // Pattern 2: Look for "Path: " anywhere in text (not preceded by description marker)
+    const pathOnlyMatch = text.match(/(?<!Description[:\s]*[^\n]*)Path[:\s]+([^\n:]+\.[a-z]{2,}[^\n]*)/i);
+    if (pathOnlyMatch) {
+      return pathOnlyMatch[1].trim().replace(/[`'"]([^`'"]+)[`'"]/g, '$1').trim();
+    }
+
+    // Pattern 3: Look for explicit file paths with extensions (src/ or similar)
+    const filePathMatch = text.match(/(src\/[^\n\s]+\.[a-z]{2,})/i);
+    if (filePathMatch) {
+      const path = filePathMatch[1].trim();
+      // Reject if it's part of a sentence (contains sentence words)
+      if (!path.includes(' for ') && !path.includes(' the ') && !path.includes('component.')) {
+        return path;
       }
     }
 
@@ -554,12 +561,20 @@ Output only the plan. No explanations.`;
 
   /**
    * Extract command from step block (for 'run' actions)
-   * Looks for "Command:" or "Run:" patterns
-   * Falls back to inferring common test/build commands from description
+   * Looks for "- Command:" or "- Run:" patterns specifically
+   * CRITICAL: Must match the actual Command line, not Description
    */
   private extractCommand(text: string): string | undefined {
-    // Try explicit "Command: npm test" or "Run: npm test"
-    const cmdMatch = text.match(/(?:Command|Run)[:\s]+([^\n]+)/i);
+    // Pattern 1: Explicitly look for "- Command: " or "- Run: " lines (highest priority)
+    const explicitCmdMatch = text.match(/^[\s]*-\s*(?:Command|Run)[:\s]+([^\n]+)$/im);
+    if (explicitCmdMatch) {
+      const cmd = explicitCmdMatch[1].trim();
+      // Remove trailing punctuation
+      return cmd.replace(/[.;,]*$/, '');
+    }
+
+    // Pattern 2: Look for "Command: " anywhere but ensure it's not part of Description
+    const cmdMatch = text.match(/(?<!Description[:\s]*[^\n]*)(?:Command|Run)[:\s]+([^\n]+)/i);
     if (cmdMatch) {
       const cmd = cmdMatch[1].trim();
       // Remove trailing punctuation
