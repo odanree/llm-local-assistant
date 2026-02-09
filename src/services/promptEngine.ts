@@ -1,387 +1,295 @@
 /**
- * PromptEngine: Heuristic RAG for Grounded Agent
- * 
- * Danh's "10/10 Perfect Run" fix: Instead of asking the 32B model to guess
- * how libraries work, we provide explicit reference samples and architectural
- * rules in the prompt itself.
- * 
- * This transforms the system from:
- *   "Generate code for cn.ts" → Model guesses → Hallucination risk
- * To:
- *   "Generate cn.ts using this reference → Model follows reference → 100% match
- * 
- * Strategy: Intercept prompt generation and hydrate with grounded knowledge.
- * Result: Model's attention mechanism prioritizes explicit text over fuzzy training.
- * 
- * Single Source of Truth: References come from src/constants/templates.ts
- * This prevents logic desync across Planner, Executor, PromptEngine, Validator.
+ * PromptEngine.ts
+ *
+ * Injects ValidatorProfile constraints into generation prompts.
+ *
+ * Philosophy (from Danh's "plan-content decoupling"):
+ * 1. Planner decides what needs to be created (WRITE action)
+ * 2. Planner identifies which ValidatorProfiles should apply
+ * 3. PromptEngine injects these profiles as REQUIREMENTS into the prompt
+ * 4. LLM sees the requirements and generates compliant code
+ * 5. Validator uses the SAME rules to check the generated code
+ * 6. Sync is maintained: same rules everywhere
+ *
+ * This is the "Secret Sauce" - the bridge between planning and validation.
  */
 
-import { GOLDEN_TEMPLATES, TEMPLATE_METADATA } from '../constants/templates';
+import { ValidatorProfile, getApplicableProfiles } from './ValidatorProfiles';
 
 export interface PromptContext {
-  filePath: string;
-  fileDescription: string;
-  basePrompt: string;
-  projectContext?: Record<string, any>;
+  /**
+   * What does the user want to build?
+   */
+  userRequest: string;
+
+  /**
+   * What's the broader task/plan context?
+   */
+  planDescription?: string;
+
+  /**
+   * Which workspace/project is this for?
+   */
+  workspaceName?: string;
+
+  /**
+   * What code patterns should guide generation?
+   */
+  existingCodeSamples?: string[];
+
+  /**
+   * Any custom constraints beyond the profiles?
+   */
+  customConstraints?: string[];
 }
 
-export interface HydratedPrompt {
-  original: string;
+/**
+ * Legacy interface for backward compatibility
+ */
+export interface HydratePromptOptions {
+  filePath: string;
+  fileDescription?: string;
+  existingCode?: string;
+  basePrompt?: string;
+  [key: string]: any;
+}
+
+/**
+ * Hydrated prompt result (legacy return format)
+ */
+export interface HydratedPromptResult {
   augmented: string;
-  reference?: string;
   appliedRules: string[];
+  reference?: string;
 }
 
 export class PromptEngine {
   /**
-   * Grounded Knowledge Base: Reference samples for files with known patterns
-   * 
-   * Key insight: These aren't templates - they're explicit examples that the
-   * model's attention mechanism will prioritize over its own fuzzy training data.
+   * Legacy method for backward compatibility
+   * Maps old-style HydratePromptOptions to new PromptContext
    */
-  private static readonly REFERENCE_SAMPLES: Record<string, string> = {
-    'cn.ts': `### MANDATORY REFERENCE FOR cn.ts (Single Source of Truth)
+  static hydratePrompt(options: HydratePromptOptions): HydratedPromptResult {
+    const context: PromptContext = {
+      userRequest: options.fileDescription || `Generate code for: ${options.filePath}`,
+      existingCodeSamples: options.existingCode ? [options.existingCode] : undefined,
+      customConstraints: [],
+    };
 
-**Golden Template (From src/constants/templates.ts):**
-\`\`\`typescript
-${GOLDEN_TEMPLATES.CN_UTILITY}
-\`\`\`
-
-**Critical Points (Do NOT deviate):**
-${TEMPLATE_METADATA.CN_UTILITY.criticalPoints.map(p => `- ${p}`).join('\n')}
-
-**Common Hallucinations (AVOID):**
-${TEMPLATE_METADATA.CN_UTILITY.commonHallucinations.map(h => `- ${h}`).join('\n')}
-
-**Why This Matters:**
-This exact pattern is used by Executor, Validator, and Planner.
-Any deviation causes logic desync.
-Follow this reference EXACTLY.`,
-
-    'constants.ts': `### MANDATORY REFERENCE FOR constants.ts
-
-**Pattern for API Constants:**
-\`\`\`typescript
-// Use process.env for dynamic values, defaults for safety
-export const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.example.com';
-export const API_TIMEOUT = 30000; // milliseconds
-export const API_RETRY_ATTEMPTS = 3;
-
-// Use 'as const' for type safety with enums
-export const HTTP_STATUS = {
-  OK: 200,
-  CREATED: 201,
-  BAD_REQUEST: 400,
-  UNAUTHORIZED: 401,
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  INTERNAL_ERROR: 500,
-} as const;
-\`\`\`
-
-**Key Points:**
-- Use environment variables for configuration
-- Provide sensible defaults
-- Use 'as const' for immutable object types
-- Real HTTP status codes (not made-up)`,
-
-    'Button.tsx': `### MANDATORY REFERENCE FOR Button.tsx
-
-**Pattern for React Button Components:**
-\`\`\`typescript
-import React from 'react';
-import { cn } from '@/utils/cn';
-
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
-  isLoading?: boolean;
-}
-
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  (
-    {
-      className,
-      variant = 'primary',
-      size = 'md',
-      isLoading = false,
-      disabled,
-      ...props
-    },
-    ref
-  ) => {
-    return (
-      <button
-        ref={ref}
-        disabled={disabled || isLoading}
-        className={cn(
-          'inline-flex items-center justify-center rounded-md font-medium',
-          // Variant styles
-          variant === 'primary' && 'bg-blue-600 text-white hover:bg-blue-700',
-          variant === 'secondary' && 'bg-gray-200 text-gray-900 hover:bg-gray-300',
-          variant === 'ghost' && 'bg-transparent text-gray-900 hover:bg-gray-100',
-          // Size styles
-          size === 'sm' && 'px-3 py-1 text-sm',
-          size === 'md' && 'px-4 py-2 text-base',
-          size === 'lg' && 'px-6 py-3 text-lg',
-          // State styles
-          isLoading && 'opacity-60 cursor-not-allowed',
-          className
-        )}
-        {...props}
-      >
-        {isLoading ? 'Loading...' : props.children}
-      </button>
-    );
-  }
-);
-
-Button.displayName = 'Button';
-\`\`\`
-
-**Key Points:**
-- Use interface for props (not Zod at component level)
-- Extend React.ButtonHTMLAttributes for HTML compatibility
-- Use forwardRef for ref forwarding
-- Always accept className and use cn() utility
-- Use variant and size for styling patterns
-- Default button type is 'button' (not 'submit')`,
-
-    'useQuery.ts': `### MANDATORY REFERENCE FOR useQuery.ts
-
-**Pattern for Custom React Query Hook:**
-\`\`\`typescript
-import { useQuery, UseQueryOptions } from '@tanstack/react-query';
-
-export interface UseQueryParams<TData> {
-  queryKey: unknown[];
-  queryFn: () => Promise<TData>;
-  options?: Omit<UseQueryOptions<TData>, 'queryKey' | 'queryFn'>;
-}
-
-export function useCustomQuery<TData>({
-  queryKey,
-  queryFn,
-  options,
-}: UseQueryParams<TData>) {
-  return useQuery<TData>({
-    queryKey,
-    queryFn,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
-    retry: 1,
-    ...options,
-  });
-}
-\`\`\`
-
-**Key Points:**
-- Import from @tanstack/react-query (not react-query)
-- Use generic TData for type safety
-- Use UseQueryOptions for extensibility
-- Always provide sensible defaults (staleTime, gcTime, retry)
-- Use 'Omit' to prevent option conflicts`,
-  };
-
-  /**
-   * Architectural rules that apply across all files
-   * These are prepended to every prompt to ensure consistency
-   */
-  private static readonly ARCHITECTURAL_RULES = `### ARCHITECTURAL RULES (Apply to all code generation)
-
-1. **Import Correctness**
-   - Named imports: import { name } from 'lib'
-   - Named imports with types: import { name, type Type } from 'lib'
-   - NOT default imports unless explicitly documented
-   - Verify library names in package.json (not made-up variants)
-
-2. **Type Safety**
-   - Use interface for component props
-   - Use type for union types and type aliases
-   - Import types with 'import type { Type }'
-   - Always specify generic types explicitly
-
-3. **React Patterns**
-   - Use React.forwardRef for ref forwarding
-   - Always set displayName on forwardRef components
-   - Use React.HTMLAttributes extensions for semantic HTML
-   - Never make up HTML attribute names
-
-4. **Utility Functions**
-   - Use cn() from @/utils/cn for class merging
-   - Never import or call classnames/clsx directly in components
-   - Always pass className to cn() when accepting it as prop
-
-5. **File Organization**
-   - Keep exports clean (one default or multiple named)
-   - Group related imports at top
-   - Use consistent naming conventions
-   - Export types alongside implementations`;
-
-  /**
-   * Hydrate a prompt with grounded references and architectural rules
-   * 
-   * This is the core RAG logic: We intercept the prompt and add explicit
-   * reference samples that the model's attention mechanism will prioritize.
-   */
-  public static hydratePrompt(context: PromptContext): HydratedPrompt {
-    const appliedRules: string[] = [];
-    let augmentedPrompt = context.basePrompt;
-
-    console.log('\n[PromptEngine] === PROMPT HYDRATION START ===');
-    console.log(`[PromptEngine] File: ${context.filePath}`);
-    console.log(`[PromptEngine] Description: ${context.fileDescription}`);
-    console.log(`[PromptEngine] Base prompt length: ${context.basePrompt.length} chars`);
-
-    // Step 1: Always prepend architectural rules
-    console.log(`[PromptEngine] Step 1: Prepending architectural rules (${PromptEngine.ARCHITECTURAL_RULES.length} chars)`);
-    augmentedPrompt = `${PromptEngine.ARCHITECTURAL_RULES}
-
----
-
-${augmentedPrompt}`;
-    appliedRules.push('architectural-rules');
-
-    // Step 2: Check for file-specific reference samples
-    const fileName = context.filePath.split('/').pop() || '';
-    let reference: string | undefined;
-
-    console.log(`[PromptEngine] Step 2: Looking for reference sample for "${fileName}"`);
-    if (PromptEngine.REFERENCE_SAMPLES[fileName]) {
-      reference = PromptEngine.REFERENCE_SAMPLES[fileName];
-      console.log(`[PromptEngine] ✅ Found reference sample for ${fileName}`);
-      console.log(`[PromptEngine] Reference length: ${reference.length} chars`);
-      console.log(`[PromptEngine] Reference preview (first 200 chars):`);
-      console.log(`[PromptEngine] "${reference.substring(0, 200)}..."`);
-      
-      augmentedPrompt = `${reference}
-
----
-
-${augmentedPrompt}`;
-      appliedRules.push(`reference-sample-${fileName}`);
-    } else {
-      console.log(`[PromptEngine] ❌ No reference sample found for ${fileName}`);
-      console.log(`[PromptEngine] Available samples: ${Object.keys(PromptEngine.REFERENCE_SAMPLES).join(', ')}`);
-    }
-
-    // Step 3: Add context-specific hints
-    console.log(`[PromptEngine] Step 3: Building context-specific hints`);
-    if (context.fileDescription) {
-      const contextHint = PromptEngine.buildContextHint(context.fileDescription);
-      if (contextHint) {
-        console.log(`[PromptEngine] ✅ Context hint applied (${contextHint.length} chars)`);
-        augmentedPrompt = `${augmentedPrompt}
-
----
-
-${contextHint}`;
-        appliedRules.push('context-hint');
-      } else {
-        console.log(`[PromptEngine] ℹ️ No context hint matched description`);
-      }
-    }
-
-    console.log(`[PromptEngine] Step 4: Final composition`);
-    console.log(`[PromptEngine] Applied rules: ${appliedRules.join(', ')}`);
-    console.log(`[PromptEngine] Final augmented prompt length: ${augmentedPrompt.length} chars`);
-    console.log(`[PromptEngine] === FULL HYDRATED PROMPT ===`);
-    console.log(augmentedPrompt);
-    console.log(`[PromptEngine] === END HYDRATED PROMPT ===\n`);
+    const prompt = this.buildGenerationPrompt(context);
+    const applicableProfiles = this.inferApplicableProfiles(context);
+    const appliedRuleIds = applicableProfiles.map((p) => p.id);
 
     return {
-      original: context.basePrompt,
-      augmented: augmentedPrompt,
-      reference,
-      appliedRules,
+      augmented: options.basePrompt ? `${options.basePrompt}\n\n${prompt}` : prompt,
+      appliedRules: appliedRuleIds,
+      reference: options.existingCode,
     };
   }
 
   /**
-   * Build context-specific hints based on the file description
-   * This adds domain knowledge to guide the model
+   * Build a generation prompt with injected ValidatorProfile requirements
    */
-  private static buildContextHint(description: string): string | null {
-    const desc = description.toLowerCase();
+  static buildGenerationPrompt(context: PromptContext): string {
+    const lines: string[] = [];
 
-    // Utility file hints
-    if (desc.includes('utility') || desc.includes('helper') || desc.includes('utils')) {
-      return `### CONTEXT HINT: Utility File
-This file exports reusable utility functions.
-- Keep functions pure (no side effects)
-- Use generics for flexibility
-- Provide clear type signatures
-- Document with JSDoc comments`;
+    // ========================================================================
+    // SYSTEM INSTRUCTIONS
+    // ========================================================================
+    lines.push('# Code Generation Instructions');
+    lines.push('');
+    lines.push('You are a code generation agent. Generate code that is:');
+    lines.push('- Architecturally sound');
+    lines.push('- Type-safe (TypeScript)');
+    lines.push('- Accessible (for UI components)');
+    lines.push('- Testable (pure functions, no side effects)');
+    lines.push('');
+
+    // ========================================================================
+    // TASK CONTEXT
+    // ========================================================================
+    lines.push('## Task Context');
+    lines.push(`User Request: ${context.userRequest}`);
+    if (context.planDescription) {
+      lines.push(`Plan: ${context.planDescription}`);
+    }
+    if (context.workspaceName) {
+      lines.push(`Target Workspace: ${context.workspaceName}`);
+    }
+    lines.push('');
+
+    // ========================================================================
+    // ARCHITECTURAL REQUIREMENTS (from ValidatorProfiles)
+    // ========================================================================
+    lines.push('## Architectural Requirements');
+    lines.push('');
+    lines.push(
+      'Generate code that matches these universal constraints:'
+    );
+    lines.push('');
+
+    // Determine which profiles apply based on context
+    const applicableProfiles = this.inferApplicableProfiles(context);
+
+    if (applicableProfiles.length > 0) {
+      applicableProfiles.forEach((profile, idx) => {
+        lines.push(
+          `### Requirement ${idx + 1}: ${profile.name}`
+        );
+        lines.push(`ID: ${profile.id}`);
+        lines.push(`Description: ${profile.description}`);
+        lines.push('');
+
+        // Forbidden patterns
+        if (profile.forbidden && profile.forbidden.length > 0) {
+          lines.push('**FORBIDDEN patterns (must NOT appear):**');
+          profile.forbidden.forEach((pattern) => {
+            lines.push(`- ${pattern.source}`);
+          });
+          lines.push('');
+        }
+
+        // Required patterns
+        if (profile.required && profile.required.length > 0) {
+          lines.push('**REQUIRED patterns (must appear):**');
+          profile.required.forEach((pattern) => {
+            lines.push(`- ${pattern.source}`);
+          });
+          lines.push('');
+        }
+
+        // Message/guidance
+        lines.push(`Message: ${profile.message}`);
+        lines.push('');
+      });
+    } else {
+      lines.push('(No specific architecture profiles apply to this task)');
+      lines.push('');
     }
 
-    // Component hints
-    if (desc.includes('component') || desc.includes('button') || desc.includes('input')) {
-      return `### CONTEXT HINT: React Component
-This file exports a React component.
-- Accept className prop
-- Use cn() for class merging
-- Provide TypeScript props interface
-- Use forwardRef if accepting ref prop
-- Set displayName for debugging`;
+    // ========================================================================
+    // CUSTOM CONSTRAINTS
+    // ========================================================================
+    if (context.customConstraints && context.customConstraints.length > 0) {
+      lines.push('## Custom Constraints');
+      context.customConstraints.forEach((constraint) => {
+        lines.push(`- ${constraint}`);
+      });
+      lines.push('');
     }
 
-    // Hook hints
-    if (desc.includes('hook') || desc.includes('use')) {
-      return `### CONTEXT HINT: React Hook
-This file exports a custom React hook.
-- Start function name with 'use'
-- Call other hooks at top level
-- Return consistent data structure
-- Document dependencies in JSDoc`;
+    // ========================================================================
+    // CODE EXAMPLES
+    // ========================================================================
+    if (context.existingCodeSamples && context.existingCodeSamples.length > 0) {
+      lines.push('## Reference Code Examples');
+      lines.push('');
+      context.existingCodeSamples.forEach((sample, idx) => {
+        lines.push(`### Example ${idx + 1}`);
+        lines.push('```typescript');
+        lines.push(sample);
+        lines.push('```');
+        lines.push('');
+      });
     }
 
-    // Config hints
-    if (desc.includes('config') || desc.includes('constant') || desc.includes('env')) {
-      return `### CONTEXT HINT: Configuration File
-This file exports constants and configuration.
-- Use environment variables for dynamic values
-- Provide sensible defaults
-- Use 'as const' for immutable objects
-- Document what each constant is for`;
-    }
+    // ========================================================================
+    // OUTPUT FORMAT
+    // ========================================================================
+    lines.push('## Output Format');
+    lines.push('');
+    lines.push('Generate ONLY the code. Do NOT include explanations.');
+    lines.push('Output must be valid TypeScript/JSX.');
+    lines.push('');
 
-    return null;
+    return lines.join('\n');
   }
 
   /**
-   * Get the reference sample for a specific file (for debugging/inspection)
+   * Infer which ValidatorProfiles apply based on context
+   *
+   * This is heuristic-based; in real usage, the Planner would explicitly
+   * list which profiles apply for a given task.
    */
-  public static getReference(fileName: string): string | null {
-    return PromptEngine.REFERENCE_SAMPLES[fileName] || null;
+  private static inferApplicableProfiles(
+    context: PromptContext
+  ): ValidatorProfile[] {
+    const profiles: ValidatorProfile[] = [];
+
+    // Check keywords in userRequest
+    const request = context.userRequest.toLowerCase();
+
+    // Component-related tasks?
+    if (request.includes('button') || request.includes('input') || request.includes('component')) {
+      // Component rules apply
+      const semVals = getApplicableProfiles('React.FC<Props>');
+      profiles.push(...semVals);
+    }
+
+    // Form-related tasks?
+    if (request.includes('form') || request.includes('validation')) {
+      const semVals = getApplicableProfiles('z.object({ name: z.string() })');
+      profiles.push(...semVals);
+    }
+
+    // Infrastructure helpers?
+    if (request.includes('clsx') || request.includes('twmerge') || request.includes('style')) {
+      const semVals = getApplicableProfiles('clsx()');
+      profiles.push(...semVals);
+    }
+
+    // Deduplicate by profile ID
+    const seen = new Set<string>();
+    return profiles.filter((p) => {
+      if (seen.has(p.id)) {
+        return false;
+      }
+      seen.add(p.id);
+      return true;
+    });
   }
 
   /**
-   * List all available reference samples
+   * Build a validation prompt - what should code look like?
+   * (For use during validation/post-generation)
    */
-  public static listReferences(): string[] {
-    return Object.keys(PromptEngine.REFERENCE_SAMPLES);
-  }
+  static buildValidationPrompt(code: string, profiles: ValidatorProfile[]): string {
+    const lines: string[] = [];
 
-  /**
-   * Add a custom reference sample (for extensibility)
-   */
-  public static registerReference(fileName: string, reference: string): void {
-    PromptEngine.REFERENCE_SAMPLES[fileName] = reference;
+    lines.push('# Code Validation Guidelines');
+    lines.push('');
+    lines.push('Validate the following code against these profiles:');
+    lines.push('');
+
+    profiles.forEach((profile) => {
+      lines.push(`## ${profile.name}`);
+      lines.push(`ID: ${profile.id}`);
+      lines.push(`Severity: ${profile.severity || 'error'}`);
+      lines.push('');
+
+      if (profile.forbidden) {
+        lines.push('Forbidden:');
+        profile.forbidden.forEach((p) => lines.push(`  - ${p.source}`));
+        lines.push('');
+      }
+
+      if (profile.required) {
+        lines.push('Required:');
+        profile.required.forEach((p) => lines.push(`  - ${p.source}`));
+        lines.push('');
+      }
+
+      lines.push(`Guidance: ${profile.message}`);
+      lines.push('');
+    });
+
+    lines.push('---');
+    lines.push('Code to validate:');
+    lines.push('```typescript');
+    lines.push(code);
+    lines.push('```');
+
+    return lines.join('\n');
   }
 }
 
-/**
- * Export a simple helper for common use case
- */
-export function hydratePrompt(
-  filePath: string,
-  basePrompt: string,
-  description?: string
-): string {
-  return PromptEngine.hydratePrompt({
-    filePath,
-    fileDescription: description || '',
-    basePrompt,
-  }).augmented;
-}
+export default PromptEngine;

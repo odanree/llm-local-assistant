@@ -4,7 +4,7 @@ import { ServiceExtractor, RefactoringPlan, ServiceExtraction } from './serviceE
 import { LLMClient } from './llmClient';
 import { SmartValidator } from './services/smartValidator';
 import { SemanticValidator } from './services/semanticValidator';
-import { PromptEngine } from './services/promptEngine';
+import { PromptEngine } from './services/PromptEngine';
 import { GOLDEN_TEMPLATES, TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
 
 /**
