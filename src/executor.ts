@@ -699,6 +699,80 @@ export class Executor {
   }
 
   /**
+   * ✅ FIX THE VALIDATION BULLY EFFECT
+   * 
+   * Separate critical errors from soft suggestions.
+   * Hard errors (missing imports, syntax) block validation.
+   * Soft suggestions (Zod recommendations, style) don't block, just warn.
+   * 
+   * This prevents the LLM from getting confused by contradictory messages.
+   */
+  private categorizeValidationErrors(errors: string[]): {
+    critical: string[];
+    suggestions: string[];
+  } {
+    const critical: string[] = [];
+    const suggestions: string[] = [];
+
+    errors.forEach(error => {
+      // CRITICAL: Hard blockers that must be fixed
+      if (
+        error.includes('❌') ||  // Explicit error marker
+        error.includes('Missing import') ||
+        error.includes('Syntax error') ||
+        error.includes('unclosed') ||
+        error.includes('unmatched') ||
+        error.includes('not imported') ||
+        error.includes('Code wrapped in markdown') ||
+        error.includes('documentation/tutorial') ||
+        error.includes('Multiple file references') ||
+        error.includes('Typo detected') ||
+        error.includes('Multiple file') ||
+        error.includes('Incorrect resolver') ||
+        error.includes('Mixed validation') ||
+        error.includes('Zod used but not imported') ||
+        error.includes('TanStack Query used but not imported') ||
+        error.includes('@hookform') || // Import errors for hooks
+        error.match(/Missing return type|unclosed brace|unmatched/) // Type/syntax errors
+      ) {
+        critical.push(error);
+      } else {
+        // SUGGESTION: Advisory messages that don't block
+        suggestions.push(error);
+      }
+    });
+
+    return { critical, suggestions };
+  }
+
+  /**
+   * Filter validation errors to only return critical errors.
+   * Soft suggestions are logged but not returned as validation failures.
+   * 
+   * This prevents the "bully effect" where suggestions distract from hard errors.
+   */
+  private filterCriticalErrors(
+    errors: string[] | undefined,
+    verbose: boolean = false
+  ): { critical: string[]; suggestions: string[] } {
+    if (!errors || errors.length === 0) {
+      return { critical: [], suggestions: [] };
+    }
+
+    const { critical, suggestions } = this.categorizeValidationErrors(errors);
+
+    // Log suggestions as warnings, not as validation failures
+    if (verbose && suggestions.length > 0) {
+      this.config.onMessage?.(
+        `⚠️ Suggestions (not blocking): ${suggestions.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+        'info'
+      );
+    }
+
+    return { critical, suggestions };
+  }
+
+  /**
    * Auto-correct common errors (Priority 2.1: Auto-Correction)
    * Automatically attempts to fix failures without manual intervention
    * Returns null if no auto-fix is possible, or a fixed StepResult if successful
@@ -1662,24 +1736,38 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
         const validationResult = await this.validateGeneratedCode(step.path, content, step);
 
-        if (!validationResult.valid && validationResult.errors) {
-          // ❌ VALIDATION FAILED - Try auto-correction up to MAX_VALIDATION_ITERATIONS
+        // ✅ FIX: Separate critical errors from soft suggestions
+        const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
+          validationResult.errors,
+          true // verbose: log suggestions as warnings
+        );
+
+        if (criticalErrors.length === 0) {
+          // ✅ No critical errors - validation passed!
+          // (Soft suggestions are logged but not blocking)
+          this.config.onMessage?.(
+            `✅ Validation passed for ${step.path}`,
+            'info'
+          );
+          finalContent = content;
+        } else {
+          // ❌ CRITICAL ERRORS FOUND - Try auto-correction up to MAX_VALIDATION_ITERATIONS
           let validationAttempt = 1;
           let currentContent = content;
-          let lastValidationErrors = validationResult.errors;
+          let lastCriticalErrors = criticalErrors;
           let loopDetected = false;
           const previousErrors: string[] = [];
 
           while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
-            const errorList = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+            const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
 
             this.config.onMessage?.(
-              `❌ Validation failed (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
+              `❌ Critical validation errors (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
               'error'
             );
 
             // LOOP DETECTION: Check if same errors are repeating
-            if (previousErrors.length > 0 && JSON.stringify(lastValidationErrors.sort()) === JSON.stringify(previousErrors.sort())) {
+            if (previousErrors.length > 0 && JSON.stringify(lastCriticalErrors.sort()) === JSON.stringify(previousErrors.sort())) {
               this.config.onMessage?.(
                 `🔄 LOOP DETECTED: Same validation errors appearing again - stopping auto-correction to prevent infinite loop`,
                 'error'
@@ -1687,11 +1775,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               loopDetected = true;
               break;
             }
-            previousErrors.push(...lastValidationErrors);
+            previousErrors.push(...lastCriticalErrors);
 
             // If last attempt, give up
             if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
-              const remainingErrors = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+              const remainingErrors = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
               this.config.onMessage?.(
                 `❌ Max validation attempts (${this.MAX_VALIDATION_ITERATIONS}) reached. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
                 'error'
@@ -1705,8 +1793,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               'info'
             );
 
-            // SMART AUTO-CORRECTION: Try to fix common issues without LLM first
-            const canAutoFix = SmartAutoCorrection.isAutoFixable(lastValidationErrors);
+            // ✅ FIX: Only pass CRITICAL errors to auto-correction, not soft suggestions
+            const canAutoFix = SmartAutoCorrection.isAutoFixable(lastCriticalErrors);
             let correctedContent: string;
 
             if (canAutoFix) {
@@ -1715,24 +1803,37 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 `🧠 Attempting smart auto-correction (circular imports, missing/unused imports, etc.)...`,
                 'info'
               );
-              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastValidationErrors, step.path);
+              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastCriticalErrors, step.path);
 
-              // Validate the smart-fixed code
+              // Validate the smart-fixed code - only check CRITICAL errors
               const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step);
-              if (smartValidation.valid) {
-                // Smart fix worked!
+              const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
+                smartValidation.errors,
+                false // Don't spam logs during auto-correction
+              );
+
+              if (criticalAfterFix.length === 0) {
+                // ✅ Smart fix worked! (No more critical errors)
                 this.config.onMessage?.(
-                  `✅ Smart auto-correction successful! Fixed: ${lastValidationErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastValidationErrors.length > 2 ? ', ...' : ''}`,
+                  `✅ Smart auto-correction successful! Fixed: ${lastCriticalErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastCriticalErrors.length > 2 ? ', ...' : ''}`,
                   'info'
                 );
+                // Log any remaining suggestions
+                if (suggestionsAfterFix.length > 0) {
+                  this.config.onMessage?.(
+                    `⚠️ Remaining suggestions: ${suggestionsAfterFix.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+                    'info'
+                  );
+                }
                 correctedContent = smartFixed;
               } else {
-                // Smart fix didn't fully work, fall back to LLM
+                // ❌ Smart fix didn't fully work, fall back to LLM with ONLY CRITICAL ERRORS
                 this.config.onMessage?.(
                   `⚠️ Smart fix incomplete, using LLM for context-aware correction...`,
                   'info'
                 );
-                const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+                // ✅ FIX: Only send CRITICAL errors to LLM, not soft suggestions
+                const fixPrompt = `The code you generated has CRITICAL validation errors that MUST be fixed:\n\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
@@ -1751,7 +1852,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 `🤖 Using LLM for context-aware correction (complex errors detected)...`,
                 'info'
               );
-              const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+              // ✅ FIX: Only send CRITICAL errors to LLM
+              const fixPrompt = `The code you generated has CRITICAL validation errors that MUST be fixed:\n\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
 
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {
@@ -1765,35 +1867,46 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               }
             }
 
-            // Re-validate the corrected code
+            // Re-validate the corrected code - only check CRITICAL errors
             const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
+              nextValidation.errors,
+              false // Don't spam logs during loops
+            );
 
-            if (nextValidation.valid) {
+            if (nextCritical.length === 0) {
               // ✅ Auto-correction succeeded
               this.config.onMessage?.(
-                `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all validation checks.`,
+                `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all critical validation checks.`,
                 'info'
               );
+              if (nextSuggestions.length > 0) {
+                this.config.onMessage?.(
+                  `⚠️ Remaining suggestions: ${nextSuggestions.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+                  'info'
+                );
+              }
               finalContent = correctedContent;
               break;
             }
 
             // Validation still failing - prepare for next iteration
             currentContent = correctedContent;
-            lastValidationErrors = nextValidation.errors || [];
+            lastCriticalErrors = nextCritical;
             validationAttempt++;
           }
 
           if (loopDetected) {
             throw new Error(`Validation loop detected - infinite correction cycle prevented. Please fix manually.`);
           }
-        } else {
-          // ✅ Validation passed
-          this.config.onMessage?.(
-            `✅ Validation passed for ${step.path}`,
-            'info'
-          );
         }
+      } else {
+        // ✅ Non-code files (JSON, YAML, etc) - skip validation for now
+        this.config.onMessage?.(
+          `✅ Skipping validation for non-code file ${step.path}`,
+          'info'
+        );
+        finalContent = content;
       }
 
       // Show preview of final (validated) content
