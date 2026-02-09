@@ -128,10 +128,22 @@ export class Planner {
         throw new Error('No steps could be extracted from LLM response');
       }
 
+      // NEW: Topological sort steps by dependencies (Phase 2.3)
+      // Ensures optimal execution order and detects circular dependencies
+      let sortedSteps: ExecutionStep[];
+      try {
+        sortedSteps = this.topologicalSort(steps);
+        console.log('[Planner] Steps sorted topologically:', sortedSteps.map(s => s.id).join(' → '));
+      } catch (err) {
+        // If sorting fails, fall back to original order with warning
+        console.warn('[Planner] Topological sort failed, using original order:', err);
+        sortedSteps = steps;
+      }
+
       const plan: TaskPlan = {
         taskId: `plan-${Date.now()}`,
         userRequest,
-        steps,
+        steps: sortedSteps,
         generatedAt: new Date(),
         reasoning: this.extractReasoning(llmResponse),
         workspacePath, // CRITICAL: Carry workspace context forward
@@ -157,6 +169,99 @@ export class Planner {
    * - Inject project language, strategy, root directory
    * - LLM no longer guesses tech stack
    */
+
+  /**
+   * Topological sort of DAG steps (Phase 2.3)
+   * 
+   * Sorts steps in dependency order for optimal execution.
+   * Detects circular dependencies and missing dependencies.
+   * 
+   * Algorithm:
+   * 1. Build adjacency list from dependencies
+   * 2. Detect cycles (Kahn's algorithm)
+   * 3. Return sorted order or throw error if cyclic
+   * 
+   * Input: Array of ExecutionStep with id and dependsOn fields
+   * Output: Sorted array ready for execution
+   * Throws: Error if circular dependency or missing dependency detected
+   */
+  private topologicalSort(steps: ExecutionStep[]): ExecutionStep[] {
+    if (steps.length === 0) return steps;
+
+    // Build map of step ID to step
+    const stepMap = new Map<string, ExecutionStep>();
+    const inDegree = new Map<string, number>();
+    const adjacency = new Map<string, string[]>();
+
+    // Initialize all steps
+    for (const step of steps) {
+      if (step.id) {
+        stepMap.set(step.id, step);
+        inDegree.set(step.id, 0);
+        adjacency.set(step.id, []);
+      }
+    }
+
+    // Build graph
+    for (const step of steps) {
+      if (!step.id) continue;
+      
+      if (step.dependsOn && step.dependsOn.length > 0) {
+        for (const depId of step.dependsOn) {
+          // Check if dependency exists
+          if (!stepMap.has(depId)) {
+            throw new Error(
+              `MISSING_DEPENDENCY: Step "${step.id}" depends on "${depId}" which doesn't exist. ` +
+              `Available steps: ${Array.from(stepMap.keys()).join(', ')}`
+            );
+          }
+          
+          // Add edge: depId → step.id
+          adjacency.get(depId)!.push(step.id);
+          inDegree.set(step.id, (inDegree.get(step.id) || 0) + 1);
+        }
+      }
+    }
+
+    // Kahn's algorithm for topological sort
+    const queue: string[] = [];
+    const sorted: ExecutionStep[] = [];
+
+    // Find all nodes with in-degree 0
+    for (const [stepId, degree] of inDegree.entries()) {
+      if (degree === 0) {
+        queue.push(stepId);
+      }
+    }
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const step = stepMap.get(current)!;
+      sorted.push(step);
+
+      // Reduce in-degree for all neighbors
+      for (const neighbor of adjacency.get(current)!) {
+        const newDegree = (inDegree.get(neighbor) || 1) - 1;
+        inDegree.set(neighbor, newDegree);
+        
+        if (newDegree === 0) {
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    // Check for cycles
+    if (sorted.length !== steps.length) {
+      throw new Error(
+        `CIRCULAR_DEPENDENCY: Dependency graph contains a cycle. ` +
+        `Cannot determine valid execution order. ` +
+        `Check that dependencies form a DAG (no cycles).`
+      );
+    }
+
+    return sorted;
+  }
+
   private buildPlanPrompt(userRequest: string, hasTests: boolean = true): string {
     // OPTIMIZED FOR SMALL MODELS (e.g., qwen2.5-coder:7b)
     // Use shorter, more direct prompts. Verbose prompts confuse small models.
