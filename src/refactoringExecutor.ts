@@ -772,9 +772,15 @@ test('description', async () => {
     // Extract filename from path
     const fileName = filePath.split('/').pop() || '';
 
+    console.log(`[RefactoringExecutor.getGoldenTemplate] Checking file: ${fileName}`);
+
     // cn.ts - The classic classname utility
     // GOLDEN TEMPLATE - cn.ts from centralized Single Source of Truth
     if (fileName === 'cn.ts' || fileName === 'cn.js') {
+      console.log(`[RefactoringExecutor] ✅ GOLDEN TEMPLATE MATCH: CN_UTILITY`);
+      console.log(`[RefactoringExecutor] Returning from GOLDEN_TEMPLATES.CN_UTILITY`);
+      console.log(`[RefactoringExecutor] Template preview (first 100 chars):`);
+      console.log(`[RefactoringExecutor] "${GOLDEN_TEMPLATES.CN_UTILITY.substring(0, 100)}..."`);
       this.log(`✅ Using centralized golden template CN_UTILITY for ${fileName}`);
       return GOLDEN_TEMPLATES.CN_UTILITY;
     }
@@ -782,6 +788,7 @@ test('description', async () => {
     // constants.ts - Common constants file
     if (fileName === 'constants.ts' || fileName === 'constants.js') {
       if (description.toLowerCase().includes('api') || description.includes('API')) {
+        console.log(`[RefactoringExecutor] ✅ GOLDEN TEMPLATE MATCH: constants.ts (API)`);
         return `// API Configuration Constants
 
 export const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.example.com';
@@ -836,6 +843,7 @@ export function debounce<T extends (...args: any[]) => any>(
     }
 
     // No golden template for this file
+    console.log(`[RefactoringExecutor] ℹ️ No golden template for ${fileName} - will use LLM generation with RAG`);
     return null;
   }
 
@@ -935,13 +943,21 @@ REMEMBER:
     // ENHANCEMENT: Apply Heuristic RAG hydration
     // This adds explicit reference samples that the model's attention mechanism
     // will prioritize over its fuzzy training data
+    console.log(`\n[RefactoringExecutor] Calling PromptEngine.hydratePrompt`);
+    console.log(`[RefactoringExecutor] File: ${filePath}`);
+    console.log(`[RefactoringExecutor] Description: ${stepDescription}`);
+    
     const hydratedPrompt = PromptEngine.hydratePrompt({
       filePath,
       fileDescription: stepDescription,
       basePrompt,
     });
 
-    this.log(`RAG hydration applied: ${hydratedPrompt.appliedRules.join(', ')}`);
+    this.log(`✅ RAG hydration applied: ${hydratedPrompt.appliedRules.join(', ')}`);
+    console.log(`[RefactoringExecutor] Hydrated prompt length: ${hydratedPrompt.augmented.length} chars`);
+    if (hydratedPrompt.reference) {
+      console.log(`[RefactoringExecutor] Golden template injected ✅`);
+    }
 
     return hydratedPrompt.augmented;
   }

@@ -229,7 +229,13 @@ export function useCustomQuery<TData>({
     const appliedRules: string[] = [];
     let augmentedPrompt = context.basePrompt;
 
+    console.log('\n[PromptEngine] === PROMPT HYDRATION START ===');
+    console.log(`[PromptEngine] File: ${context.filePath}`);
+    console.log(`[PromptEngine] Description: ${context.fileDescription}`);
+    console.log(`[PromptEngine] Base prompt length: ${context.basePrompt.length} chars`);
+
     // Step 1: Always prepend architectural rules
+    console.log(`[PromptEngine] Step 1: Prepending architectural rules (${PromptEngine.ARCHITECTURAL_RULES.length} chars)`);
     augmentedPrompt = `${PromptEngine.ARCHITECTURAL_RULES}
 
 ---
@@ -241,28 +247,48 @@ ${augmentedPrompt}`;
     const fileName = context.filePath.split('/').pop() || '';
     let reference: string | undefined;
 
+    console.log(`[PromptEngine] Step 2: Looking for reference sample for "${fileName}"`);
     if (PromptEngine.REFERENCE_SAMPLES[fileName]) {
       reference = PromptEngine.REFERENCE_SAMPLES[fileName];
+      console.log(`[PromptEngine] ✅ Found reference sample for ${fileName}`);
+      console.log(`[PromptEngine] Reference length: ${reference.length} chars`);
+      console.log(`[PromptEngine] Reference preview (first 200 chars):`);
+      console.log(`[PromptEngine] "${reference.substring(0, 200)}..."`);
+      
       augmentedPrompt = `${reference}
 
 ---
 
 ${augmentedPrompt}`;
       appliedRules.push(`reference-sample-${fileName}`);
+    } else {
+      console.log(`[PromptEngine] ❌ No reference sample found for ${fileName}`);
+      console.log(`[PromptEngine] Available samples: ${Object.keys(PromptEngine.REFERENCE_SAMPLES).join(', ')}`);
     }
 
     // Step 3: Add context-specific hints
+    console.log(`[PromptEngine] Step 3: Building context-specific hints`);
     if (context.fileDescription) {
       const contextHint = PromptEngine.buildContextHint(context.fileDescription);
       if (contextHint) {
+        console.log(`[PromptEngine] ✅ Context hint applied (${contextHint.length} chars)`);
         augmentedPrompt = `${augmentedPrompt}
 
 ---
 
 ${contextHint}`;
         appliedRules.push('context-hint');
+      } else {
+        console.log(`[PromptEngine] ℹ️ No context hint matched description`);
       }
     }
+
+    console.log(`[PromptEngine] Step 4: Final composition`);
+    console.log(`[PromptEngine] Applied rules: ${appliedRules.join(', ')}`);
+    console.log(`[PromptEngine] Final augmented prompt length: ${augmentedPrompt.length} chars`);
+    console.log(`[PromptEngine] === FULL HYDRATED PROMPT ===`);
+    console.log(augmentedPrompt);
+    console.log(`[PromptEngine] === END HYDRATED PROMPT ===\n`);
 
     return {
       original: context.basePrompt,
