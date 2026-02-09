@@ -104,16 +104,45 @@ export class SmartValidator {
 
   /**
    * Check 2: Import Mismatches
-   * Detects when imports don't match the actual library names
+   * Detects when imports don't match the actual library names or export style
+   * 
+   * CRITICAL CHECKS (Danh's validation score enhancement):
+   * - import clsx from 'clsx' ❌ (clsx is NOT a default export)
+   * - import twMerge from 'tailwind-merge' ❌ (twMerge is NOT a default export)
    * 
    * Example catch:
    * ```
    * import clsx from 'classnames';  // ❌ 'classnames' doesn't exist
-   * // Should be: import { clsx } from 'clsx';
+   * import clsx from 'clsx';  // ❌ clsx is NOT a default export
+   * // Should be: import { clsx, type ClassValue } from 'clsx';
    * ```
    */
   private static checkImportMismatches(content: string): SemanticError[] {
     const errors: SemanticError[] = [];
+
+    // CRITICAL CHECK 1: Default import of clsx is WRONG
+    // clsx is a named export, NOT a default export
+    const defaultClsxPattern = /import\s+clsx\s+from\s+['"]clsx['"]/;
+    if (defaultClsxPattern.test(content)) {
+      errors.push({
+        type: 'import-mismatch',
+        variable: 'clsx',
+        message: `❌ CRITICAL: 'clsx' is NOT a default export. Change: import clsx from 'clsx' → import { clsx, type ClassValue } from 'clsx'`,
+        severity: 'error'
+      });
+    }
+
+    // CRITICAL CHECK 2: Default import of twMerge is WRONG
+    // twMerge is a named export, NOT a default export
+    const defaultTwMergePattern = /import\s+twMerge\s+from\s+['"]tailwind-merge['"]/;
+    if (defaultTwMergePattern.test(content)) {
+      errors.push({
+        type: 'import-mismatch',
+        variable: 'twMerge',
+        message: `❌ CRITICAL: 'twMerge' is NOT a default export. Change: import twMerge from 'tailwind-merge' → import { twMerge } from 'tailwind-merge'`,
+        severity: 'error'
+      });
+    }
 
     // Known library mismatches (add more as needed)
     const knownMismatches = [
