@@ -64,15 +64,16 @@ export function getWebviewContent(): string {
         e.preventDefault();
         sendMessage();
       } else if (e.key === 'Tab') {
-        e.preventDefault();
-        // Tab: autocomplete or cycle through matches
         const currentInput = input.value;
         const cursorPos = input.selectionStart;
         const beforeCursor = currentInput.substring(0, cursorPos);
         
         // Find the current command being typed
         const lastSlash = beforeCursor.lastIndexOf('/');
-        if (lastSlash !== -1) {
+        
+        // ONLY intercept Tab if typing a command (has / before cursor)
+        if (lastSlash !== -1 && lastSlash < cursorPos) {
+          e.preventDefault();
           const partialCommand = beforeCursor.substring(lastSlash);
           
           // Check if input changed since last tab press
@@ -97,6 +98,7 @@ export function getWebviewContent(): string {
             input.setSelectionRange(beforeCursor.substring(0, lastSlash).length + match.length, beforeCursor.substring(0, lastSlash).length + match.length);
           }
         }
+        // If no / in input, Tab sends message (accessibility feature)
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         // ArrowUp: restore previous command
