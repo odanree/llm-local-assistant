@@ -17,6 +17,7 @@ import { Refiner } from './refiner';
 import { PlanParser } from './planParser';
 import { WorkspaceDetector } from './utils';
 import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
+import { registerDiagnostics } from './diagnostics';
 import * as path from 'path';
 
 let llmClient: LLMClient;
@@ -2825,6 +2826,9 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.window.showErrorMessage(errorMsg);
     }
   });
+
+  // Register diagnostics command
+  registerDiagnostics(context);
 
   context.subscriptions.push(openChatCommand, testConnectionCommand);
 
