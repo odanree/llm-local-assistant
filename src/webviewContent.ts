@@ -47,11 +47,8 @@ export function getWebviewContent(): string {
       bufferTimeout = null;
     }
     function sendMessage() {
-      console.log('[Webview] sendMessage called');
       const msg = input.value.trim();
-      console.log('[Webview] Message value:', msg);
       if (msg) {
-        console.log('[Webview] Sending message');
         chat.innerHTML += '<div class="msg user">' + msg + '</div>';
         commandHistory.push(msg);
         historyIndex = commandHistory.length;
@@ -63,21 +60,19 @@ export function getWebviewContent(): string {
     }
     send.addEventListener('click', sendMessage);
     input.addEventListener('keydown', (e) => {
-      console.log('[Webview] Key pressed:', e.key);
       if (e.key === 'Enter' && !e.shiftKey) {
-        console.log('[Webview] Enter key detected');
         e.preventDefault();
         sendMessage();
       } else if (e.key === 'Tab') {
+        e.preventDefault();
+        // Tab: autocomplete or cycle through matches
         const currentInput = input.value;
         const cursorPos = input.selectionStart;
         const beforeCursor = currentInput.substring(0, cursorPos);
         
         // Find the current command being typed
         const lastSlash = beforeCursor.lastIndexOf('/');
-        
-        // Only handle autocomplete if we found a / and it's before cursor
-        if (lastSlash !== -1 && lastSlash < cursorPos) {
+        if (lastSlash !== -1) {
           const partialCommand = beforeCursor.substring(lastSlash);
           
           // Check if input changed since last tab press
@@ -95,17 +90,13 @@ export function getWebviewContent(): string {
             autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
           }
           
-          // If we have matches, do autocomplete and prevent default
           if (autocompleteMatches.length > 0) {
-            e.preventDefault();
             const match = autocompleteMatches[autocompleteIndex];
             const newInput = beforeCursor.substring(0, lastSlash) + match + currentInput.substring(cursorPos);
             input.value = newInput;
             input.setSelectionRange(beforeCursor.substring(0, lastSlash).length + match.length, beforeCursor.substring(0, lastSlash).length + match.length);
           }
-          // If no matches, let Tab proceed normally (send message)
         }
-        // If no /, let Tab proceed normally (send message)
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         // ArrowUp: restore previous command
