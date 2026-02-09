@@ -166,48 +166,8 @@ export class SmartValidator {
       }
     }
 
-    // CRITICAL CHECK 1: Default import of clsx is WRONG
-    // clsx is a named export, NOT a default export
-    // PERFECT DEMO: Hard-coded explicit check - must fail if not named import
-    const defaultClsxPattern = /import\s+clsx\s+from\s+['"]clsx['"]/;
-    const namedClsxPattern = /import\s+.*\{.*clsx.*\}.*from\s+['"]clsx['"]/;
-    
-    if (defaultClsxPattern.test(content)) {
-      errors.push({
-        type: 'import-mismatch',
-        variable: 'clsx',
-        message: `❌ CRITICAL: 'clsx' is NOT a default export. Change: import clsx from 'clsx' → import { clsx, type ClassValue } from 'clsx'`,
-        severity: 'error'
-      });
-    }
-    
-    // EXPLICIT NAMED CHECK: If clsx is used, verify it's imported as named import
-    if (content.includes('clsx(') && !namedClsxPattern.test(content)) {
-      // clsx is used but not imported as named import
-      if (!defaultClsxPattern.test(content)) {
-        // It's not even the wrong default import - it's completely missing or wrong
-        errors.push({
-          type: 'import-mismatch',
-          variable: 'clsx',
-          message: `❌ HARDCODED CHECK: 'clsx' must be a named import: import { clsx, type ClassValue } from 'clsx'`,
-          severity: 'error'
-        });
-      }
-    }
-
-    // CRITICAL CHECK 2: Default import of twMerge is WRONG
-    // twMerge is a named export, NOT a default export
-    const defaultTwMergePattern = /import\s+twMerge\s+from\s+['"]tailwind-merge['"]/;
-    if (defaultTwMergePattern.test(content)) {
-      errors.push({
-        type: 'import-mismatch',
-        variable: 'twMerge',
-        message: `❌ CRITICAL: 'twMerge' is NOT a default export. Change: import twMerge from 'tailwind-merge' → import { twMerge } from 'tailwind-merge'`,
-        severity: 'error'
-      });
-    }
-
-    // Known library mismatches (add more as needed)
+    // Generic library mismatch detection (applies to all files)
+    // These are general checks that apply regardless of file context
     const knownMismatches = [
       {
         used: 'clsx',
