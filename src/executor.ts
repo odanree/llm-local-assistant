@@ -1788,6 +1788,45 @@ export class Executor {
       ? `REQUIREMENT: ${step.description}\n\n`
       : '';
 
+    // MULTI-STEP CONTEXT INJECTION: Tell LLM about previously created files
+    // This prevents duplicate stores, unused imports, and pseudo-refactoring
+    let multiStepContext = '';
+    if (this.plan && step.stepId > 1) {
+      const previouslyCreatedFiles: string[] = [];
+      const completedSteps = new Map(this.plan.results || new Map());
+      
+      // Collect files created in previous steps
+      for (let i = 1; i < step.stepId; i++) {
+        const prevStep = this.plan.steps.find(s => s.stepId === i);
+        const prevResult = completedSteps.get(i);
+        
+        if (prevStep && prevResult && prevResult.success && prevStep.action === 'write') {
+          previouslyCreatedFiles.push(prevStep.path);
+        }
+      }
+      
+      if (previouslyCreatedFiles.length > 0) {
+        multiStepContext = `## CONTEXT: Related Files Already Created
+The following files were created in previous steps. Use them instead of creating duplicates:
+${previouslyCreatedFiles.map((f, i) => `${i + 1}. \`${f}\` - Reference and use this file`).join('\n')}
+
+Do NOT:
+- Create duplicate files/stores with similar names
+- Create inline implementations if a shared file already exists
+- Import unused modules or create unused aliases
+- Ignore previously created architecture/utilities
+
+DO:
+- Import from previously created files
+- Use stores, utilities, and patterns that were established in earlier steps
+- Consolidate related functionality into the existing structure
+- Remove any unused imports from this file
+
+`;
+        console.log(`[Executor] ℹ️ Injecting multi-step context: ${previouslyCreatedFiles.length} previous files`);
+      }
+    }
+
     // GOLDEN TEMPLATE INJECTION: For known files, inject exact template to copy
     let goldenTemplateSection = '';
     const fileName = step.path.split('/').pop() || '';
@@ -1860,7 +1899,7 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
+${intentRequirement}${multiStepContext}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -1871,6 +1910,7 @@ ${intentRequirement}${formPatternSection}${goldenTemplateSection}STRICT REQUIREM
 8. Every line must be syntactically valid for a ${fileExtension} file
 9. This code will be parsed as pure code - nothing else matters
 10. Validate: Does this code fulfill the REQUIREMENT stated above?
+${multiStepContext ? '11. Integration Check: Does this code properly use/import files mentioned in CONTEXT above?' : ''}
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';
