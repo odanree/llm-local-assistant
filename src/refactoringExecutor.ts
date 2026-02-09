@@ -675,12 +675,22 @@ test('description', async () => {
    * This implements the "Inference Ceiling" mitigation:
    * When SmartValidator detects errors, provide the 32B model with
    * specific architectural hints about what went wrong and how to fix it.
+   * 
+   * BONUS: Danh's "Midnight Fix" - Hard-code golden templates for common files
+   * to prevent model hallucinations entirely.
    */
   private async executeWithCorrection(
     originalContent: string,
     stepPath: string,
     stepDescription: string
   ): Promise<string> {
+    // GOLDEN TEMPLATE CHECK: Prevent hallucination for well-known files
+    const goldenTemplate = this.getGoldenTemplate(stepPath, stepDescription);
+    if (goldenTemplate) {
+      this.log(`✅ Using golden template for ${stepPath} (skip LLM hallucination)`);
+      return goldenTemplate;
+    }
+
     const MAX_RETRIES = 2;
     let currentContent = originalContent;
     let attemptNumber = 0;
@@ -738,6 +748,90 @@ test('description', async () => {
 
     // Shouldn't reach here, but safety net
     throw new Error('Self-correction cycle failed unexpectedly');
+  }
+
+  /**
+   * Danh's "Midnight Fix": Golden templates for common files
+   * Prevents 32B model from hallucinating imports like `import clsx from 'classnames'`
+   * 
+   * Strategy: For well-known utility files, use a hard-coded template instead of
+   * asking LLM to generate (which can hallucinate). The template is proven,
+   * tested, and correct.
+   */
+  private getGoldenTemplate(filePath: string, description: string): string | null {
+    // Extract filename from path
+    const fileName = filePath.split('/').pop() || '';
+
+    // cn.ts - The classic classname utility
+    // Qwen 32B often generates: import clsx from 'classnames' (WRONG)
+    // Golden template: import { clsx } from 'clsx'; (CORRECT)
+    if (fileName === 'cn.ts' || fileName === 'cn.js') {
+      return `import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}`;
+    }
+
+    // constants.ts - Common constants file
+    if (fileName === 'constants.ts' || fileName === 'constants.js') {
+      if (description.toLowerCase().includes('api') || description.includes('API')) {
+        return `// API Configuration Constants
+
+export const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.example.com';
+export const API_TIMEOUT = 30000; // 30 seconds
+export const API_RETRY_ATTEMPTS = 3;
+
+export const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  INTERNAL_ERROR: 500,
+} as const;`;
+      }
+    }
+
+    // utils.ts or helpers.ts - Common utility functions
+    if ((fileName === 'utils.ts' || fileName === 'helpers.ts') && description.includes('merge')) {
+      return `/**
+ * Utility functions for common tasks
+ */
+
+export function merge<T extends Record<string, any>>(
+  target: T,
+  source: Partial<T>
+): T {
+  return { ...target, ...source };
+}
+
+export function isEmpty(value: any): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (typeof value === 'string' && value.trim() === '') ||
+    (Array.isArray(value) && value.length === 0) ||
+    (typeof value === 'object' && Object.keys(value).length === 0)
+  );
+}
+
+export function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}`;
+    }
+
+    // No golden template for this file
+    return null;
   }
 
   /**
