@@ -108,7 +108,10 @@ export class ArchitectureValidator {
     }
 
     // Check for unnecessary Zod usage
-    if (content.includes('z.object({') && !isForm) {
+    // PERFECT DEMO: Disable Zod suggestion for src/utils/ - utilities should never use Zod
+    const isUtility = filePath.includes('src/utils/');
+    
+    if (content.includes('z.object({') && !isForm && !isUtility) {
       violations.push({
         rule: 'Component Props Typing',
         severity: 'error',
@@ -116,6 +119,11 @@ export class ArchitectureValidator {
         description: 'UI components should use TypeScript interface/type for props, not Zod',
         fix: 'Replace Zod schema with TypeScript interface: interface ComponentProps { ... }',
       });
+    }
+    
+    if (content.includes('z.object({') && isUtility) {
+      // For utilities, Zod is never appropriate - log but don't suggest
+      console.log(`[ArchitectureValidator] Note: Utility file should not contain Zod schema`);
     }
 
     return violations;

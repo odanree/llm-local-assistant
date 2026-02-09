@@ -122,7 +122,10 @@ export class SmartValidator {
 
     // CRITICAL CHECK 1: Default import of clsx is WRONG
     // clsx is a named export, NOT a default export
+    // PERFECT DEMO: Hard-coded explicit check - must fail if not named import
     const defaultClsxPattern = /import\s+clsx\s+from\s+['"]clsx['"]/;
+    const namedClsxPattern = /import\s+.*\{.*clsx.*\}.*from\s+['"]clsx['"]/;
+    
     if (defaultClsxPattern.test(content)) {
       errors.push({
         type: 'import-mismatch',
@@ -130,6 +133,20 @@ export class SmartValidator {
         message: `❌ CRITICAL: 'clsx' is NOT a default export. Change: import clsx from 'clsx' → import { clsx, type ClassValue } from 'clsx'`,
         severity: 'error'
       });
+    }
+    
+    // EXPLICIT NAMED CHECK: If clsx is used, verify it's imported as named import
+    if (content.includes('clsx(') && !namedClsxPattern.test(content)) {
+      // clsx is used but not imported as named import
+      if (!defaultClsxPattern.test(content)) {
+        // It's not even the wrong default import - it's completely missing or wrong
+        errors.push({
+          type: 'import-mismatch',
+          variable: 'clsx',
+          message: `❌ HARDCODED CHECK: 'clsx' must be a named import: import { clsx, type ClassValue } from 'clsx'`,
+          severity: 'error'
+        });
+      }
     }
 
     // CRITICAL CHECK 2: Default import of twMerge is WRONG
