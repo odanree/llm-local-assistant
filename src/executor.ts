@@ -61,6 +61,61 @@ export class Executor {
   }
 
   /**
+   * Extract contract information from a previously created file
+   * Detects what the file exports (stores, components, utilities, etc.)
+   * Returns a human-readable description for LLM consumption
+   */
+  private async extractFileContract(filePath: string, workspace: vscode.Uri): Promise<string> {
+    try {
+      const fileUri = vscode.Uri.joinPath(workspace, filePath);
+      const fileContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
+
+      // ZUSTAND STORES: Detect useXXXStore patterns
+      const zustandMatch = fileContent.match(/export\s+const\s+(use\w+Store)\s*=\s*create<(\w+)>\(\(set\)\s*=>\s*\({([^}]*?)}\n\s*\}\)/s);
+      if (zustandMatch) {
+        const [, hookName, stateType, stateBody] = zustandMatch;
+        // Extract state properties from store
+        const stateProps = stateBody.match(/(\w+):\s*[^,}]+/g) || [];
+        const propList = stateProps.map(p => p.split(':')[0].trim()).join(', ');
+        return `📦 **Zustand Store** - \`${filePath}\`
+   - Export: \`const ${hookName} = create<${stateType}>()\`
+   - Hook name: \`${hookName}\`
+   - State object has: ${propList}
+   - Usage: \`const { ${propList} } = ${hookName}()\`
+   - ⚠️ State is structured - check field nesting. Example: if state is \`{ formState: { email, password } }\`, access as \`state.formState.email\`, NOT \`state.email\``;
+      }
+
+      // REACT COMPONENTS: Detect export function/const XXX components
+      const componentMatch = fileContent.match(/export\s+(?:const|function)\s+(\w+)\s*(?::|=|\()/);
+      const propsMatch = fileContent.match(/interface\s+(\w+Props)\s*{([^}]*)}/);
+      if (componentMatch) {
+        const [, componentName] = componentMatch;
+        const [, propsName, propsBody] = propsMatch || [null, 'Props', ''];
+        return `⚛️ **React Component** - \`${filePath}\`
+   - Export: \`export const ${componentName}: React.FC<${propsName || 'Props'}>\`
+   - Component name: \`${componentName}\`
+   - Props available: ${propsBody ? propsBody.split(';').map(l => l.trim()).filter(l => l).join(', ') : 'See component definition'}
+   - Usage: \`<${componentName} ... />\` or \`import { ${componentName} } from '...'\``;
+      }
+
+      // UTILITY EXPORTS: Detect exported functions or constants
+      const utilMatches = fileContent.match(/export\s+(?:const|function|interface|type)\s+(\w+)/g) || [];
+      if (utilMatches.length > 0) {
+        const exports = utilMatches.map(m => m.replace(/export\s+(?:const|function|interface|type)\s+/, ''));
+        return `🛠️ **Utility/Helper** - \`${filePath}\`
+   - Exports: ${exports.join(', ')}
+   - Usage: \`import { ${exports[0]} } from '...'\` or use as needed`;
+      }
+
+      // DEFAULT: Generic description
+      return `📄 **File** - \`${filePath}\` (use as reference for context)`;
+    } catch (error) {
+      // If file can't be read, just return generic description
+      return `📄 **File** - \`${filePath}\` (couldn't extract contract, use as reference)`;
+    }
+  }
+
+  /**
    * Execute a complete plan step-by-step
    */
   async executePlan(plan: TaskPlan): Promise<ExecutionResult> {
@@ -1788,8 +1843,9 @@ export class Executor {
       ? `REQUIREMENT: ${step.description}\n\n`
       : '';
 
-    // MULTI-STEP CONTEXT INJECTION: Tell LLM about previously created files
+    // MULTI-STEP CONTEXT INJECTION WITH FILE CONTRACTS
     // This prevents duplicate stores, unused imports, and pseudo-refactoring
+    // KEY ENHANCEMENT: Include actual exported APIs from previous files
     let multiStepContext = '';
     if (this.plan && step.stepId > 1) {
       const previouslyCreatedFiles: string[] = [];
@@ -1806,24 +1862,40 @@ export class Executor {
       }
       
       if (previouslyCreatedFiles.length > 0) {
-        multiStepContext = `## CONTEXT: Related Files Already Created
-The following files were created in previous steps. Use them instead of creating duplicates:
-${previouslyCreatedFiles.map((f, i) => `${i + 1}. \`${f}\` - Reference and use this file`).join('\n')}
+        // Extract detailed contracts for each file
+        const fileContracts: string[] = [];
+        for (const filePath of previouslyCreatedFiles) {
+          try {
+            const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
+            fileContracts.push(contract);
+          } catch {
+            // Fallback if contract extraction fails
+            fileContracts.push(`📄 **File** - \`${filePath}\``);
+          }
+        }
 
-Do NOT:
-- Create duplicate files/stores with similar names
-- Create inline implementations if a shared file already exists
-- Import unused modules or create unused aliases
-- Ignore previously created architecture/utilities
+        multiStepContext = `## CONTEXT: Related Files Already Created
+The following files were created in previous steps. Study their exported APIs carefully:
+
+${fileContracts.join('\n\n')}
+
+CRITICAL INTEGRATION RULES:
+1. Understand the exported API before using it (see state structure, hook names, etc. above)
+2. Import correctly: Check if it's a named export \`import { X }\` or default export \`import X\`
+3. Zustand stores: State may be nested. If store returns \`{ formState: { email, password } }\`, access as \`state.formState.email\`, NOT \`state.email\`
+4. Do NOT create duplicate files/stores with similar names
+5. Do NOT create inline implementations if a shared file already exists
+6. Do NOT import unused modules or create unused aliases
+7. Remove any unused imports from this file
 
 DO:
-- Import from previously created files
-- Use stores, utilities, and patterns that were established in earlier steps
-- Consolidate related functionality into the existing structure
-- Remove any unused imports from this file
+- **Use** the files documented above instead of creating new ones
+- **Import** from previously created files
+- **Follow** the exact API that's exported (don't guess at methods that don't exist)
+- **Consolidate** related functionality into existing structure
 
 `;
-        console.log(`[Executor] ℹ️ Injecting multi-step context: ${previouslyCreatedFiles.length} previous files`);
+        console.log(`[Executor] ℹ️ Injecting multi-step context with file contracts: ${previouslyCreatedFiles.length} previous files`);
       }
     }
 
