@@ -1943,9 +1943,16 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         env.SystemRoot = 'C:\\Windows';
       }
 
+      // CRITICAL: On Windows, ensure ComSpec is set (command interpreter specification)
+      // Some shells require this to find cmd.exe
+      if (process.platform === 'win32' && !env.ComSpec) {
+        env.ComSpec = 'cmd.exe';
+      }
+
       // Log environment setup for debugging
       console.log(`[Executor] Environment PATH: ${env.PATH?.substring(0, 100)}...`);
       console.log(`[Executor] SystemRoot: ${env.SystemRoot}`);
+      console.log(`[Executor] ComSpec: ${env.ComSpec}`);
       console.log(`[Executor] Platform: ${process.platform}`);
 
       // CRITICAL FIX: Use platform-aware shell selection
