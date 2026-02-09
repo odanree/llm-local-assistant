@@ -316,7 +316,7 @@ export class Executor {
     }
 
     // Check 2: Architecture rule violations
-    const ruleErrors = await this.validateArchitectureRules(content);
+    const ruleErrors = await this.validateArchitectureRules(content, filePath);
     if (ruleErrors.length > 0) {
       errors.push(...ruleErrors);
     }
@@ -391,7 +391,7 @@ export class Executor {
   /**
    * Check generated code against architecture rules
    */
-  private async validateArchitectureRules(content: string): Promise<string[]> {
+  private async validateArchitectureRules(content: string, filePath?: string): Promise<string[]> {
     const errors: string[] = [];
 
     // Get architecture rules if available
@@ -399,6 +399,11 @@ export class Executor {
     if (!rules) {
       return errors; // No rules to validate against
     }
+
+    // CRITICAL FIX: Check if this is a UI component
+    // Per .lla-rules: Components should NOT use Zod for props, only for form data
+    const isComponent = filePath && filePath.includes('src/components/');
+    const isFormComponent = filePath && filePath.includes('Form');
 
     // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
     if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
@@ -471,11 +476,17 @@ export class Executor {
     }
 
     // Check Rule: Validation with Zod
+    // CRITICAL: Do NOT suggest Zod for UI components (per .lla-rules)
+    // Exception: Allow Zod for Form components (form data validation)
     if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
-      errors.push(
-        `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-      );
+      if (!isComponent || (isComponent && isFormComponent)) {
+        // Only suggest for non-components or form components
+        errors.push(
+          `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+          `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+        );
+      }
+      // Silently skip for non-form UI components (they use TypeScript interfaces for props)
     }
 
     // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
