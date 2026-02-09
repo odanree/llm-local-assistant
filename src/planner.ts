@@ -208,6 +208,15 @@ export class Planner {
       
       if (step.dependsOn && step.dependsOn.length > 0) {
         for (const depId of step.dependsOn) {
+          // CRITICAL: Reject self-referential dependencies (should not happen after parsing filter)
+          if (depId === step.id) {
+            throw new Error(
+              `SELF_DEPENDENCY: Step "${step.id}" depends on itself. ` +
+              `This is invalid and should have been filtered during parsing. ` +
+              `Please report this as a parser bug.`
+            );
+          }
+          
           // Check if dependency exists
           if (!stepMap.has(depId)) {
             throw new Error(
@@ -451,10 +460,25 @@ Output only the plan. No explanations.`;
       const stepContent = responseText.substring(startIndex, endIndex);
 
       const description = this.extractDescription(stepContent);
+      const rawDependsOn = this.extractSemanticDependencies(stepContent);
+      
+      // CRITICAL: Filter out self-referential dependencies
+      // If a step somehow includes its own ID in dependsOn, remove it
+      const currentStepId = this.generateStepId(stepNumber);
+      const cleanDependsOn = rawDependsOn
+        ? rawDependsOn.filter(depId => depId !== currentStepId)
+        : undefined;
+      
+      // Warn if self-reference was detected (shouldn't happen, but catch it)
+      if (rawDependsOn && rawDependsOn.length > 0 && cleanDependsOn && 
+          rawDependsOn.length !== cleanDependsOn.length) {
+        console.warn(`[PARSER] Warning: Step "${currentStepId}" had self-referential dependency, removed`);
+      }
+
       const step: ExecutionStep = {
         stepNumber,
         stepId: stepNumber,
-        id: this.generateStepId(stepNumber), // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
+        id: currentStepId, // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
         action: action as ActionTypeString,
         description,
         path: this.extractTargetFile(stepContent),
@@ -462,7 +486,7 @@ Output only the plan. No explanations.`;
         command: this.extractCommand(stepContent), // CRITICAL: Extract command for run steps
         expectedOutcome: this.extractExpectedOutcome(stepContent),
         dependencies: this.extractDependencies(stepContent),
-        dependsOn: this.extractSemanticDependencies(stepContent), // NEW: Semantic dependencies (DAG)
+        dependsOn: cleanDependsOn, // CRITICAL: Already filtered for self-references
       };
 
       if (step.description) {
@@ -494,10 +518,25 @@ Output only the plan. No explanations.`;
     // (schema enforcement: these should not appear in step output)
 
     const description = this.extractDescription(block);
+    const rawDependsOn = this.extractSemanticDependencies(block);
+    
+    // CRITICAL: Filter out self-referential dependencies
+    // If a step somehow includes its own ID in dependsOn, remove it
+    const currentStepId = this.generateStepId(stepNumber);
+    const cleanDependsOn = rawDependsOn
+      ? rawDependsOn.filter(depId => depId !== currentStepId)
+      : undefined;
+    
+    // Warn if self-reference was detected (shouldn't happen, but catch it)
+    if (rawDependsOn && rawDependsOn.length > 0 && cleanDependsOn && 
+        rawDependsOn.length !== cleanDependsOn.length) {
+      console.warn(`[PARSER] Warning: Step "${currentStepId}" had self-referential dependency, removed`);
+    }
+
     return {
       stepNumber,
       stepId: stepNumber,
-      id: this.generateStepId(stepNumber), // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
+      id: currentStepId, // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
       action: action as ActionTypeString,
       description,
       path: this.extractTargetFile(block),
@@ -505,7 +544,7 @@ Output only the plan. No explanations.`;
       command: this.extractCommand(block), // CRITICAL: Extract command for run steps
       expectedOutcome: this.extractExpectedOutcome(block),
       dependencies: this.extractDependencies(block),
-      dependsOn: this.extractSemanticDependencies(block), // NEW: Semantic dependencies (DAG)
+      dependsOn: cleanDependsOn, // CRITICAL: Already filtered for self-references
     };
   }
 
