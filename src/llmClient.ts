@@ -168,7 +168,7 @@ export class LLMClient {
       // Prepare request with system prompt injection
       const endpoint = `${this.config.endpoint}/v1/chat/completions`;
       const payload = {
-        model: this.config.model,
+        model: this.config.model.trim(),
         messages: this.buildMessagesWithSystemPrompt(userMessage),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
@@ -296,7 +296,7 @@ export class LLMClient {
       // Prepare request with system prompt injection
       const endpoint = `${this.config.endpoint}/v1/chat/completions`;
       const payload = {
-        model: this.config.model,
+        model: this.config.model.trim(),
         messages: this.buildMessagesWithSystemPrompt(userMessage),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
