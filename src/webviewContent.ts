@@ -231,6 +231,7 @@ export function getWebviewContent(): string {
                 buttonContainer.appendChild(btn);
               }
             }
+          });
           
           div.appendChild(buttonContainer);
         }
