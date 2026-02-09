@@ -261,8 +261,8 @@ Output only the plan. No explanations.`;
     }
 
     if (!stepMatches) {
-      // Fallback: split by "Step" and parse each block (handles Qwen and standard formats)
-      const stepBlocks = responseText.split(/\*\*\[?Step\s+\d+\]?:|Step\s+\d+:/i).slice(1);
+      // Fallback: split by "Step" and parse each block (handles Qwen format with or without colons)
+      const stepBlocks = responseText.split(/\*\*\[?Step\s+\d+\]?:?|Step\s+\d+:/i).slice(1);
 
       stepBlocks.forEach((block, index) => {
         const step = this.parseStepBlock(block, index + 1);
@@ -300,8 +300,8 @@ Output only the plan. No explanations.`;
 
       const startIndex = pattern.lastIndex;
 
-      // Find the next step or end of text (supports all formats: Qwen brackets, colons, numbered lists)
-      const nextStepMatch = /(?:\*\*\[?Step\s+\d+\]?:|Step\s+\d+:|\n\d+\.)/i.exec(responseText.substring(startIndex));
+      // Find the next step or end of text (supports all formats: Qwen brackets with/without colons, numbered lists)
+      const nextStepMatch = /(?:\*\*\[?Step\s+\d+\]?:?|Step\s+\d+:|\n\d+\.)/i.exec(responseText.substring(startIndex));
       const endIndex = nextStepMatch ? startIndex + nextStepMatch.index : responseText.length;
       const stepContent = responseText.substring(startIndex, endIndex);
 
