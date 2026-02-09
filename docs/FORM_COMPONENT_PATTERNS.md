@@ -1,6 +1,8 @@
 # Form Component Architecture Patterns
 
-This guide helps you add form component rules to your `.lla-rules` file to ensure consistent, type-safe form generation.
+> **Note**: These form component patterns are now consolidated in the project's `.lla-rules` file under "Form Component Architecture (7 Required Patterns)". This document provides **detailed explanations and examples**. For quick reference, see [.lla-rules](../.lla-rules).
+
+This guide explains the 7 required form component patterns to ensure consistent, type-safe form generation across the project.
 
 ## Quick Add to .lla-rules
 

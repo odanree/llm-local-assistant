@@ -639,7 +639,7 @@ npm run test:watch   # Auto-run on changes
 
 ### Architecture & Design
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Form architecture rules and patterns
+- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns (rules defined in `.lla-rules`)
 
 ### Project Setup & Configuration
 - **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation

@@ -341,6 +341,24 @@ If root gets bloated with multiple `.md` files, apply the cleanup checklist in R
 
 ---
 
+## Architecture Rules
+
+All development follows the architecture rules defined in `.lla-rules`:
+
+**Key Rule Areas:**
+- **Logic vs UI Separation**: Business logic in src/, UI components in src/components/
+- **Component Props**: TypeScript interfaces (Zod for forms only)
+- **Styling**: All reusable components must accept `className` prop
+- **Accessibility**: All interactive elements must be keyboard-navigable and screen-reader friendly
+- **Form Components**: 7 required patterns (state interface, handler typing, consolidator, submit handler, Zod validation, error states, semantic HTML)
+- **Pre-Flight Checks**: Mandatory validation before generating plans
+
+See [.lla-rules](../.lla-rules) for complete architecture rules.
+
+For detailed form component patterns, see [FORM_COMPONENT_PATTERNS.md](./FORM_COMPONENT_PATTERNS.md).
+
+---
+
 ## Resources
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Technical deep dive

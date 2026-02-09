@@ -99,6 +99,70 @@ src/
   );
   ```
 
+### Form Component Architecture (7 Required Patterns)
+Form components are data-critical and require strict adherence to these 7 patterns:
+
+**1. State Interface**: Every form must have a typed interface for its state
+  ```typescript
+  interface LoginFormState {
+    email: string;
+    password: string;
+  }
+  ```
+
+**2. Handler Typing**: Form handlers must be explicitly typed as `FormEventHandler<HTMLFormElement>`, never `any`
+  ```typescript
+  const handleChange: FormEventHandler<HTMLFormElement> = (e) => {
+    const { name, value } = e.currentTarget;
+    // ...
+  };
+  ```
+
+**3. Consolidator Pattern**: Multi-field forms MUST use a single `handleChange` function, not separate handlers per field
+  ```typescript
+  const handleChange: FormEventHandler<HTMLFormElement> = (e) => {
+    const { name, value } = e.currentTarget;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+  // All inputs: onChange={handleChange}
+  ```
+
+**4. Submit Handler**: Forms MUST have explicit `onSubmit` handler on the `<form>` element (never callback-only buttons)
+  ```typescript
+  const handleSubmit: FormEventHandler<HTMLFormElement> = async (e) => {
+    e.preventDefault();
+    // Handle submission
+  };
+  return <form onSubmit={handleSubmit}>...</form>;
+  ```
+
+**5. Zod Validation**: Always use Zod schema for form validation (not inline validators)
+  ```typescript
+  const loginSchema = z.object({
+    email: z.string().email('Invalid email'),
+    password: z.string().min(8, 'Password too short'),
+  });
+  ```
+
+**6. Error State Tracking**: Track field-level errors separately and display near inputs
+  ```typescript
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  {errors.email && <span className="error">{errors.email}</span>}
+  ```
+
+**7. Semantic Form Markup**: Always use proper `<form>` HTML with typed handlers
+  - Form element with `onSubmit` handler
+  - Input elements with `name` attributes
+  - Proper input types (`type="email"`, `type="password"`, etc.)
+  - Error messages paired with fields
+
+**Why These Matter**:
+- Prevents infinite validation loops (missing imports, regeneration issues)
+- Ensures type safety throughout form lifecycle
+- Enables scalability (adding fields doesn't require handler changes)
+- Provides professional UX (field-level error display)
+- Follows web standards (Enter key submission, accessibility)
+
 ## Code Generation Rules
 
 ### Pre-Flight Check (Mandatory)
