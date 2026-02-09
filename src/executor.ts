@@ -12,6 +12,7 @@ import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
 import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 import { GOLDEN_TEMPLATES } from './constants/templates';
+import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation

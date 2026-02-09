@@ -28,6 +28,7 @@ import {
   validateExecutionStep,
   assertValidActionType,
 } from './types/executor';
+import { sanitizeJson, safeParse } from './utils/jsonSanitizer';
 import { TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
 import { SemanticValidator } from './services/semanticValidator';
 
@@ -318,7 +319,87 @@ PATH_RULES:
     
     return `You are a step planner. Output a numbered plan.
 
+### CRITICAL: PLAN-CONTENT DECOUPLING (DANH'S ARCHITECTURE)
+
+THE PLANNER'S JOB: Only output Path and Reasoning
+- DO NOT include file content in the plan
+- DO NOT include code snippets in the plan
+- DO NOT include file bodies in the plan
+
+THE EXECUTOR'S JOB: Generate actual file content
+- Executor receives your plan (path + reasoning)
+- Executor calls LLM separately to generate code
+- This separation keeps JSON small and clean
+
+YOUR OUTPUT FORMAT:
+✅ CORRECT:
+  Step 1: WRITE, Path: src/components/Button.tsx, Description: "Create button component with className prop"
+
+❌ WRONG:
+  Step 1: WRITE, Path: src/components/Button.tsx, Description: "Create button component with className prop",
+          Content: "import React from 'react'; export function Button() { ... }"
+
+BENEFIT OF DECOUPLING:
+- Planner focuses on WHAT to create (path, purpose)
+- Executor focuses on HOW to create it (code generation)
+- No giant JSON payloads with embedded code
+- No control character issues from code content
+- Cleaner, simpler architecture
+
 ### CRITICAL EXECUTION RULES (MUST FOLLOW):
+
+1. **CREATION = WRITE**: If the user says "create", "add", "generate", "build", or "make", you MUST use the WRITE action.
+   - WRONG: Step 1: READ, Path: src/Button.tsx, Description: "Create a button component"
+   - RIGHT: Step 1: WRITE, Path: src/components/Button.tsx, Description: "Create a button component"
+
+2. **NO MANUAL STEPS**: You are a fully autonomous executor. Never output "Manual verification" or "Check browser" as a step command.
+   - WRONG: Step 4: read, Path: "manual verification", Command: "Test button in browser"
+   - RIGHT: Add to plan summary: "Manual verification: Test button in browser after execution"
+
+3. **READ IS FOR EXISTING ONLY**: Only use READ if you are refactoring a file that already exists in the provided context.
+   - READ = File must exist before this step
+   - WRITE = File is being created or modified
+   - If unsure whether file exists, default to WRITE (executor will handle it)
+
+STEP TYPES & CONSTRAINTS (MANDATORY):
+- write: Requires path and content. Creates or modifies files.
+- read: Requires path. Reads existing files only.
+- run: Requires command. Executes shell commands.
+- delete: Requires path. Removes files.
+
+DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
+- EACH STEP MAY HAVE DEPENDENCIES: List step IDs that must complete first
+- Format: "Depends on: step_write_config, step_install_deps"
+- Use when a step requires output/results from previous steps
+- EXAMPLES:
+  * Step 2 installs packages → Step 3 (run tests) Depends on: step_run_install
+  * Step 1 creates config → Step 2 (read config) Depends on: step_write_config
+  * Step 1-2 independent → Step 3 Depends on: step_write_app, step_install_deps
+- If a step has NO dependencies (can run first or independently), omit this field
+- IMPORTANT: Declare dependencies explicitly - don't assume the executor will figure it out
+
+MANUAL VERIFICATION (IMPORTANT):
+- If a step requires human intervention (e.g., "test in browser", "verify visually"):
+  * Do NOT create a step with action='read' or 'manual'
+  * Instead, put instructions in the plan summary
+  * CRITICAL: Do NOT use 'manual' as action or in path field
+  * Example WRONG: Step 4: read, Path: manual verification
+  * Example RIGHT: Add to summary: "Manual verification: Test button in browser"
+
+RULES:
+- ONE file per write step (never multiple files)
+- Include commands for run steps
+${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
+
+COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
+📌 ALL components must:
+  - Extend standard HTML attributes (type, disabled, aria-label, etc.)
+  - Accept className?: string prop for style extensibility
+  - Use cn() utility from src/utils/cn.ts to merge custom classes
+  - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
+  - Merge styles with: <button className={cn('px-4 py-2', className)}>
+
+${contextSection}
 
 1. **CREATION = WRITE**: If the user says "create", "add", "generate", "build", or "make", you MUST use the WRITE action.
    - WRONG: Step 1: READ, Path: src/Button.tsx, Description: "Create a button component"
@@ -463,33 +544,21 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
       );
     }
 
-    // Step 3: Extract and parse JSON
+    // Step 3: Extract and parse JSON with robust sanitization
     const jsonBody = cleaned.substring(startIdx, endIdx + 1);
     
     let parsedSteps: any[];
     
-    try {
-      parsedSteps = JSON.parse(jsonBody);
-    } catch (err) {
-      // CRITICAL FIX: If JSON parse fails, attempt to sanitize control characters
-      // Qwen 32B sometimes outputs real newlines/tabs inside JSON string VALUES
-      // Try sanitizing by replacing actual newlines that break JSON with escaped versions
-      try {
-        // Only attempt this if we have evidence of control character issues
-        const error = String(err);
-        if (error.includes('Unexpected token') || error.includes('JSON')) {
-          // Replace line breaks within string values (heuristic: not at the start of a line)
-          const sanitized = jsonBody.replace(/\n(?=[^[\]]*")/g, '\\n');
-          parsedSteps = JSON.parse(sanitized);
-        } else {
-          throw err;
-        }
-      } catch {
-        throw new Error(
-          `PLANNER_ERROR: Failed to parse JSON response. ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+    // Use robust jsonSanitizer (Danh's JSON Hardening)
+    const parseResult = safeParse(jsonBody);
+    
+    if (!parseResult.success) {
+      throw new Error(
+        `PLANNER_ERROR: Failed to parse JSON response. ${parseResult.error}`
+      );
     }
+
+    parsedSteps = parseResult.data;
 
     // Step 4: Convert parsed JSON to ExecutionStep objects
     const steps: ExecutionStep[] = [];
