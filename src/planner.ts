@@ -300,8 +300,8 @@ Output only the plan. No explanations.`;
 
       const startIndex = pattern.lastIndex;
 
-      // Find the next step or end of text
-      const nextStepMatch = /(?:\*\*Step\s+\d+:|Step\s+\d+:|\n\d+\.)/i.exec(responseText.substring(startIndex));
+      // Find the next step or end of text (supports all formats: Qwen brackets, colons, numbered lists)
+      const nextStepMatch = /(?:\*\*\[?Step\s+\d+\]?:|Step\s+\d+:|\n\d+\.)/i.exec(responseText.substring(startIndex));
       const endIndex = nextStepMatch ? startIndex + nextStepMatch.index : responseText.length;
       const stepContent = responseText.substring(startIndex, endIndex);
 
