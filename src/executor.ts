@@ -666,10 +666,44 @@ export class Executor {
     // GENERIC NAMESPACE PATTERN DETECTOR
     // Find all namespace.method() patterns and verify namespaces are imported
     const namespaceUsages = new Set<string>();
+    
+    // First, collect all local variable definitions and function parameters
+    const localVariables = new Set<string>();
+    
+    // Collect function parameters: (e) => or (e, f) =>
+    content.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
+      params.split(',').forEach((param: string) => {
+        const cleaned = param.trim().split(/[:\s=]/)[0].trim();
+        if (cleaned) localVariables.add(cleaned);
+      });
+      return '';
+    });
+    
+    // Collect variable definitions: const x = or let x = or var x =
+    content.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
+      localVariables.add(varName.trim());
+      return '';
+    });
+    
+    // Collect destructured variables: const { x, y } =
+    content.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
+      vars.split(',').forEach((v: string) => {
+        const cleaned = v.trim().split(/[:=]/)[0].trim();
+        if (cleaned) localVariables.add(cleaned);
+      });
+      return '';
+    });
+    
+    // Now find namespace usages, excluding local variables
     content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
       // Skip common JavaScript globals
       const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
-      if (!globalKeywords.includes(namespace)) {
+      // Skip single-letter params like 'e' (event parameters)
+      const isSingleLetter = namespace.length === 1;
+      // Skip if it's a local variable
+      const isLocal = localVariables.has(namespace);
+      
+      if (!globalKeywords.includes(namespace) && !isSingleLetter && !isLocal) {
         namespaceUsages.add(namespace);
       }
       return '';
