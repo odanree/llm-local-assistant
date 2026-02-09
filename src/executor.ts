@@ -556,12 +556,17 @@ export class Executor {
     }
 
     // Pattern 3: Consolidator Pattern - Single handleChange function for multi-field forms
-    const handleChangeCount = (content.match(/const\s+handle\w+\s*=/g) || []).length;
+    // KEY: Only count field-change handlers (not submit handlers)
+    // A form legitimately needs: handleChange (field updates) + handleSubmit (form submission)
+    const fieldChangeHandlers = (content.match(/const\s+(handle(?:Change|Input|Update|Form(?!Submit))\w*)\s*=/gi) || []).length;
     const hasConsolidator = /\[name,\s*value\]\s*=\s*.*currentTarget/.test(content) ||
                            /currentTarget.*name.*value/.test(content);
-    if (handleChangeCount > 1 && !hasConsolidator) {
+    
+    // Only fail if there are MULTIPLE field-change handlers without consolidator
+    // (handleChange + handleSubmit is OK - submit handler is allowed)
+    if (fieldChangeHandlers > 1 && !hasConsolidator) {
       errors.push(
-        `❌ Pattern 3 violation: Multiple handlers instead of consolidator. ` +
+        `❌ Pattern 3 violation: Multiple field handlers instead of consolidator. ` +
         `Multi-field forms must use single handleChange: ` +
         `const handleChange = (e) => { const { name, value } = e.currentTarget; }`
       );
