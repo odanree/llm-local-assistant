@@ -1,0 +1,211 @@
+# .lla-rules - LLM Local Assistant Architecture Rules
+
+## File Structure & Layering
+
+### Logic vs UI Separation
+- **Logic Layer** (src/ root level): Business logic, utilities, executors
+  - No React imports
+  - No Tailwind classes
+  - Testable in isolation
+
+- **UI Layer** (src/components/): React components only
+  - Should use business logic imports
+  - Should NOT contain business logic
+  - Reusable and testable
+
+### Component Organization
+```
+src/
+├── components/          # React components only
+├── utils/              # Shared utilities (no React)
+├── executor.ts         # Core execution logic
+├── planner.ts          # Planning logic
+└── llmClient.ts        # LLM integration
+```
+
+## UI Component Rules
+
+### Props Definition
+- Use TypeScript `interface` or `type` for component props
+- Do NOT use Zod schemas for UI component props (unnecessary validation overhead)
+- Exception: Top-level Form wrappers MAY use Zod for form data validation
+- Example:
+  ```typescript
+  // ✅ Correct
+  interface ButtonProps {
+    onClick: () => void;
+    children: React.ReactNode;
+    variant?: 'primary' | 'secondary';
+  }
+
+  // ❌ Wrong (for simple components)
+  const ButtonProps = z.object({
+    onClick: z.function(),
+    children: z.union([z.string(), z.element()]),
+  });
+  ```
+
+### Styling & Extensibility
+- All reusable UI components must accept `className?: string` prop
+- Use `clsx` or `twMerge` to merge custom styles with defaults
+- Never hard-code style assumptions
+- Example:
+  ```typescript
+  interface ButtonProps {
+    className?: string;
+    children: React.ReactNode;
+  }
+
+  export const Button: React.FC<ButtonProps> = ({ 
+    className, 
+    children 
+  }) => (
+    <button className={clsx('px-4 py-2 rounded', className)}>
+      {children}
+    </button>
+  );
+  ```
+
+### Accessibility Standards
+- All interactive elements (Button, Input, Link, etc.) must include:
+  - Standard HTML attributes (`type`, `disabled`, `aria-label`, etc.)
+  - Proper semantic HTML (use `<button>`, not `<div onClick>`)
+  - ARIA attributes for screen readers (`aria-label`, `aria-describedby`, etc.)
+  - Keyboard navigation support (Tab, Enter, Escape)
+- Example:
+  ```typescript
+  interface ButtonProps {
+    type?: 'button' | 'submit' | 'reset';
+    disabled?: boolean;
+    ariaLabel?: string;
+    onClick: () => void;
+  }
+
+  export const Button: React.FC<ButtonProps> = ({
+    type = 'button',
+    disabled = false,
+    ariaLabel,
+    onClick,
+    children,
+  }) => (
+    <button
+      type={type}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+  ```
+
+## Code Generation Rules
+
+### Pre-Flight Check (Mandatory)
+Before generating ANY plan or component, the system MUST output:
+```
+Pre-flight check: [List of rules that apply to this task]
+- Logic/UI separation? [Yes/No]
+- Component prop typing? [interface/Zod/None]
+- Accessibility required? [Yes/No]
+- Styling extensibility? [className prop required]
+- [Any other relevant rules]
+
+Deviations: [Justify any rule deviations for this specific task]
+```
+
+### Plan Generation
+- Output pre-flight check before plan
+- Validate each step against applicable rules
+- If a step violates rules, reject and explain
+- Example deviation: "Form component will use Zod (exception to rule #2) because it validates user input"
+
+### Code Quality
+- Type safety: All components must have proper TypeScript types
+- Props validation: Use types or runtime validation (Zod for forms only)
+- Styling: Components must be style-extensible (className prop)
+- Accessibility: All interactive elements must be accessible
+- Testing: All utilities and logic must be testable
+
+## Validation Strictness Levels
+
+### Level 1: Logic/UI Separation
+- Enforce: No React in non-component files
+- Enforce: No business logic in components
+- Severity: ERROR
+
+### Level 2: Component Props
+- Enforce: Props defined with TS interface/type
+- Allow: Zod for top-level forms only
+- Severity: ERROR for violations, WARN for over-use
+
+### Level 3: Styling Extensibility
+- Enforce: `className?: string` on reusable components
+- Use: `clsx` or `twMerge` for merging
+- Severity: ERROR for library components, WARN for internal
+
+### Level 4: Accessibility
+- Enforce: Standard HTML attributes on interactive elements
+- Enforce: ARIA labels where needed
+- Enforce: Semantic HTML usage
+- Severity: ERROR for interactive components
+
+### Level 5: Pre-Flight Checks
+- Enforce: Mandatory pre-flight output before plan generation
+- Show: Which rules apply and why
+- Severity: ERROR - no plan without pre-flight
+
+## Example Pre-Flight Checks
+
+### Adding a Button Component
+```
+Pre-flight check: Button component
+- Logic/UI separation? Yes (component in src/components)
+- Component prop typing? interface (not Zod)
+- Accessibility required? Yes (interactive element)
+- Styling extensibility? Yes (className prop required)
+- Must include: type, disabled, aria-label attributes
+- Must use: clsx for className merging
+
+Deviations: None
+Plan: ✅ Approved
+```
+
+### Adding a Form Component
+```
+Pre-flight check: LoginForm component
+- Logic/UI separation? Yes (component in src/components)
+- Component prop typing? Zod (exception: top-level form)
+- Accessibility required? Yes (interactive element)
+- Styling extensibility? Yes (className prop required)
+- Must include: form validation, error handling
+
+Deviations: Using Zod for form validation (exception to rule #2)
+Justification: Form validation is data-critical, Zod provides runtime type safety
+Plan: ✅ Approved
+```
+
+### Adding a Utility Function
+```
+Pre-flight check: dateUtils.ts utility
+- Logic/UI separation? Yes (logic in src/utils)
+- Component prop typing? N/A (not a component)
+- Accessibility required? No
+- Styling extensibility? N/A
+- Must be: Testable, pure functions, no side effects
+
+Deviations: None
+Plan: ✅ Approved
+```
+
+## Summary
+
+These rules move the codebase from 5.5/10 (inconsistent patterns) to 9/10 (predictable, maintainable, extensible):
+
+1. **Clear Separation** - Logic stays in src/, UI in components/
+2. **Type Safety** - TS interfaces for props, Zod for forms only
+3. **Extensibility** - Components accept className overrides
+4. **Accessibility** - Interactive elements are keyboard/screen-reader friendly
+5. **Validation** - Pre-flight checks ensure rules are followed before generation
+
+When the LLM generator sees these rules, it makes better architectural decisions automatically.
