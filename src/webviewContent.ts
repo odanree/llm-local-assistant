@@ -217,20 +217,20 @@ export function getWebviewContent(): string {
                   vscode.postMessage({ command: 'sendMessage', text: command });
                 };
                 row.appendChild(btn);
-              
-              buttonContainer.appendChild(row);
-            } else {
-              // Regular button
-              const btn = document.createElement('button');
-              btn.className = 'question-btn';
-              btn.textContent = option;
-              btn.onclick = () => {
-                input.value = option.replace('Execute: ', '');
-                input.focus();
-              };
-              buttonContainer.appendChild(btn);
+                
+                buttonContainer.appendChild(row);
+              } else {
+                // Regular button
+                const btn = document.createElement('button');
+                btn.className = 'question-btn';
+                btn.textContent = option;
+                btn.onclick = () => {
+                  input.value = option.replace('Execute: ', '');
+                  input.focus();
+                };
+                buttonContainer.appendChild(btn);
+              }
             }
-          });
           
           div.appendChild(buttonContainer);
         }
