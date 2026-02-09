@@ -1949,19 +1949,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       console.log(`[Executor] Platform: ${process.platform}`);
 
       // CRITICAL FIX: Use platform-aware shell selection
-      // /bin/bash doesn't exist on Windows, use shell: true instead
-      const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
-      const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-l', '-c', command];
-
+      // On Windows with shell: true, spawn uses default shell (cmd.exe)
+      // On Unix with shell: true, spawn uses /bin/sh
+      
       console.log(`[Executor] Executing command: ${command}`);
-      console.log(`[Executor] Using shell: ${shell}`);
+      console.log(`[Executor] Platform: ${process.platform}`);
+      console.log(`[Executor] Using shell: ${process.platform === 'win32' ? 'cmd.exe' : 'bash'}`);
 
-      const child = cp.spawn(shell, shellArgs, {
-        cwd: workspaceUri.fsPath,
-        env: env,
-        stdio: 'pipe',
-        shell: true, // Let Node pick the default system shell
-      });
+      const child = process.platform === 'win32'
+        ? cp.spawn('cmd.exe', ['/c', command], {
+            cwd: workspaceUri.fsPath,
+            env: env,
+            stdio: 'pipe',
+            shell: false, // Don't double-shell on Windows
+          })
+        : cp.spawn('bash', ['-l', '-c', command], {
+            cwd: workspaceUri.fsPath,
+            env: env,
+            stdio: 'pipe',
+            shell: false, // Don't double-shell on Unix
+          });
 
       let stdout = '';
       let stderr = '';
