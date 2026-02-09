@@ -116,6 +116,73 @@ export class Executor {
   }
 
   /**
+   * CRITICAL FIX: Calculate the exact import statement from source file to target file
+   * This prevents the LLM from guessing at paths
+   * @param sourcePath Current file being generated (e.g., "src/components/LoginForm.tsx")
+   * @param targetPath File being imported (e.g., "src/stores/useLoginFormStore.ts")
+   * @returns Import statement (e.g., "import { useLoginFormStore } from '../stores/useLoginFormStore';")
+   */
+  private calculateImportStatement(sourcePath: string, targetPath: string): string | null {
+    try {
+      // Get directories
+      const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
+      const targetDir = targetPath.substring(0, targetPath.lastIndexOf('/'));
+      const targetFileName = targetPath.substring(targetPath.lastIndexOf('/') + 1);
+      
+      // Remove extension for import (import useLoginFormStore from '...' , not '.ts')
+      const importName = targetFileName.replace(/\.(ts|tsx|js|jsx)$/, '');
+      
+      // Calculate relative path
+      const sourceParts = sourceDir.split('/').filter(p => p);
+      const targetParts = targetDir.split('/').filter(p => p);
+      
+      // Find common prefix length
+      let commonLength = 0;
+      for (let i = 0; i < Math.min(sourceParts.length, targetParts.length); i++) {
+        if (sourceParts[i] === targetParts[i]) {
+          commonLength = i + 1;
+        } else {
+          break;
+        }
+      }
+      
+      // Calculate up path (..)
+      const upCount = sourceParts.length - commonLength;
+      const upPath = upCount > 0 ? '../'.repeat(upCount) : './';
+      
+      // Calculate down path
+      const downPath = targetParts.slice(commonLength).join('/');
+      
+      // Combine to get relative path
+      let relativePath = upPath + downPath;
+      if (downPath) {
+        relativePath = upPath + downPath + '/' + importName;
+      } else {
+        relativePath = upPath + importName;
+      }
+      
+      // Detect if it's a Zustand store (starts with 'use' and ends with 'Store')
+      const isZustandStore = importName.startsWith('use') && importName.endsWith('Store');
+      
+      // Generate import statement
+      if (isZustandStore) {
+        return `import { ${importName} } from '${relativePath}';`;
+      }
+      
+      // For utilities and helpers, use named imports
+      if (targetFileName === 'cn.ts' || targetFileName === 'cn.js') {
+        return `import { cn } from '${relativePath}';`;
+      }
+      
+      // Default: assume named export with same name as file
+      return `import { ${importName} } from '${relativePath}';`;
+    } catch (error) {
+      console.warn(`[Executor] Failed to calculate import for ${targetPath}: ${error}`);
+      return null;
+    }
+  }
+
+  /**
    * Execute a complete plan step-by-step
    */
   async executePlan(plan: TaskPlan): Promise<ExecutionResult> {
@@ -1894,29 +1961,54 @@ export class Executor {
       if (previouslyCreatedFiles.length > 0) {
         // Extract detailed contracts for each file
         const fileContracts: string[] = [];
+        const requiredImports: string[] = [];
+        
         for (const filePath of previouslyCreatedFiles) {
           try {
             const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
             fileContracts.push(contract);
+            
+            // CRITICAL FIX: Generate exact relative import paths
+            // Calculate the import statement for this file from the current file's perspective
+            const importStmt = this.calculateImportStatement(step.path, filePath);
+            if (importStmt) {
+              requiredImports.push(importStmt);
+            }
           } catch {
             // Fallback if contract extraction fails
             fileContracts.push(`📄 **File** - \`${filePath}\``);
           }
         }
 
-        multiStepContext = `## CONTEXT: Related Files Already Created
+        // Build the multiStepContext with both contracts and required imports
+        let importSection = '';
+        if (requiredImports.length > 0) {
+          importSection = `## REQUIRED IMPORTS
+You MUST start your file with these EXACT import statements (copy-paste):
+
+\`\`\`typescript
+${requiredImports.join('\n')}
+\`\`\`
+
+These are calculated based on actual file paths. Do NOT modify them.
+Do NOT create your own import paths - use EXACTLY what's shown above.
+
+`;
+        }
+
+        multiStepContext = `${importSection}## CONTEXT: Related Files Already Created
 The following files were created in previous steps. Study their exported APIs carefully:
 
 ${fileContracts.join('\n\n')}
 
 CRITICAL INTEGRATION RULES:
-1. Understand the exported API before using it (see state structure, hook names, etc. above)
-2. Import correctly: Check if it's a named export \`import { X }\` or default export \`import X\`
+1. Start with the REQUIRED IMPORTS shown above (copy them exactly)
+2. Use the exported APIs as documented (see state structure, hook names, etc. above)
 3. Zustand stores: State may be nested. If store returns \`{ formState: { email, password } }\`, access as \`state.formState.email\`, NOT \`state.email\`
 4. Do NOT create duplicate files/stores with similar names
 5. Do NOT create inline implementations if a shared file already exists
 6. Do NOT import unused modules or create unused aliases
-7. Remove any unused imports from this file
+7. Remove any unused imports from this file EXCEPT the REQUIRED IMPORTS above
 
 DO:
 - **Use** the files documented above instead of creating new ones
