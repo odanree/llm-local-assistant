@@ -112,6 +112,40 @@ export class SmartAutoCorrection {
   private static inferImportSource(code: string, name: string): string | null {
     // Common patterns
     const patterns: { [key: string]: string } = {
+      // React Hooks (CRITICAL: fixes missing import validation loop)
+      'useState': 'react',
+      'useEffect': 'react',
+      'useContext': 'react',
+      'useReducer': 'react',
+      'useCallback': 'react',
+      'useMemo': 'react',
+      'useRef': 'react',
+      'useLayoutEffect': 'react',
+      'useImperativeHandle': 'react',
+      'useDebugValue': 'react',
+      'React': 'react',
+      
+      // React Router
+      'useNavigate': 'react-router-dom',
+      'useParams': 'react-router-dom',
+      'useLocation': 'react-router-dom',
+      'useMatch': 'react-router-dom',
+      'useSearchParams': 'react-router-dom',
+      'Link': 'react-router-dom',
+      'BrowserRouter': 'react-router-dom',
+      'Routes': 'react-router-dom',
+      'Route': 'react-router-dom',
+      
+      // Form/State Management
+      'useForm': 'react-hook-form',
+      'useQuery': '@tanstack/react-query',
+      'useMutation': '@tanstack/react-query',
+      'useStore': 'zustand',
+      
+      // Styling
+      'clsx': 'clsx',
+      'twMerge': 'tailwind-merge',
+      
       // Repositories
       'repository': './repository',
       'Repository': './repository',
