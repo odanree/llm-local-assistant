@@ -435,14 +435,30 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
 
     // Step 3: Extract and parse JSON
     const jsonBody = cleaned.substring(startIdx, endIdx + 1);
+    
     let parsedSteps: any[];
     
     try {
       parsedSteps = JSON.parse(jsonBody);
     } catch (err) {
-      throw new Error(
-        `PLANNER_ERROR: Failed to parse JSON response. ${err instanceof Error ? err.message : String(err)}`
-      );
+      // CRITICAL FIX: If JSON parse fails, attempt to sanitize control characters
+      // Qwen 32B sometimes outputs real newlines/tabs inside JSON string VALUES
+      // Try sanitizing by replacing actual newlines that break JSON with escaped versions
+      try {
+        // Only attempt this if we have evidence of control character issues
+        const error = String(err);
+        if (error.includes('Unexpected token') || error.includes('JSON')) {
+          // Replace line breaks within string values (heuristic: not at the start of a line)
+          const sanitized = jsonBody.replace(/\n(?=[^[\]]*")/g, '\\n');
+          parsedSteps = JSON.parse(sanitized);
+        } else {
+          throw err;
+        }
+      } catch {
+        throw new Error(
+          `PLANNER_ERROR: Failed to parse JSON response. ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
     }
 
     // Step 4: Convert parsed JSON to ExecutionStep objects
