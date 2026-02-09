@@ -47,6 +47,12 @@ export interface ValidatorProfile {
    * Prevents generic linter noise from interfering with architecture validation.
    */
   suppressLinterIds?: string[];
+  /**
+   * Pattern-Based Suppression (Danh's Architecture Fix #1):
+   * If true, automatically suppress linter warnings for patterns matching this profile.
+   * Example: When clsx() is detected, suppress ClassValue unused warnings.
+   */
+  patternBasedSuppression?: boolean;
 }
 
 /**
@@ -159,6 +165,45 @@ export const VALIDATOR_PROFILES: Record<string, ValidatorProfile> = {
       "Infrastructure helpers must use named imports: import { clsx } from 'clsx' and import { twMerge } from 'tailwind-merge'",
     severity: 'error',
     suppressLinterIds: ['zod-suggestion', 'unused-type-ClassValue'],
+    /**
+     * Pattern-Based Suppression (Danh's Architecture Fix #1):
+     * Automatically suppress ClassValue warnings when clsx/twMerge are detected.
+     * This prevents generic linters from complaining about unused ClassValue type.
+     */
+    patternBasedSuppression: true,
+  },
+
+  /**
+   * Danh's Architecture Fix #2: Named Export Enforcement
+   * Ensures that if clsx is imported, it MUST be a named import
+   * This prevents silent failures from default imports that don't work
+   */
+  INFRASTRUCTURE_NAMED_EXPORTS: {
+    id: 'infrastructure_named_exports',
+    name: 'Infrastructure - Enforce Named Exports',
+    description:
+      'Infrastructure libraries (clsx, twMerge) must be imported with named syntax, never default imports',
+    selector: (content: string) => {
+      // Match if trying to import from clsx or tailwind-merge
+      return (
+        content.includes("from 'clsx'") ||
+        content.includes('from "clsx"') ||
+        content.includes("from 'tailwind-merge'") ||
+        content.includes('from "tailwind-merge"')
+      );
+    },
+    forbidden: [
+      /import\s+clsx\s+from\s+['"]clsx['"]/, // default: import clsx from 'clsx' ❌
+      /import\s+twMerge\s+from\s+['"]tailwind-merge['"]/, // default: import twMerge ❌
+      /import\s+\*\s+as\s+clsx\s+from\s+['"]clsx['"]/, // namespace: import * as clsx ❌
+    ],
+    required: [
+      /import\s*{[^}]*clsx[^}]*}\s*from\s*['"]clsx['"]/, // named: import { clsx } ✅
+      /import\s*{[^}]*twMerge[^}]*}\s*from\s*['"]tailwind-merge['"]/, // named: import { twMerge } ✅
+    ],
+    message:
+      'Named exports REQUIRED for infrastructure helpers. Use: import { clsx } from "clsx", NOT: import clsx from "clsx"',
+    severity: 'error',
   },
 
   // ============================================================================
