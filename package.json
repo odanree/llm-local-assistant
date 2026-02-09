@@ -31,6 +31,11 @@
         "command": "llm-local-assistant.testConnection",
         "title": "Test LLM Connection",
         "category": "LLM Assistant"
+      },
+      {
+        "command": "llm-assistant.debugEnv",
+        "title": "Debug Environment",
+        "category": "LLM Assistant"
       }
     ],
     "configuration": [
