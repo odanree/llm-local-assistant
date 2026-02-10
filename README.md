@@ -6,13 +6,25 @@
 
 A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, and refactor with confidence using your local LLM.
 
-**🎯 v2.5.0 Focus: Multi-Step Validation & Zustand Refactoring (Complete 6-Layer Validation System)**
+**🎯 v2.5.1 Focus: Critical Zustand Integration Validation Fixes**
 
-> **Latest Release**: v2.5.0 - 6-Layer Validation System, Production-Ready ✅  
-> **Philosophy**: Complete validation architecture with semantic enforcement. Zustand stores now fully validated.  
-> **Status**: 486/489 tests passing. 0 errors. Production ready.
+> **Latest Release**: v2.5.1 - Critical Zustand Integration Fixes ✅  
+> **Philosophy**: 100% integration validation. No silent failures.  
+> **Status**: 486/489 tests passing. Production ready.
 
-## ✨ What's v2.5.0 (Multi-Step Validation System)
+## ✨ What's v2.5.1 (Critical Patch)
+
+### 🔴 CRITICAL FIX: Zustand Integration Validation
+
+**Problem**: System generated 4/4 files successfully but component didn't call store hook → silent failure ❌  
+**Solution**: Integration validation now runs AFTER all files written, validates cross-file dependencies  
+**Impact**: Fails entire plan if store integration is broken (was: silently passing)
+
+**Strict Zustand Destructuring**
+- Detects wrong: `const store = useLoginStore(); const { x } = store;`
+- Enforces correct: `const { x } = useLoginStore();`
+
+## ✨ What's v2.5.0 (6-Layer Validation System)
 
 ### ✅ What Works Great (Keep These)
 
