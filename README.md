@@ -81,6 +81,102 @@ python -m vllm.entrypoints.openai.api_server --model mistral-7b
 
 ## 📋 Command Reference
 
+### Multi-Step Code Generation (NEW in v2.5.0 - VALIDATED & RELIABLE)
+
+#### `/plan <task>`
+Create a multi-step action plan for complex code generation with built-in semantic validation.
+
+```
+You: /plan create a login form with Zustand store and validation
+
+Output:
+📋 **Action Plan: Login Form with Zustand**
+
+Step 1: Create useLoginStore.ts
+  - Zustand store with form state
+  - Properties: formData, errors, handlers
+  - Pattern: Zustand create
+
+Step 2: Create LoginForm.tsx  
+  - Component with store integration
+  - Uses /design-system for architecture
+  - Validation: 6-layer semantic checks
+
+Step 3: Add validation logic
+  - Email & password validation
+  - Error handling patterns
+  - Type-safe implementation
+
+[Validation]
+✅ Multi-step plan created
+✅ Cross-file contracts defined
+✅ Semantic validation passed
+
+Ready to execute with: /execute
+```
+
+![Plan Command Example](./assets/plan-command-example.png)
+
+**What it does:**
+- Creates multi-step plans for code generation
+- Validates each step's contracts
+- Ensures cross-file compatibility
+- No more infinite loops (v2.5.0+)
+- Semantic validation prevents hallucinations
+
+#### `/design-system <feature>`
+Generate full feature architecture with complete validation.
+
+```
+You: /design-system user authentication
+
+Output:
+🏗️ **Architecture: User Authentication**
+
+[Schema Layer]
+- User.ts (ID, email, passwordHash)
+- Session.ts (token, expiresAt)
+
+[Service Layer]
+- authService.ts (login, logout, verify)
+- tokenService.ts (generate, validate)
+
+[Hook Layer]
+- useAuth.ts (useContext + custom logic)
+- useSession.ts (session state)
+
+[Component Layer]
+- LoginForm.tsx (form + validation)
+- ProtectedRoute.tsx (auth guard)
+
+[Validation]
+✅ All layers defined
+✅ File contracts validated
+✅ Import paths calculated
+✅ Ready for generation
+
+Next: Use /write to create files
+```
+
+**What it does:**
+- Generates complete feature architectures
+- Defines all 4 layers (schema, service, hook, component)
+- Pre-calculates import paths
+- Shows file organization
+- No infinite loops (v2.5.0+)
+
+#### `/approve`
+Acknowledge and approve generated content or plan execution.
+
+```
+You: /approve
+
+Output:
+✅ **Plan Approved**
+Ready to execute steps 1-3
+Use /execute to continue
+```
+
 ### Architecture Analysis (SAFE & RELIABLE)
 
 #### `/refactor <file>`
