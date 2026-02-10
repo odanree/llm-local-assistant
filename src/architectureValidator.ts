@@ -1124,6 +1124,45 @@ export class ArchitectureValidator {
       });
     }
 
+    // Step 6: CRITICAL - Check for CUSTOM HOOKS that are CALLED but NOT IMPORTED
+    // Pattern: const { x } = useCounter() but no import statement
+    // This catches: `const { increment } = useCounter()` without import
+    const customHookCallRegex = /const\s+(?:\[[\w\s,]*\]|\{[^}]+\})\s*=\s*(use\w+)\s*\(/g;
+    let customHookCallMatch;
+    const customHooksCalled = new Set<string>();
+    
+    while ((customHookCallMatch = customHookCallRegex.exec(generatedCode)) !== null) {
+      const hookName = customHookCallMatch[1];
+      customHooksCalled.add(hookName);
+    }
+    
+    // Get list of imported hook names
+    const importedHookNames = new Set<string>();
+    importedHooks.forEach(h => {
+      h.names.forEach(name => importedHookNames.add(name));
+    });
+    
+    // Check if each called hook is imported
+    customHooksCalled.forEach(hookName => {
+      // Skip built-in React hooks
+      const isBuiltinReactHook = [
+        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
+        'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
+        'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+      ].includes(hookName);
+      
+      if (!isBuiltinReactHook && !importedHookNames.has(hookName)) {
+        console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
+        violations.push({
+          type: 'semantic-error',
+          import: hookName,
+          message: `Missing import: ${hookName} is used but not imported from '../hooks/${hookName}'`,
+          suggestion: `Add: import { ${hookName} } from '../hooks/${hookName}';`,
+          severity: 'high',
+        });
+      }
+    });
+
     return violations;
   }
 

@@ -198,6 +198,25 @@ export class SmartAutoCorrection {
     }
 
     console.log('[SmartAutoCorrection.inferImportSource] No direct match found, checking patterns...');
+    
+    // CUSTOM HOOKS: Handle useXXX pattern for non-built-in React hooks
+    // Check if it's a custom hook (starts with 'use' but not a standard React hook)
+    const isStandardReactHook = [
+      'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
+      'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
+      'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+    ].includes(name);
+    
+    if (name.startsWith('use') && !isStandardReactHook) {
+      // Custom hook - typically in src/hooks/useXXX
+      // Import paths: 
+      // - From component in src/components/: '../hooks/useXXX'
+      // - From hook in src/hooks/: './useXXX'
+      // We'll use relative path assuming most likely case (src/components/)
+      console.log(`[SmartAutoCorrection.inferImportSource] Detected custom hook: ${name}`);
+      return `../hooks/${name}`;
+    }
+    
     if (name.includes('Repository')) {
       const baseName = name.replace('Repository', '');
       return `./repositories/${baseName}Repository`;
@@ -346,11 +365,21 @@ export class SmartAutoCorrection {
 
       // Fix: Missing import → Add it
       if (error.includes('Missing import')) {
-        const match = error.match(/Missing import: '(\w+)'/);
+        // Try multiple patterns to extract the missing import name
+        let match = error.match(/Missing import: '(\w+)'/);  // Pattern: 'name'
+        if (!match) {
+          match = error.match(/Missing import: (\w+) is used but not imported/);  // Pattern: name is used
+        }
+        if (!match) {
+          match = error.match(/Missing import:\s+(\w+)/);  // Pattern: name
+        }
+        
         if (match) {
-          const source = this.inferImportSource(fixed, match[1]);
+          const missingName = match[1];
+          const source = this.inferImportSource(fixed, missingName);
           if (source) {
-            fixed = this.addImport(fixed, match[1], source);
+            fixed = this.addImport(fixed, missingName, source);
+            console.log(`[SmartAutoCorrection] Added import for ${missingName} from '${source}'`);
           }
         }
       }
