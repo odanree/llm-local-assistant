@@ -10,37 +10,45 @@
 
 ---
 
-## v2.5.0: 6-Layer Validation & Zustand Support (CURRENT) ✅
+## 🟢 v2.5.0: The Governance Foundation (CURRENT - PR #18) ✅
 
-### What's Included (Phase 4: Validation)
+**Focus:** Stabilizing the local execution loop and enforcing architectural standards.
 
-**6-Layer Validation System** (New!)
-- ✅ Syntax validation - Valid TypeScript
-- ✅ Type validation - Correct types
-- ✅ Import validation - Files exist
-- ✅ Cross-file validation - Contracts match
-- ✅ Hook usage validation - Hooks actually used
-- ✅ Store contract validation - Properties match exports
+### Foundation Layer (Complete)
 
-**Pre-Validation Enhancement** (New!)
-- ✅ Calculate exact import paths BEFORE generation
-- ✅ Inject REQUIRED IMPORTS into prompt
-- ✅ Eliminate path guessing, validation loops
+**Active Rule Injection** ✅
+- Transform `.lla-rules` from passive config to active prompt constraints
+- Rules now actively shape LLM behavior during generation
+- Enforce architectural standards programmatically
 
-**Zustand Store Support** (New!)
-- ✅ Store property extraction (with TypeScript generics)
-- ✅ Component destructuring validation
-- ✅ Cross-file property alignment
-- ✅ Refactoring scenario detection (useState → store)
-- ✅ Working RefactorTest example included
+**The Golden Shield** ✅
+- Implement linter-rule shielding for critical infrastructure files (e.g., `cn.ts`)
+- Protect core utilities from being rewritten or modified
+- Maintain architectural integrity during multi-step operations
 
-**Code Generation with Planning** (NOW ENABLED!)
-- ✅ `/plan` - Multi-step generation with validation (FIXED!)
-- ✅ `/design-system` - Feature generation with validation (FIXED!)
-- ✅ `/approve` - Approval workflow (works again!)
+**Plan-Content Decoupling** ✅
+- Separate high-level reasoning (Planning) from raw code generation (Execution)
+- Prevents JSON serialization crashes in complex workflows
+- Enables multi-file generation without state loss
+
+**Windows Shell Hardening** ✅
+- Full support for PowerShell/CMD pathing and command execution
+- Cross-platform execution (macOS/Linux/Windows)
+- Absolute ComSpec path handling
+
+**Tiered Validation** ✅
+- Distinguish between blocking syntax errors and non-blocking architectural suggestions
+- 6-layer validation architecture (syntax → store contracts)
+- Pre-validation import calculation (no path guessing)
+- Semantic hook usage validation (catches incomplete refactorings)
+
+### Code Generation (RE-ENABLED)
+- ✅ `/plan` - Multi-step generation with validation
+- ✅ `/design-system` - Feature generation with validation
+- ✅ `/approve` - Approval workflow
 - ✅ No more infinite loops (pre-validation + semantic validation)
 
-**Pattern Detection & Architecture Analysis**
+### Pattern Detection & Architecture Analysis
 - ✅ `/refactor <file>` - 5-layer semantic analysis
 - ✅ `/rate-architecture` - Score codebase (0-10)
 - ✅ `/suggest-patterns` - Pattern recommendations (8 patterns)
@@ -48,7 +56,7 @@
 - ✅ `/context show patterns` - Detected patterns
 - ✅ `/git-review` - Code review
 
-**File Operations**
+### File Operations
 - ✅ `/read <path>` - Read files
 - ✅ `/write <path>` - Generate file content with validation
 - ✅ `/suggestwrite <path>` - Preview before writing
@@ -57,44 +65,122 @@
 - ✅ `/help` - Command reference
 - ✅ `/check-model` - Model diagnostics
 
-**Multi-Workspace Support**
-- ✅ Plans execute in correct workspace
-- ✅ File discovery scans src AND root
-- ✅ Context-aware analysis
-- ✅ Cross-file validation works across workspaces
-
-### What's NOT Included (By Design)
-
-**Advanced Features (Future Releases)**
-- Cloud-based code generation
-- Real-time collaboration
-- Team-wide pattern enforcement
-- Advanced caching strategies
+### Quality Metrics
+- 486/489 tests passing (99.4%)
+- 0 compilation errors
+- 0 regressions
+- Production ready
 
 ---
 
-## v2.4.0: Reserved for Future Use
+## 🟡 v3.0: Semantic Orchestration (The "Contract" Release)
 
-## v2.3.0: Reserved for Future Use
+**Focus:** Solving "Semantic Drift" and ensuring multi-file integration.
 
-## v2.2.0: Reserved for Future Use
+### Features (Planned)
 
-**Better alternatives:**
-- Cursor, Windsurf, or Copilot (better multi-file context)
-- Manual implementation (now you understand the pattern)
+- [ ] **Cross-File Contract Validation**
+  - Implement an "Interface Sniffer" that extracts public exports from Step N
+  - Enforce extracted interfaces as constraints in Step N+1
+  - 100% type-safety across multi-file workflows
 
-### Philosophy: Honest About Limitations
+- [ ] **State-Management Guardrails**
+  - Strict enforcement of "No Mixed State"
+  - Automatically detect and fail builds that mix `useState` with global store hooks (Zustand/Redux)
+  - Prevent accidental state management conflicts
 
-**v2.0.3 is honest:**
-- ✅ **Analysis excels** - Pattern detection, scoring, recommendations (100% reliable)
-- ❌ **Generation fails** - Code generation creates infinite loops (disabled)
-- ✅ **What we're good at** - Deep code understanding and guidance
-- ❌ **What we're bad at** - Reliable multi-file code generation
+- [ ] **Atomic Refactoring**
+  - Support for safe logic migration (e.g., moving local form state to a global store)
+  - 100% interface matching verification
+  - Rollback capability if contracts break
 
-**Better approach:**
-- Let VS Code/Copilot/Cursor handle generation (better tools)
-- Use this extension for analysis and understanding
-- Make informed decisions based on recommendations
+- [ ] **Type-Safe Event Handling**
+  - Standardized enforcement of `FormEvent<T>` and `React.FC` patterns
+  - Automatic type generation for event handlers
+  - Consistent across all generated UI components
+
+- [ ] **Automated Dependency Installation**
+  - Planner identifies missing npm packages
+  - Executor installs them before writing code
+  - No more "module not found" errors
+
+### Quality Goals
+- Contract validation on 100% of multi-file operations
+- Zero "semantic drift" defects
+- Full IDE integration (IntelliSense support)
+
+---
+
+## 🔵 v3.5: Workspace Awareness (Local RAG)
+
+**Focus:** Teaching the agent to "Read" the existing codebase before "Writing."
+
+### Features (Planned)
+
+- [ ] **Local Codebase Indexing**
+  - Lightweight local vector store (LanceDB/Chroma)
+  - Index `src/` directory for semantic search
+  - Fast, privacy-first retrieval
+
+- [ ] **Component Discovery**
+  - Before generating a new UI element, search for existing components (e.g., `Button.tsx`)
+  - Maximize reuse and maintain DRY principles
+  - Suggest existing component modifications over new creation
+
+- [ ] **Context-Aware Documentation**
+  - Index internal READMEs and documentation
+  - Ensure agent uses correct internal APIs
+  - Enforce business logic patterns automatically
+
+- [ ] **Project-Level Planning**
+  - Planner can "Read" multiple files to understand large-scale architecture
+  - Propose changes that respect existing patterns
+  - Understand project conventions and enforce them
+
+### Quality Goals
+- 90%+ component reuse on new feature generation
+- Zero conflicts with existing codebase patterns
+- Local inference only (no external APIs)
+
+---
+
+## 🔴 v4.0: The Autonomous Architect (Agentic Excellence)
+
+**Focus:** Complex refactoring, recursive self-correction, and platform-agnosticism.
+
+### Features (Planned)
+
+- [ ] **"God Object" Decomposition**
+  - Ability to take a massive, 1000-line component
+  - Automatically split into logically decoupled sub-components and hooks
+  - Maintain functionality while improving architecture
+
+- [ ] **Recursive Self-Correction**
+  - Agent can proactively "realize" it needs a new utility or hook
+  - Pause current step to create the dependency first
+  - Resume original task with all dependencies ready
+
+- [ ] **Environment Abstraction Layer**
+  - Auto-detect OS/Shell environment (macOS/Linux/Windows)
+  - Adjust shell commands dynamically
+  - Full cross-platform execution reliability
+
+- [ ] **Visual Validation (Optional)**
+  - Integration with basic screenshot-based testing
+  - Verify that generated Tailwind classes actually look correct in a browser
+  - Catch visual regressions automatically
+
+- [ ] **CI/CD Integration**
+  - Headless mode runs as GitHub Action
+  - Perform "Architecture-Aware" code reviews
+  - Auto-fix simple linting violations
+  - Enable automated architectural enforcement in pull requests
+
+### Quality Goals
+- Fully autonomous complex refactorings (0 manual intervention)
+- Visual regression detection: 100%
+- CI/CD integration for all GitHub Actions
+- Cross-platform execution reliability: 99%+
 
 ---
 
@@ -213,15 +299,16 @@
 
 ## Version History
 
-| Version | Date | Status | Key Features |
-|---------|------|--------|--------------|
-| v2.0.3 | Feb 8, 2026 | ✅ Current | Analysis-only, disabled broken generation |
+| Version | Date | Status | Focus |
+|---------|------|--------|-------|
+| v2.5.0 | Feb 9, 2026 | ✅ Current | Governance Foundation: Rule Injection, Golden Shield, Plan-Content Decoupling, Windows Hardening, Tiered Validation |
+| v3.0 | TBD | 📋 Planned | Semantic Orchestration: Cross-File Contracts, State Guardrails, Atomic Refactoring, Type-Safe Events, Dependency Auto-Install |
+| v3.5 | TBD | 📋 Planned | Workspace Awareness: Local RAG, Component Discovery, Context-Aware Docs, Project-Level Planning |
+| v4.0 | TBD | 📋 Planned | Autonomous Architect: God Object Decomposition, Recursive Self-Correction, Environment Abstraction, Visual Validation, CI/CD Integration |
+| v2.0.3 | Feb 8, 2026 | ✅ Previous | Analysis-only release (code generation disabled) |
 | v2.0.2 | Feb 7, 2026 | ✅ Stable | UX polish, safety improvements |
 | v2.0.1 | Feb 6, 2026 | ✅ Stable | Pattern detection foundation |
 | v2.0.0 | Feb 6, 2026 | ✅ Stable | Intelligent refactoring framework |
-| v1.2.5 | Feb 5, 2026 | ✅ Stable | Multi-step planning and execution |
-| v1.2.0 | Early Feb | ✅ Stable | Planning and autonomous execution |
-| v1.0.0 | Jan 2026 | ✅ Stable | Basic chat and file operations |
 
 ---
 
@@ -336,6 +423,6 @@ npm run test:watch   # Auto-run on changes
 
 ---
 
-**Last Updated:** February 8, 2026  
-**Status:** v2.0.3 Production Ready ✅  
-**Next Review:** v2.1 planning (after stability feedback)
+**Last Updated:** February 9, 2026  
+**Status:** v2.5.0 Production Ready ✅ (PR #18)  
+**Next Phase:** v3.0 Semantic Orchestration (Planning)

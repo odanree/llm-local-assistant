@@ -203,11 +203,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**Agent Mode Commands:**\n\n` +
-          `🤖 **Planning & Execution:**\n` +
-          `- /plan <task> — Create a multi-step action plan\n` +
+        text: `**Agent Mode Commands (v2.5.0)**\n\n` +
+          `🤖 **Planning & Execution (UPDATED v2.5.0) ✨:**\n` +
+          `- /plan <task> — Create a multi-step action plan (NOW: No infinite loops)\n` +
           `- /execute — Execute the current plan step-by-step\n` +
-          `- /approve — Acknowledge and approve the plan\n` +
+          `- /approve — Acknowledge and approve the plan (NOW: Re-enabled)\n` +
           `- /reject — Discard the current plan\n\n` +
           `📚 **Codebase Context:**\n` +
           `- /context show structure — Show project file organization\n` +
@@ -217,7 +217,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `🔧 **Refactoring & Architecture:**\n` +
           `- /refactor <file> — Analyze and suggest improvements\n` +
           `- /extract-service <hook> <name> — Extract business logic to service\n` +
-          `- /design-system <feature> — Generate full feature architecture\n` +
+          `- /design-system <feature> — Generate full feature architecture (NOW: No infinite loops)\n` +
           `- /rate-architecture — Score codebase quality (0-10)\n` +
           `- /suggest-patterns — Show pattern improvements\n\n` +
           `📄 **File Operations:**\n` +
@@ -229,11 +229,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-commit-msg — Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
-          `- /check-model — Show configured model and available models on server\n\n` +
-          `✨ **Advanced Features (v2.5.0):**\n` +
-          `- /plan — Action plan generation with step-by-step guidance\n` +
-          `- /design-system — Full system architecture design\n` +
-          `- /approve — Acknowledge and approve generated content`,
+          `- /check-model — Show configured model and available models on server`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
