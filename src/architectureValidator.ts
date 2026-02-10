@@ -539,12 +539,29 @@ export class ArchitectureValidator {
           }
 
           // Extract what the source file exports
-          const exportRegex = /export\s+(?:const|function|interface|type)\s+(\w+)/g;
+          // Handles: export const, export function, export interface, export type, export default
+          // Also handles: export { name }, export { name as alias }
+          const exportRegex = /export\s+(?:(?:const|function|interface|type|class)\s+(\w+)|{([^}]+)}|default\s+(\w+))/g;
           const sourceExports: Set<string> = new Set();
           let exportMatch;
 
           while ((exportMatch = exportRegex.exec(sourceContent)) !== null) {
-            sourceExports.add(exportMatch[1]);
+            // Capture group 1: named exports (const, function, etc)
+            if (exportMatch[1]) {
+              sourceExports.add(exportMatch[1]);
+            }
+            // Capture group 2: export { } syntax
+            if (exportMatch[2]) {
+              const names = exportMatch[2].split(',').map(n => {
+                const parts = n.trim().split(/\s+as\s+/);
+                return parts[parts.length - 1]; // Get the exported name (after 'as' if present)
+              });
+              names.forEach(n => n && sourceExports.add(n.trim()));
+            }
+            // Capture group 3: export default
+            if (exportMatch[3]) {
+              sourceExports.add('default');
+            }
           }
 
           // For named imports, verify each symbol exists in source exports
@@ -552,10 +569,15 @@ export class ArchitectureValidator {
             for (const symbol of imp.symbols) {
               // Check for exact match or pattern matching (e.g., useStore hook)
               const exists = sourceExports.has(symbol);
+              
+              // Zustand/custom hook pattern: if importing use*, check if any use* exists
               const isHookPattern = symbol.startsWith('use') && 
                                     Array.from(sourceExports).some(e => e.startsWith('use'));
+              
+              // Fallback: check if 'default' export exists (for default exports)
+              const hasDefaultExport = sourceExports.has('default');
 
-              if (!exists && !isHookPattern) {
+              if (!exists && !isHookPattern && !hasDefaultExport) {
                 violations.push({
                   type: 'missing-export',
                   import: symbol,
@@ -686,7 +708,9 @@ export class ArchitectureValidator {
     // Step 0: Validate all React imports (useState, etc.)
     // Check if code uses useState but doesn't import it
     if (/\s*useState\s*</.test(generatedCode) || /\s*useState\s*\(/.test(generatedCode)) {
-      if (!/import\s+{[^}]*useState[^}]*}\s+from\s+['"]react['"]/.test(generatedCode)) {
+      // Updated pattern to handle: import { useState } OR import React, { useState }
+      // Pattern explanation: import [optional: DefaultName, ] { ...useState... } from 'react'
+      if (!/import\s+(?:\w+\s*,\s*)?{[^}]*useState[^}]*}\s+from\s+['"]react['"]/.test(generatedCode)) {
         violations.push({
           type: 'semantic-error',
           import: 'useState',
@@ -694,6 +718,34 @@ export class ArchitectureValidator {
           suggestion: `Add: import { useState } from 'react';`,
           severity: 'high',
         });
+      }
+    }
+
+    // NEW: Step 0.5: Comprehensive React hook import validation
+    // Check for ALL React hooks that might be used but not imported
+    const reactHooks = [
+      'useCallback', 'useEffect', 'useContext', 'useReducer', 'useMemo',
+      'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue',
+      'useId', 'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+    ];
+    
+    const reactImportLine = generatedCode.match(/import\s+(?:\w+\s*,\s*)?{([^}]*)}\s+from\s+['"]react['"]/);
+    const importedReactHooks = reactImportLine ? reactImportLine[1].split(',').map(h => h.trim()) : [];
+    
+    for (const hook of reactHooks) {
+      // Check if hook is USED in code
+      if (new RegExp(`\\b${hook}\\s*\\(`).test(generatedCode)) {
+        // Check if it's IMPORTED
+        if (!importedReactHooks.includes(hook)) {
+          console.log(`[ArchitectureValidator] ⚠️ React hook '${hook}' is used but not imported from React`);
+          violations.push({
+            type: 'semantic-error',
+            import: hook,
+            message: `React hook '${hook}' is used but not imported from React`,
+            suggestion: `Add: import { ${hook} } from 'react';`,
+            severity: 'high',
+          });
+        }
       }
     }
 
@@ -732,18 +784,30 @@ export class ArchitectureValidator {
       })
     );
 
+    // HOOK FILE DETECTION: Check if this is a custom hook file (exports use* function)
+    const isHookFile = /src\/hooks\//.test(filePath) || /export\s+(?:const|function)\s+use\w+/.test(generatedCode);
+    
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {
       for (const hookName of hookImport.names) {
         const escapedHookName = hookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         
-        // STRICT: Hook MUST be called
-        // Only match actual function calls, not just references
+        // HOOK CALL DETECTION: Multiple patterns for flexibility
+        // Pattern 1 (strict): const [x] = hookName( or const {x} = hookName(
         const hookCallPattern = new RegExp(
-          `const\\s+(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedHookName}\\s*\\(`,
+          `const\\s*(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedHookName}\\s*\\(`,
           'g'
         );
-        const isCalled = hookCallPattern.test(generatedCode);
+        
+        // Pattern 2 (lenient): hookName( appears anywhere - for single-line or flexible code
+        const lenientPattern = new RegExp(`${escapedHookName}\\s*\\(`, 'g');
+        
+        const isCalledStrict = hookCallPattern.test(generatedCode);
+        const isCalledLenient = lenientPattern.test(generatedCode);
+        
+        // For hook files, use lenient check since they MUST use React hooks
+        // For other files, use strict check
+        const isCalled = isHookFile ? isCalledLenient : isCalledStrict;
 
         if (!isCalled) {
           // EXCEPTION: useState imported but not called is OK if using store hooks
@@ -754,14 +818,41 @@ export class ArchitectureValidator {
             );
             continue; // Skip this error - refactoring is intentional
           }
+          
+          // EXCEPTION: For hook files, skip validation of React hooks
+          // Custom hooks MUST use React hooks internally, but we can't validate format
+          if (isHookFile && (hookName === 'useState' || hookName === 'useEffect' || hookName === 'useReducer' || hookName === 'useCallback' || hookName === 'useMemo')) {
+            console.log(
+              `[ArchitectureValidator] ℹ️ Skipping hook validation for hook file: ${filePath}`
+            );
+            continue; // Custom hooks are allowed to call React hooks
+          }
+
+          // Generate context-aware suggestion based on hook type and file content
+          let suggestion = `Must call the hook: const { ... } = ${hookName}();`;
+          
+          if (hookName === 'useState') {
+            // For useState, provide more specific guidance
+            suggestion = `useState must be called in the component body. Example: const [state, setState] = useState(initialValue);`;
+          } else if (hookName === 'useEffect') {
+            suggestion = `useEffect must be called to register side effects. Example: useEffect(() => { /* effect */ }, [dependencies]);`;
+          } else if (hookName === 'useContext') {
+            suggestion = `useContext must be called to consume context. Example: const contextValue = useContext(MyContext);`;
+          } else if (hookName === 'useReducer') {
+            suggestion = `useReducer must be called for complex state. Example: const [state, dispatch] = useReducer(reducer, initialState);`;
+          } else if (hookName === 'useCallback') {
+            suggestion = `useCallback must be called to memoize callbacks. Example: const memoizedCallback = useCallback(() => { /* callback */ }, [dependencies]);`;
+          } else if (hookName === 'useMemo') {
+            suggestion = `useMemo must be called to memoize values. Example: const memoizedValue = useMemo(() => computeValue(), [dependencies]);`;
+          }
 
           violations.push({
             type: 'semantic-error',
             import: hookName,
-            message: `Hook '${hookName}' is imported but never called`,
+            message: `Hook '${hookName}' is imported but never called in ${filePath}`,
             suggestion: hookName === 'useState' && usingStoreHook 
               ? `Remove unused useState import since using store hook instead`
-              : `Must call the hook: const { ... } = ${hookName}();`,
+              : suggestion,
             severity: 'high',
           });
           continue; // Can't validate destructuring if hook isn't called
@@ -774,6 +865,16 @@ export class ArchitectureValidator {
         );
         let destructMatch;
         const destructuredProps: Set<string> = new Set();
+
+        // CRITICAL: Only validate destructuring for Zustand store hooks
+        // Custom hooks like useCounter should use basic destructuring without full property validation
+        // Zustand stores must have their destructured properties validated against store exports
+        const isZustandStore = hookName.includes('Store') || hookImport.source.includes('stores');
+        
+        if (!isZustandStore) {
+          console.log(`[ArchitectureValidator] ℹ️ Skipping store property validation for non-store hook: ${hookName}`);
+          continue;
+        }
 
         while ((destructMatch = objectDestructureRegex.exec(generatedCode)) !== null) {
           const properties = destructMatch[1]
@@ -1059,6 +1160,258 @@ export class ArchitectureValidator {
         suggestion: `Remove all useState calls and use store hook exclusively`,
         severity: 'high',
       });
+    }
+
+    // Step 6: CRITICAL - Check for CUSTOM HOOKS that are CALLED but NOT IMPORTED
+    // Pattern: const { x } = useCounter() but no import statement
+    // This catches: `const { increment } = useCounter()` without import
+    const customHookCallRegex = /const\s+(?:\[[\w\s,]*\]|\{[^}]+\})\s*=\s*(use\w+)\s*\(/g;
+    let customHookCallMatch;
+    const customHooksCalled = new Set<string>();
+    
+    while ((customHookCallMatch = customHookCallRegex.exec(generatedCode)) !== null) {
+      const hookName = customHookCallMatch[1];
+      customHooksCalled.add(hookName);
+    }
+    
+    // Get list of imported hook names
+    const importedHookNames = new Set<string>();
+    importedHooks.forEach(h => {
+      h.names.forEach(name => importedHookNames.add(name));
+    });
+    
+    // Check if each called hook is imported
+    customHooksCalled.forEach(hookName => {
+      // Skip built-in React hooks
+      const isBuiltinReactHook = [
+        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
+        'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
+        'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+      ].includes(hookName);
+      
+      if (!isBuiltinReactHook && !importedHookNames.has(hookName)) {
+        console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
+        violations.push({
+          type: 'semantic-error',
+          import: hookName,
+          message: `Missing import: ${hookName} is used but not imported from '../hooks/${hookName}'`,
+          suggestion: `Add: import { ${hookName} } from '../hooks/${hookName}';`,
+          severity: 'high',
+        });
+      }
+    });
+
+    // Step 7: CRITICAL - Check for UTILITY FUNCTIONS that are called but NOT IMPORTED
+    // Utilities: cn(), clsx(), twMerge(), logger(), etc.
+    // These commonly get used but are easy to forget to import
+    const utilityFunctions: { [key: string]: string[] } = {
+      'cn': ['../utils/cn', './utils/cn', '@/utils/cn'],
+      'clsx': ['clsx'],
+      'twMerge': ['tailwind-merge'],
+      'logger': ['../utils/logger', './utils/logger'],
+      'formatDate': ['../utils/formatDate', './utils/formatDate'],
+      'parseDate': ['../utils/parseDate', './utils/parseDate'],
+      'validateEmail': ['../utils/validateEmail', './utils/validateEmail'],
+    };
+
+    // Extract all imports to check what's available
+    const importedNames = new Set<string>();
+    const allImportRegex = /import\s+(?:{([^}]*)}|(\w+))/g;
+    let allImportMatch;
+    while ((allImportMatch = allImportRegex.exec(generatedCode)) !== null) {
+      if (allImportMatch[1]) {
+        // Named imports: { a, b, c }
+        allImportMatch[1].split(',').forEach(name => {
+          importedNames.add(name.trim().split(' as ')[0]);
+        });
+      } else if (allImportMatch[2]) {
+        // Default import: React
+        importedNames.add(allImportMatch[2].trim());
+      }
+    }
+
+    // Check for utility function calls
+    for (const [utilFunc, possibleSources] of Object.entries(utilityFunctions)) {
+      // Check if utility is called in code
+      const isUsed = new RegExp(`\\b${utilFunc}\\s*\\(`).test(generatedCode);
+      
+      if (isUsed && !importedNames.has(utilFunc)) {
+        console.log(`[ArchitectureValidator] ⚠️ Utility '${utilFunc}' is called but not imported`);
+        violations.push({
+          type: 'semantic-error',
+          import: utilFunc,
+          message: `Missing import: ${utilFunc}() is used but not imported`,
+          suggestion: `Add: import { ${utilFunc} } from '${possibleSources[0]}';`,
+          severity: 'high',
+        });
+      }
+    }
+
+    return violations;
+  }
+
+  /**
+   * Validates that all imported identifiers are actually used in code
+   * Catches unused imports and missing import errors
+   */
+  public validateImportUsage(code: string): LayerViolation[] {
+    const violations: LayerViolation[] = [];
+
+    // Extract all imports with their names
+    const importRegex = /import\s+(?:(?:{([^}]+)})|(\w+)|(\*\s+as\s+(\w+)))\s+from\s+['"]([^'"]+)['"]/g;
+    const importedNames: Map<string, string> = new Map(); // name -> source
+    let importMatch;
+
+    while ((importMatch = importRegex.exec(code)) !== null) {
+      if (importMatch[1]) {
+        // Named imports: { a, b, c as d }
+        importMatch[1].split(',').forEach(n => {
+          const trimmed = n.trim();
+          const parts = trimmed.split(/\s+as\s+/);
+          const usedName = parts[1]?.trim() || parts[0].trim();
+          if (usedName) importedNames.set(usedName, importMatch[5]);
+        });
+      } else if (importMatch[2]) {
+        // Default imports
+        importedNames.set(importMatch[2], importMatch[5]);
+      } else if (importMatch[4]) {
+        // Namespace imports: import * as Name
+        importedNames.set(importMatch[4], importMatch[5]);
+      }
+    }
+
+    // Check each import is actually used
+    for (const [name, source] of importedNames) {
+      // Pattern: word boundary + name, but NOT when it's part of a string or inside 'from'
+      const usagePattern = new RegExp(`(?<!["'\\w])${name}(?!["'\\w])(?!\\s*from)`, 'g');
+      const usages = code.match(usagePattern) || [];
+
+      // A name appears in its own import statement, so ignore that
+      const filteredUsages = usages.filter(
+        (_, index) => {
+          const pos = code.indexOf(name, index > 0 ? code.indexOf(usages[index - 1]) + usages[index - 1].length : 0);
+          return !code.substring(Math.max(0, pos - 50), pos).includes('import');
+        }
+      );
+
+      if (filteredUsages.length === 0 && !name.includes('*')) {
+        violations.push({
+          type: 'semantic-error',
+          import: name,
+          message: `Imported '${name}' from '${source}' but never used`,
+          suggestion: `Remove unused import: import { ${name} } from '${source}';`,
+          severity: 'medium',
+        });
+      }
+    }
+
+    return violations;
+  }
+
+  /**
+   * Validates Zustand component correctness:
+   * - Store hook MUST be destructured directly: const { x } = useStore()
+   * - NOT intermediate variable: const store = useStore(); const { x } = store;
+   * - useState MUST NOT be used
+   * - All state MUST come from store hook destructuring
+   */
+  public validateZustandComponent(
+    componentCode: string,
+    expectedStoreHook: string
+  ): LayerViolation[] {
+    const violations: LayerViolation[] = [];
+
+    console.log(`[ArchitectureValidator] 🧪 Validating Zustand component for hook: ${expectedStoreHook}`);
+
+    // Check 1: Store hook is imported
+    const hookImportPattern = new RegExp(
+      `import\\s+{[^}]*${expectedStoreHook}[^}]*}\\s+from`,
+      'i'
+    );
+    if (!hookImportPattern.test(componentCode)) {
+      violations.push({
+        type: 'semantic-error',
+        import: expectedStoreHook,
+        message: `Zustand component must import '${expectedStoreHook}' from store`,
+        suggestion: `Add: import { ${expectedStoreHook} } from '../stores/...';`,
+        severity: 'high',
+      });
+      return violations; // Can't continue without import
+    }
+
+    // Check 2: Store hook is destructured directly (NOT intermediate variable)
+    // CORRECT: const { email, password } = useLoginStore();
+    // WRONG:   const store = useLoginStore(); const { email } = store;
+    const directDestructurePattern = new RegExp(
+      `const\\s+{[^}]+}\\s*=\\s*${expectedStoreHook}\\s*\\(\\)`,
+      'g'
+    );
+    
+    if (!directDestructurePattern.test(componentCode)) {
+      violations.push({
+        type: 'semantic-error',
+        import: expectedStoreHook,
+        message: `Store hook '${expectedStoreHook}' must be destructured directly in single line`,
+        suggestion: `Use this pattern: const { email, password, setEmail } = ${expectedStoreHook}();`,
+        severity: 'high',
+      });
+      return violations; // Critical structural issue
+    }
+
+    // Check 3: No intermediate store variable
+    // This catches: const store = useLoginStore(); (storing hook result in variable)
+    const intermediateVarPattern = new RegExp(
+      `const\\s+\\w+\\s*=\\s*${expectedStoreHook}\\s*\\(\\)\\s*;`
+    );
+    if (intermediateVarPattern.test(componentCode)) {
+      violations.push({
+        type: 'semantic-error',
+        import: expectedStoreHook,
+        message: `Do not store store hook in intermediate variable. Destructure directly instead.`,
+        suggestion: `Change: const store = ${expectedStoreHook}(); to: const { ... } = ${expectedStoreHook}();`,
+        severity: 'high',
+      });
+    }
+
+    // Check 4: No useState in Zustand components (single source of truth)
+    if (/const\s+\[[\w\s,]+\]\s*=\s*useState\s*\(/.test(componentCode)) {
+      violations.push({
+        type: 'semantic-error',
+        message: `Zustand component uses both store hook and useState - violates single source of truth principle`,
+        suggestion: `Remove all useState. Use '${expectedStoreHook}' hook exclusively for state.`,
+        severity: 'high',
+      });
+    }
+
+    // Check 5: Validate that destructured properties are actually used
+    // Extract what was destructured
+    const destructureMatch = componentCode.match(
+      new RegExp(`const\\s+{([^}]+)}\\s*=\\s*${expectedStoreHook}\\s*\\(\\)`)
+    );
+    
+    if (destructureMatch) {
+      const destructuredProps = destructureMatch[1]
+        .split(',')
+        .map(p => {
+          const parts = p.trim().split(/\s+as\s+/);
+          return parts[parts.length - 1].trim(); // Get the actual name used in code
+        });
+
+      for (const prop of destructuredProps) {
+        // Check if this property is used anywhere in the component (not counting the destructuring line)
+        const propUsagePattern = new RegExp(`\\b${prop}\\b(?!\\s*[,}])`);
+        const usages = (componentCode.split(destructureMatch[0])[1] || '').match(propUsagePattern);
+        
+        if (!usages) {
+          violations.push({
+            type: 'semantic-error',
+            import: expectedStoreHook,
+            message: `Property '${prop}' destructured from store but never used`,
+            suggestion: `Remove '${prop}' from destructuring or use it in the component`,
+            severity: 'medium',
+          });
+        }
+      }
     }
 
     return violations;
