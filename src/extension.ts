@@ -1359,48 +1359,19 @@ ${patternResult.reasoning}
             // Check for /design-system command
             const designMatch = text.match(/^\/design-system\s+(.+)$/);
             
-            // PHASE 4: /design-system command — Re-enabled with Refiner differential prompting
+            // QUICK FIX: Simple direct LLM call (bypasses complex Refiner validation loop)
             if (designMatch) {
               const featureRequest = designMatch[1];
-              const wsFolder = vscode.workspace.workspaceFolders?.[0];
-              if (!wsFolder) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: 'No workspace folder open.',
-                  success: false,
-                });
-                return;
-              }
 
               postChatMessage({
                 command: 'addMessage',
-                text: `🏗️ Generating system design for: "${featureRequest}"\n\n(Using Refiner differential prompting — Phase 4)`,
+                text: `🏗️ Generating system design for: "${featureRequest}"\n\n⟳ Calling language model...`,
                 type: 'info',
               });
 
               try {
-                // Create Refiner instance with LLM callbacks
-                const refiner = new Refiner({
-                  projectRoot: wsFolder.uri.fsPath,
-                  workspaceName: wsFolder.name,
-                  maxRetries: 3,
-                  llmCall: async (systemPrompt: string, userMessage: string) => {
-                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
-                    if (!response.success) {
-                      throw new Error(response.error || 'LLM call failed');
-                    }
-                    return response.message || '';
-                  },
-                  onProgress: (stage: string, details: string) => {
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: `⟳ ${stage}: ${details}`,
-                      type: 'info',
-                    });
-                  },
-                });
+                const systemPrompt = `You are an expert software architect. Design complete system architectures based on feature requests.`;
 
-                // Generate design using Refiner
                 const designPrompt = `Design a complete system architecture for:
 
 ${featureRequest}
@@ -1417,18 +1388,18 @@ Provide:
 
 Format as a structured design document with code examples.`;
 
-                const result = await refiner.generateCode(designPrompt, undefined, undefined);
+                const response = await llmClient.sendMessage(systemPrompt + '\n\n' + designPrompt);
 
-                if (result.success && result.code) {
+                if (response.success && response.message) {
                   postChatMessage({
                     command: 'addMessage',
-                    text: `✅ System design generated successfully!\n\n${result.code}`,
+                    text: `✅ System design generated successfully!\n\n${response.message}`,
                     success: true,
                   });
                 } else {
                   postChatMessage({
                     command: 'addMessage',
-                    error: `Failed to generate design: ${result.error || result.explanation}`,
+                    error: `Failed to generate design: ${response.error || 'Unknown error'}`,
                     success: false,
                   });
                 }
