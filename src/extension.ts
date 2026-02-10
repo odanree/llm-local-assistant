@@ -1366,23 +1366,39 @@ ${patternResult.reasoning}
               });
 
               try {
-                const systemPrompt = `You are an expert software architect. Design complete system architectures based on feature requests.`;
+                const systemPrompt = `You are an expert software architect. Design concise, actionable system architectures organized by layers.`;
 
-                const designPrompt = `Design a complete system architecture for:
+                const designPrompt = `Design a concise system architecture for: "${featureRequest}"
 
-${featureRequest}
+CRITICAL: Use this EXACT format using layer structure:
 
-Provide:
-1. **Components**: Main components and their responsibilities
-2. **Data Flow**: How data flows between components
-3. **File Structure**: Recommended file organization
-4. **Dependencies**: Required packages and versions
-5. **API Design**: If applicable, REST endpoint structure
-6. **State Management**: How to manage application state
-7. **Error Handling**: Error handling strategy
-8. **Testing**: Testing approach and key test cases
+🏗️ **Architecture: [Feature Name]**
 
-Format as a structured design document with code examples.`;
+[Schema Layer]
+- File.ts (brief description of what it defines)
+- File2.ts (fields or key types)
+
+[Service Layer]
+- service.ts (methods/responsibilities)
+- service2.ts (methods/responsibilities)
+
+[Hook Layer]
+- useCustom.ts (what it manages)
+- useCustom2.ts (what it manages)
+
+[Component Layer]
+- Component.tsx (purpose)
+- Component2.tsx (purpose)
+
+[Validation]
+✅ All layers defined
+✅ File contracts validated
+✅ Import paths calculated
+✅ Ready for generation
+
+Next: Use /write to create files
+
+KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No code examples, just file names and brief descriptions.`;
 
                 const response = await llmClient.sendMessage(systemPrompt + '\n\n' + designPrompt);
 
