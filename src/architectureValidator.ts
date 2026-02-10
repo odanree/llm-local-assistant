@@ -427,7 +427,8 @@ export class ArchitectureValidator {
   public async validateCrossFileContract(
     generatedCode: string,
     filePath: string,
-    workspace: vscode.Uri
+    workspace: vscode.Uri,
+    previousStepFiles?: Map<string, string>  // ✅ CRITICAL: Files from previous steps (path -> content)
   ): Promise<LayerValidationResult> {
     const violations: LayerViolation[] = [];
 
@@ -477,8 +478,36 @@ export class ArchitectureValidator {
 
         // Try to read the source file
         try {
-          const sourceUri = vscode.Uri.joinPath(workspace, resolvedPath);
-          const sourceContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(sourceUri));
+          let sourceContent: string | null = null;
+
+          // ✅ CRITICAL: Check previousStepFiles FIRST (from previous steps in the same plan)
+          // This avoids disk I/O and prevents "file not found" errors for just-written files
+          // Try exact match first, then with .ts/.tsx extensions (path normalization)
+          const pathVariants = [
+            resolvedPath,
+            resolvedPath + '.ts',
+            resolvedPath + '.tsx',
+            resolvedPath + '.js',
+            resolvedPath + '.jsx',
+          ];
+
+          for (const pathVariant of pathVariants) {
+            if (previousStepFiles && previousStepFiles.has(pathVariant)) {
+              sourceContent = previousStepFiles.get(pathVariant) || '';
+              console.log(`[ArchitectureValidator] ✅ Using context of previously-written file: ${pathVariant} (matched from ${resolvedPath})`);
+              break;
+            }
+          }
+
+          // If not in previous step files, try reading from disk
+          if (!sourceContent) {
+            const sourceUri = vscode.Uri.joinPath(workspace, resolvedPath);
+            sourceContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(sourceUri));
+          }
+
+          if (!sourceContent) {
+            throw new Error(`File is empty: ${resolvedPath}`);
+          }
 
           // Extract what the source file exports
           const exportRegex = /export\s+(?:const|function|interface|type)\s+(\w+)/g;

@@ -455,11 +455,43 @@ export class Executor {
     // Verify that imported symbols actually exist in their source files
     if ((filePath.endsWith('.ts') || filePath.endsWith('.tsx')) && this.plan) {
       try {
+        // ✅ CRITICAL: Build context of files from previous steps
+        // Pass these to the validator so it can resolve imports without reading disk
+        const previousStepFiles = new Map<string, string>();
+        if (this.plan.results) {
+          for (let i = 1; i < step.stepId; i++) {
+            const prevResult = this.plan.results.get(i);
+            if (prevResult && prevResult.output && (prevResult as any).content) {
+              // If output is a file path, try to get content from plan storage
+              // The output format is usually "Wrote {filePath} (XX bytes)"
+              const pathMatch = prevResult.output.match(/Wrote\s+(\S+)\s+/);
+              if (pathMatch) {
+                const prevFilePath = pathMatch[1];
+                const fileContent = (prevResult as any).content;
+                
+                // Store with multiple variants for robust path matching
+                // e.g., "src/stores/loginStore.ts" also stored as "src/stores/loginStore"
+                previousStepFiles.set(prevFilePath, fileContent);
+                
+                // Also store without extension for relative import resolution
+                if (prevFilePath.endsWith('.ts') || prevFilePath.endsWith('.tsx') || 
+                    prevFilePath.endsWith('.js') || prevFilePath.endsWith('.jsx')) {
+                  const pathWithoutExt = prevFilePath.replace(/\.(ts|tsx|js|jsx)$/, '');
+                  previousStepFiles.set(pathWithoutExt, fileContent);
+                }
+                
+                console.log(`[Executor] ✅ Stored previous step file for validator: ${prevFilePath}`);
+              }
+            }
+          }
+        }
+
         const validator = new ArchitectureValidator();
         const contractResult = await validator.validateCrossFileContract(
           content,
           filePath,
-          this.config.workspace
+          this.config.workspace,
+          previousStepFiles.size > 0 ? previousStepFiles : undefined  // ✅ Pass previous files context
         );
 
         if (contractResult.hasViolations) {
@@ -1891,6 +1923,99 @@ export class Executor {
   }
 
   /**
+   * CRITICAL: Extract and store file contract after successful write
+   * This allows subsequent steps to use the ACTUAL API that was created,
+   * not a guessed API or calculated import paths
+   * 
+   * Runs AFTER file write succeeds, extracts real exports for validation/injection
+   */
+  private async extractAndStoreContract(
+    filePath: string,
+    content: string,
+    stepId: number,
+    workspace: vscode.Uri
+  ): Promise<void> {
+    try {
+      // Only extract contracts for code files
+      const ext = filePath.split('.').pop()?.toLowerCase();
+      if (!['ts', 'tsx', 'js', 'jsx'].includes(ext || '')) {
+        return;
+      }
+
+      // ZUSTAND STORES: Extract hook and state shape
+      const zustandMatch = content.match(/export\s+const\s+(use\w+)\s*=\s*create[<\(]/i);
+      if (zustandMatch) {
+        const [, hookName] = zustandMatch;
+        
+        // Extract state properties: look for patterns like "email: ...", "password: ...", etc
+        const propsMatch = content.match(/\{\s*([^}]+?(?::[^,}]+[,]?)*)\s*\}/);
+        const stateProps: string[] = [];
+        
+        if (propsMatch) {
+          // Split by comma and extract property names
+          const propLines = propsMatch[1].split(',');
+          for (const line of propLines) {
+            const match = line.match(/^\s*(\w+)\s*:/);
+            if (match) {
+              stateProps.push(match[1]);
+            }
+          }
+        }
+
+        // Store contract for later injection
+        const contract = {
+          type: 'zustand-store',
+          hookName,
+          filePath,
+          stateProps,
+          importStatement: `import { ${hookName} } from './${filePath.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '')}'`,
+          relativeImportExample: `import { ${hookName} } from '../stores/${filePath.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '')}';`,
+          usageExample: `const { ${stateProps.slice(0, 3).join(', ')}${stateProps.length > 3 ? ', ...' : ''} } = ${hookName}();`,
+          description: `**Zustand Store**: ${hookName}\n   Exports: ${stateProps.join(', ')}\n   Usage: const {...} = ${hookName}()`
+        };
+
+        // Store in plan results metadata
+        if (!this.plan) return;
+        if (!this.plan.results) this.plan.results = new Map();
+        
+        const stepResult = this.plan.results.get(stepId);
+        if (stepResult) {
+          (stepResult as any).contract = contract;
+          console.log(`[Executor] ✅ Stored Zustand contract for Step ${stepId}: ${hookName}`);
+          console.log(`  Exports: ${stateProps.join(', ')}`);
+        }
+        return;
+      }
+
+      // UTILITIES/HELPERS: Extract all exports
+      const exportMatches = content.match(/export\s+(?:const|function|interface|type)\s+(\w+)/g) || [];
+      if (exportMatches.length > 0) {
+        const exports = exportMatches.map(m => m.replace(/export\s+(?:const|function|interface|type)\s+/, ''));
+        
+        const contract = {
+          type: 'utility',
+          exports,
+          filePath,
+          description: `**Utility**: ${exports.join(', ')}`
+        };
+
+        // Store in plan results metadata
+        if (!this.plan) return;
+        if (!this.plan.results) this.plan.results = new Map();
+        
+        const stepResult = this.plan.results.get(stepId);
+        if (stepResult) {
+          (stepResult as any).contract = contract;
+          console.log(`[Executor] ✅ Stored utility contract for Step ${stepId}: ${exports.join(', ')}`);
+        }
+      }
+    } catch (error) {
+      // Don't fail the step if contract extraction fails
+      console.warn(`[Executor] Failed to extract contract for ${filePath}: ${error}`);
+    }
+  }
+
+  /**
    * Execute /write step: Generate content and write to file
    * Streams generated content back to callback
    */
@@ -1959,24 +2084,59 @@ export class Executor {
       }
       
       if (previouslyCreatedFiles.length > 0) {
-        // Extract detailed contracts for each file
+        // ✅ CRITICAL: Use STORED CONTRACTS from previous steps (actual APIs)
+        // NOT calculated/guessed paths
         const fileContracts: string[] = [];
         const requiredImports: string[] = [];
+        const storedContracts: any[] = [];
         
-        for (const filePath of previouslyCreatedFiles) {
-          try {
-            const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
-            fileContracts.push(contract);
-            
-            // CRITICAL FIX: Generate exact relative import paths
-            // Calculate the import statement for this file from the current file's perspective
-            const importStmt = this.calculateImportStatement(step.path, filePath);
-            if (importStmt) {
-              requiredImports.push(importStmt);
+        for (let i = 1; i < step.stepId; i++) {
+          const prevResult = this.plan.results?.get(i);
+          if (prevResult && (prevResult as any).contract) {
+            storedContracts.push((prevResult as any).contract);
+          }
+        }
+
+        // ✅ If we have stored contracts, use them (actual APIs that were created)
+        if (storedContracts.length > 0) {
+          console.log(`[Executor] ✅ Using ${storedContracts.length} stored contract(s) from previous steps`);
+          
+          for (const contract of storedContracts) {
+            if (contract.type === 'zustand-store') {
+              // Zustand store contract
+              fileContracts.push(`📦 **Zustand Store** - \`${contract.filePath}\`
+   - Hook name: \`${contract.hookName}\`
+   - Exports: \`${contract.stateProps.join(', ')}\`
+   - Usage: \`const { ${contract.stateProps.slice(0, 3).join(', ')}${contract.stateProps.length > 3 ? ', ...' : ''} } = ${contract.hookName}()\`
+   - Example import: \`${contract.relativeImportExample}\``);
+              
+              // Add import statement (use relative import from target file's perspective)
+              requiredImports.push(contract.relativeImportExample);
+            } else if (contract.type === 'utility') {
+              // Utility/Helper export
+              fileContracts.push(`🛠️ **Utility** - \`${contract.filePath}\`
+   - Exports: \`${contract.exports.join(', ')}\``);
             }
-          } catch {
-            // Fallback if contract extraction fails
-            fileContracts.push(`📄 **File** - \`${filePath}\``);
+          }
+        } else {
+          // Fallback: extract contracts dynamically (same as before)
+          console.log(`[Executor] ℹ️ No stored contracts found, extracting dynamically...`);
+          
+          for (const filePath of previouslyCreatedFiles) {
+            try {
+              const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
+              fileContracts.push(contract);
+              
+              // CRITICAL FIX: Generate exact relative import paths
+              // Calculate the import statement for this file from the current file's perspective
+              const importStmt = this.calculateImportStatement(step.path, filePath);
+              if (importStmt) {
+                requiredImports.push(importStmt);
+              }
+            } catch {
+              // Fallback if contract extraction fails
+              fileContracts.push(`📄 **File** - \`${filePath}\``);
+            }
           }
         }
 
@@ -1990,34 +2150,26 @@ You MUST start your file with these EXACT import statements (copy-paste):
 ${requiredImports.join('\n')}
 \`\`\`
 
-These are calculated based on actual file paths. Do NOT modify them.
+These are ${storedContracts.length > 0 ? 'extracted from files created in previous steps' : 'calculated based on actual file paths'}. Do NOT modify them.
 Do NOT create your own import paths - use EXACTLY what's shown above.
 
 `;
         }
 
         multiStepContext = `${importSection}## CONTEXT: Related Files Already Created
-The following files were created in previous steps. Study their exported APIs carefully:
+The following files were created in previous steps. Use their exported APIs as shown below.
 
 ${fileContracts.join('\n\n')}
 
 CRITICAL INTEGRATION RULES:
 1. Start with the REQUIRED IMPORTS shown above (copy them exactly)
-2. Use the exported APIs as documented (see state structure, hook names, etc. above)
-3. Zustand stores: State may be nested. If store returns \`{ formState: { email, password } }\`, access as \`state.formState.email\`, NOT \`state.email\`
-4. Do NOT create duplicate files/stores with similar names
+2. Use ONLY the APIs and exports documented above - do NOT invent new API calls
+3. For Zustand stores: Use ONLY the methods/properties exported (do NOT guess at other properties)
+4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
-6. Do NOT import unused modules or create unused aliases
-7. Remove any unused imports from this file EXCEPT the REQUIRED IMPORTS above
-
-DO:
-- **Use** the files documented above instead of creating new ones
-- **Import** from previously created files
-- **Follow** the exact API that's exported (don't guess at methods that don't exist)
-- **Consolidate** related functionality into existing structure
 
 `;
-        console.log(`[Executor] ℹ️ Injecting multi-step context with file contracts: ${previouslyCreatedFiles.length} previous files`);
+        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s)`);
       }
     }
 
@@ -2451,17 +2603,25 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       await vscode.workspace.fs.writeFile(filePath, bytes);
 
+      // ✅ CRITICAL: Post-step contract extraction
+      // After writing, immediately extract what was created (actual APIs, exports, etc)
+      // This allows next steps to use the REAL contract, not calculated/guessed paths
+      await this.extractAndStoreContract(step.path, finalContent, step.stepId, workspaceUri);
+
       // Phase 3.3.2: Track file in CodebaseIndex for next steps
       if (this.config.codebaseIndex) {
         this.config.codebaseIndex.addFile(filePath.fsPath, finalContent);
       }
 
-      return {
+      const result: any = {
         stepId: step.stepId,
         success: true,
-        output: `Wrote ${step.path} (${content.length} bytes)`,
+        output: `Wrote ${step.path} (${finalContent.length} bytes)`,
         duration: Date.now() - startTime,
+        content: finalContent,  // ✅ CRITICAL: Store the actual content for next steps
       };
+
+      return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const suggestion = this.suggestErrorFix('write', step.path, errorMsg);
