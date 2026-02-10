@@ -825,19 +825,94 @@ export class ArchitectureValidator {
                 while ((propMatch = propRegex.exec(stateObj)) !== null) {
                   storeProps.add(propMatch[1]);
                 }
+              } else {
+                // Try alternative: search for all property patterns in create call
+                const altPattern = /create\s*\(\s*(?:set|get)[^]*?\)\s*\$/g;
+                const createMatch = storeContent.match(/create\s*\(\s*\([^)]*\)\s*=>/);
+                if (createMatch) {
+                  // Look for property: value patterns in the Zustand store body
+                  const bodyRegex = /(\w+)\s*:/g;
+                  let bodyMatch;
+                  while ((bodyMatch = bodyRegex.exec(storeContent)) !== null) {
+                    // Filter to avoid getting everything - look for patterns after create
+                    if (storeContent.indexOf(bodyMatch[1]) > createMatch.index) {
+                      storeProps.add(bodyMatch[1]);
+                    }
+                  }
+                }
               }
+
+              console.log(
+                `[ArchitectureValidator] Store '${hookName}' exported from '${hookImport.source}' has properties: ${Array.from(storeProps).join(', ') || '(none found)'}`
+              );
 
               if (storeProps.size > 0) {
                 // Check each destructured property exists in store
+                console.log(
+                  `[ArchitectureValidator] Component destructures: ${properties.join(', ')}`
+                );
+                
                 for (const prop of properties) {
                   if (!storeProps.has(prop)) {
+                    console.log(
+                      `[ArchitectureValidator] ❌ MISMATCH: '${prop}' not in store [has: ${Array.from(storeProps).join(', ')}]`
+                    );
                     violations.push({
                       type: 'semantic-error',
                       import: hookName,
-                      message: `Property '${prop}' destructured from '${hookName}' but not found in store state`,
-                      suggestion: `Available in store: ${Array.from(storeProps).join(', ')}. Remove or check spelling of '${prop}'`,
+                      message: `Property '${prop}' destructured from '${hookName}' but not found in store state. Store exports: ${Array.from(storeProps).join(', ')}`,
+                      suggestion: `Use correct property names from store: ${Array.from(storeProps).join(', ')}`,
                       severity: 'high',
                     });
+                  } else {
+                    console.log(
+                      `[ArchitectureValidator] ✅ Property '${prop}' matches store`
+                    );
+                  }
+                }
+              } else if (properties.length > 0) {
+                // Properties being destructured but store props not found
+                // This might mean the extraction failed - flag it
+                console.warn(
+                  `[ArchitectureValidator] ⚠️ Could not extract store properties, but component tries to destruct: ${properties.join(', ')}`
+                );
+                // Don't fail here - store reading might have failed but code could still be valid
+              }
+
+              // BONUS: Check for function calls that don't exist in store
+              // E.g., component calls submitLogin() but store doesn't export it
+              if (hookName.includes('Store')) {
+                // Extract all function calls on the component code
+                // Pattern: functionName() that looks like a store method
+                const functionCallRegex = /([a-zA-Z_]\w*)\s*\(/g;
+                let funcMatch;
+                const functionsUsed = new Set<string>();
+                
+                while ((funcMatch = functionCallRegex.exec(generatedCode)) !== null) {
+                  const funcName = funcMatch[1];
+                  // Check if this might be a store function (heuristic)
+                  if (funcName.startsWith('set') || funcName.startsWith('handle') || funcName.startsWith('submit')) {
+                    functionsUsed.add(funcName);
+                  }
+                }
+
+                // Check if any of these functions exist in the store
+                for (const func of functionsUsed) {
+                  if (!storeContent.includes(`${func}:`)) {
+                    // Function called but not defined in store
+                    console.log(
+                      `[ArchitectureValidator] ⚠️ Function call '${func}()' but not found in store definition`
+                    );
+                    if (!properties.includes(func)) {
+                      // Not destructured AND not in store = definitely broken
+                      violations.push({
+                        type: 'semantic-error',
+                        import: hookName,
+                        message: `Function '${func}' is called but not in destructuring or store exports`,
+                        suggestion: `Add '${func}' to destructuring: const { ..., ${func} } = ${hookName}() OR define it in the store`,
+                        severity: 'high',
+                      });
+                    }
                   }
                 }
               }
