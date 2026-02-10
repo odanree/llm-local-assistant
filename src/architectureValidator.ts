@@ -460,8 +460,9 @@ export class ArchitectureValidator {
         const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
         let resolvedPath = imp.source;
 
-        // Handle relative paths
+        // Handle different path formats
         if (resolvedPath.startsWith('.')) {
+          // ✅ Relative paths: ../utils/cn, ./helpers
           // Resolve ../ and ./
           resolvedPath = resolvedPath
             .split('/')
@@ -474,6 +475,13 @@ export class ArchitectureValidator {
               }
               return acc + '/' + part;
             }, currentDir);
+        } else if (!resolvedPath.startsWith('/')) {
+          // ✅ Absolute-from-workspace-root paths: src/utils/cn, components/Form
+          // These are already workspace-root-relative, use as-is
+          // The vscode.Uri.joinPath below will handle them correctly
+        } else {
+          // ✅ Absolute paths: /src/utils/cn (less common but supported)
+          // Already absolute, use as-is
         }
 
         // Try to read the source file
@@ -494,15 +502,36 @@ export class ArchitectureValidator {
           for (const pathVariant of pathVariants) {
             if (previousStepFiles && previousStepFiles.has(pathVariant)) {
               sourceContent = previousStepFiles.get(pathVariant) || '';
-              console.log(`[ArchitectureValidator] ✅ Using context of previously-written file: ${pathVariant} (matched from ${resolvedPath})`);
+              console.log(
+                `[ArchitectureValidator] ✅ Using context of previously-written file: ${pathVariant} (matched from ${resolvedPath})`
+              );
               break;
             }
           }
 
           // If not in previous step files, try reading from disk
           if (!sourceContent) {
-            const sourceUri = vscode.Uri.joinPath(workspace, resolvedPath);
-            sourceContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(sourceUri));
+            console.log(
+              `[ArchitectureValidator] 📁 Reading from disk: ${resolvedPath} (variants: ${pathVariants.join(', ')})`
+            );
+            
+            // Try each path variant until we find the file
+            for (const pathVariant of pathVariants) {
+              try {
+                const sourceUri = vscode.Uri.joinPath(workspace, pathVariant);
+                console.log(`[ArchitectureValidator] 🔗 Trying: ${sourceUri.fsPath}`);
+                sourceContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(sourceUri));
+                console.log(`[ArchitectureValidator] ✅ Successfully read: ${sourceUri.fsPath}`);
+                break;  // Found it!
+              } catch (variantError) {
+                console.log(`[ArchitectureValidator] ❌ Not found: ${pathVariant}`);
+                // Try next variant
+              }
+            }
+            
+            if (!sourceContent) {
+              throw new Error(`File not found: tried variants ${pathVariants.join(', ')}`);
+            }
           }
 
           if (!sourceContent) {
@@ -573,7 +602,18 @@ export class ArchitectureValidator {
           }
         } catch (error) {
           // Source file not found or read failed - could be external package
-          if (!['node_modules', '@types', 'react', 'zustand', 'axios'].some(p => imp.source.includes(p))) {
+          // Check if this is likely an external package or a workspace-relative path
+          const isExternalPackage = [
+            'node_modules', '@types', 'react', 'zustand', 'axios', 'clsx', 'tailwind-merge',
+            'lodash', 'date-fns', 'zod', 'express', 'next', 'vite'
+          ].some(p => imp.source.includes(p) || imp.source.startsWith(p));
+          
+          const isWorkspaceRelativePath = ['src/', 'utils/', 'components/', 'services/', 'hooks/', 'types/'].some(
+            p => resolvedPath.startsWith(p)
+          );
+
+          if (!isExternalPackage && !isWorkspaceRelativePath) {
+            // Truly unknown import
             violations.push({
               type: 'missing-export',
               import: imp.symbols[0],
@@ -581,7 +621,20 @@ export class ArchitectureValidator {
               suggestion: `Verify the import path is correct`,
               severity: 'medium',
             });
+          } else if (isWorkspaceRelativePath) {
+            // Workspace-relative path but file not found - this is a real error
+            violations.push({
+              type: 'missing-export',
+              import: imp.symbols[0],
+              message: `Cannot find module '${resolvedPath}' from '${filePath}'`,
+              suggestion: `Verify the file exists at: ${resolvedPath}.ts (or .tsx)`,
+              severity: 'high',
+            });
+            console.warn(
+              `[ArchitectureValidator] ⚠️ Workspace file not found: ${resolvedPath}`
+            );
           }
+          // If external package, silently skip (assumed to be available)
         }
       } catch (error) {
         // Skip validation for this import if something goes wrong
