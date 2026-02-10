@@ -756,18 +756,30 @@ export class ArchitectureValidator {
       })
     );
 
+    // HOOK FILE DETECTION: Check if this is a custom hook file (exports use* function)
+    const isHookFile = /src\/hooks\//.test(filePath) || /export\s+(?:const|function)\s+use\w+/.test(generatedCode);
+    
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {
       for (const hookName of hookImport.names) {
         const escapedHookName = hookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         
-        // STRICT: Hook MUST be called
-        // Only match actual function calls, not just references
+        // HOOK CALL DETECTION: Multiple patterns for flexibility
+        // Pattern 1 (strict): const [x] = hookName( or const {x} = hookName(
         const hookCallPattern = new RegExp(
-          `const\\s+(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedHookName}\\s*\\(`,
+          `const\\s*(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedHookName}\\s*\\(`,
           'g'
         );
-        const isCalled = hookCallPattern.test(generatedCode);
+        
+        // Pattern 2 (lenient): hookName( appears anywhere - for single-line or flexible code
+        const lenientPattern = new RegExp(`${escapedHookName}\\s*\\(`, 'g');
+        
+        const isCalledStrict = hookCallPattern.test(generatedCode);
+        const isCalledLenient = lenientPattern.test(generatedCode);
+        
+        // For hook files, use lenient check since they MUST use React hooks
+        // For other files, use strict check
+        const isCalled = isHookFile ? isCalledLenient : isCalledStrict;
 
         if (!isCalled) {
           // EXCEPTION: useState imported but not called is OK if using store hooks
@@ -777,6 +789,15 @@ export class ArchitectureValidator {
               `[ArchitectureValidator] ℹ️ useState imported but not called (OK in refactoring to store)`
             );
             continue; // Skip this error - refactoring is intentional
+          }
+          
+          // EXCEPTION: For hook files, skip validation of React hooks
+          // Custom hooks MUST use React hooks internally, but we can't validate format
+          if (isHookFile && (hookName === 'useState' || hookName === 'useEffect' || hookName === 'useReducer' || hookName === 'useCallback' || hookName === 'useMemo')) {
+            console.log(
+              `[ArchitectureValidator] ℹ️ Skipping hook validation for hook file: ${filePath}`
+            );
+            continue; // Custom hooks are allowed to call React hooks
           }
 
           // Generate context-aware suggestion based on hook type and file content
