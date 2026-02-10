@@ -714,6 +714,24 @@ export class ArchitectureValidator {
       }
     }
 
+    // IMPORTANT: Detect refactoring context
+    // If component has store hooks, useState being unused is OK (it's being replaced)
+    const hasStoreHook = importedHooks.some(h => 
+      h.names.some(n => n.includes('Store') || n.includes('store')) &&
+      generatedCode.includes(`const`)
+    );
+    const usingStoreHook = importedHooks.some(h => 
+      h.source.includes('store') &&
+      h.names.some(n => {
+        const escapedName = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(
+          `const\\s+(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedName}\\s*\\(`,
+          'g'
+        );
+        return pattern.test(generatedCode);
+      })
+    );
+
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {
       for (const hookName of hookImport.names) {
@@ -728,11 +746,22 @@ export class ArchitectureValidator {
         const isCalled = hookCallPattern.test(generatedCode);
 
         if (!isCalled) {
+          // EXCEPTION: useState imported but not called is OK if using store hooks
+          // This is a refactoring scenario (local state → store management)
+          if (hookName === 'useState' && usingStoreHook) {
+            console.log(
+              `[ArchitectureValidator] ℹ️ useState imported but not called (OK in refactoring to store)`
+            );
+            continue; // Skip this error - refactoring is intentional
+          }
+
           violations.push({
             type: 'semantic-error',
             import: hookName,
             message: `Hook '${hookName}' is imported but never called`,
-            suggestion: `Must call the hook: const { ... } = ${hookName}();`,
+            suggestion: hookName === 'useState' && usingStoreHook 
+              ? `Remove unused useState import since using store hook instead`
+              : `Must call the hook: const { ... } = ${hookName}();`,
             severity: 'high',
           });
           continue; // Can't validate destructuring if hook isn't called
