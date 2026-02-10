@@ -721,6 +721,34 @@ export class ArchitectureValidator {
       }
     }
 
+    // NEW: Step 0.5: Comprehensive React hook import validation
+    // Check for ALL React hooks that might be used but not imported
+    const reactHooks = [
+      'useCallback', 'useEffect', 'useContext', 'useReducer', 'useMemo',
+      'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue',
+      'useId', 'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+    ];
+    
+    const reactImportLine = generatedCode.match(/import\s+(?:\w+\s*,\s*)?{([^}]*)}\s+from\s+['"]react['"]/);
+    const importedReactHooks = reactImportLine ? reactImportLine[1].split(',').map(h => h.trim()) : [];
+    
+    for (const hook of reactHooks) {
+      // Check if hook is USED in code
+      if (new RegExp(`\\b${hook}\\s*\\(`).test(generatedCode)) {
+        // Check if it's IMPORTED
+        if (!importedReactHooks.includes(hook)) {
+          console.log(`[ArchitectureValidator] ⚠️ React hook '${hook}' is used but not imported from React`);
+          violations.push({
+            type: 'semantic-error',
+            import: hook,
+            message: `React hook '${hook}' is used but not imported from React`,
+            suggestion: `Add: import { ${hook} } from 'react';`,
+            severity: 'high',
+          });
+        }
+      }
+    }
+
     // Step 1: Extract all imports that LOOK like hooks (use* pattern)
     const hookImportRegex = /import\s+{([^}]*\buse\w+[^}]*)}\s+from\s+['"]([^'"]+)['"]/g;
     const importedHooks: Array<{ names: string[]; source: string }> = [];

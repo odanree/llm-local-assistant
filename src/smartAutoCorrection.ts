@@ -342,9 +342,13 @@ export class SmartAutoCorrection {
     }
 
     validationErrors.forEach(error => {
-      // Fix: Hook is used but not imported (e.g., "useState is used but not imported from React")
-      // This is the most common pattern for React components
-      const hookNotImportedMatch = error.match(/(\w+) is used but not imported from React/);
+      // Fix: React hook is used but not imported (e.g., "React hook 'useCallback' is used but not imported from React")
+      // Also matches: "useState is used but not imported from React"
+      let hookNotImportedMatch = error.match(/React hook '(\w+)' is used but not imported from React/);
+      if (!hookNotImportedMatch) {
+        hookNotImportedMatch = error.match(/^(\w+) is used but not imported from React/);
+      }
+      
       if (hookNotImportedMatch) {
         const hookName = hookNotImportedMatch[1];
         console.log(`[SmartAutoCorrection] Found hook '${hookName}' used but not imported`);
