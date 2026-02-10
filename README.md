@@ -115,6 +115,8 @@ Step 3: Add validation logic
 Ready to execute with: /execute
 ```
 
+![Plan Command Example](./assets/plan-command-example.png)
+
 **What it does:**
 - Creates multi-step plans for code generation
 - Validates each step's contracts
