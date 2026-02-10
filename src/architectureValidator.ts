@@ -841,71 +841,99 @@ export class ArchitectureValidator {
 
             if (storeContent) {
               // Extract available state properties from Zustand store
-              // Zustand pattern: create((set) => ({ prop: value, ... }))
-              const zustandStateRegex = /create\s*\(\s*(?:set|get|state)[^{]*{([^}]+)}\s*\)/gs;
-              const zustandMatch = zustandStateRegex.exec(storeContent);
+              // Zustand pattern: export const useXxxStore = create<Type>((set) => ({ prop: value, ... }))
+              // Key insight: We need to find the RUNTIME object, not TypeScript type params
               
               let storeProps: Set<string> = new Set();
-              if (zustandMatch) {
-                // Extract property names from state object
-                const stateObj = zustandMatch[1];
-                const propRegex = /(\w+)\s*:/g;
+              
+              // Strategy 1: Find create call and extract state object properties
+              // Pattern: => { prop1: ..., prop2: ..., etc
+              // Look for the arrow function body that contains property definitions
+              const arrowFunctionRegex = /create[^]*?\)\s*=>\s*\(\s*{([^}]+)}/;
+              const arrowMatch = storeContent.match(arrowFunctionRegex);
+              
+              if (arrowMatch) {
+                const stateBody = arrowMatch[1];
+                console.log(`[ArchitectureValidator] Found state body: ${stateBody.substring(0, 100)}...`);
+                
+                // Extract ALL property names that look like key: value
+                // Handle: propName: ..., nestedObj: { ... }, function: () => ...
+                const propRegex = /(\w+)\s*:\s*(?:[^,}]|\{[^}]*\}|function|\([^)]*\))/g;
                 let propMatch;
-                while ((propMatch = propRegex.exec(stateObj)) !== null) {
+                while ((propMatch = propRegex.exec(stateBody)) !== null) {
                   storeProps.add(propMatch[1]);
+                  console.log(`[ArchitectureValidator] Found store property: ${propMatch[1]}`);
                 }
               } else {
-                // Try alternative: search for all property patterns in create call
-                const altPattern = /create\s*\(\s*(?:set|get)[^]*?\)\s*\$/g;
-                const createMatch = storeContent.match(/create\s*\(\s*\([^)]*\)\s*=>/);
-                if (createMatch) {
-                  // Look for property: value patterns in the Zustand store body
-                  const bodyRegex = /(\w+)\s*:/g;
-                  let bodyMatch;
-                  while ((bodyMatch = bodyRegex.exec(storeContent)) !== null) {
-                    // Filter to avoid getting everything - look for patterns after create
-                    if (storeContent.indexOf(bodyMatch[1]) > createMatch.index) {
-                      storeProps.add(bodyMatch[1]);
-                    }
+                console.warn(`[ArchitectureValidator] ⚠️ Could not match arrow function pattern in store`);
+              }
+
+              // Strategy 2: If that fails, try simpler regex
+              if (storeProps.size === 0) {
+                console.log(`[ArchitectureValidator] Strategy 1 failed, trying fallback...`);
+                // Look for exports: interface exports, named exports
+                const exportRegex = /export\s+(?:const\s+(\w+)|interface\s+(\w+))/g;
+                let exportMatch;
+                while ((exportMatch = exportRegex.exec(storeContent)) !== null) {
+                  const name = exportMatch[1] || exportMatch[2];
+                  if (name) {
+                    storeProps.add(name);
+                    console.log(`[ArchitectureValidator] Found export: ${name}`);
                   }
                 }
               }
 
               console.log(
-                `[ArchitectureValidator] Store '${hookName}' exported from '${hookImport.source}' has properties: ${Array.from(storeProps).join(', ') || '(none found)'}`
+                `[ArchitectureValidator] 📦 Store '${hookName}' has TOP-LEVEL properties: [${Array.from(storeProps).join(', ')}]`
+              );
+              console.log(
+                `[ArchitectureValidator] 🔍 Component tries to destructure: [${properties.join(', ')}]`
               );
 
+              // Check each destructured property against store exports
+              let hasPropertyMismatch = false;
               if (storeProps.size > 0) {
-                // Check each destructured property exists in store
-                console.log(
-                  `[ArchitectureValidator] Component destructures: ${properties.join(', ')}`
-                );
-                
                 for (const prop of properties) {
+                  // Skip setter patterns - if prop exists, that's OK
+                  if (prop.toLowerCase().startsWith('set')) {
+                    if (storeProps.has(prop)) {
+                      console.log(`[ArchitectureValidator] ✅ Setter '${prop}' found in store`);
+                    } else {
+                      console.log(`[ArchitectureValidator] ⚠️ Setter '${prop}' not found (might be nested or might not exist)`);
+                    }
+                    continue;
+                  }
+
                   if (!storeProps.has(prop)) {
                     console.log(
-                      `[ArchitectureValidator] ❌ MISMATCH: '${prop}' not in store [has: ${Array.from(storeProps).join(', ')}]`
+                      `[ArchitectureValidator] ❌ CRITICAL MISMATCH: Component destructures '${prop}' but store exports: ${Array.from(storeProps).join(', ')}`
                     );
+                    hasPropertyMismatch = true;
                     violations.push({
                       type: 'semantic-error',
                       import: hookName,
-                      message: `Property '${prop}' destructured from '${hookName}' but not found in store state. Store exports: ${Array.from(storeProps).join(', ')}`,
-                      suggestion: `Use correct property names from store: ${Array.from(storeProps).join(', ')}`,
+                      message: `❌ CRITICAL: Property '${prop}' destructured but NOT in store. Store exports: ${Array.from(storeProps).join(', ')}. This will cause runtime TypeError!`,
+                      suggestion: `Component expects: { ${properties.join(', ')} } but store has: { ${Array.from(storeProps).join(', ')} }. Refactoring is INCOMPLETE.`,
                       severity: 'high',
                     });
                   } else {
-                    console.log(
-                      `[ArchitectureValidator] ✅ Property '${prop}' matches store`
-                    );
+                    console.log(`[ArchitectureValidator] ✅ Property '${prop}' found in store`);
                   }
                 }
               } else if (properties.length > 0) {
-                // Properties being destructured but store props not found
-                // This might mean the extraction failed - flag it
+                // Could not extract store props - might be an error or might be intentional
                 console.warn(
-                  `[ArchitectureValidator] ⚠️ Could not extract store properties, but component tries to destruct: ${properties.join(', ')}`
+                  `[ArchitectureValidator] ⚠️ Could not extract store properties JSON object, but component destructures: [${properties.join(', ')}]`
                 );
-                // Don't fail here - store reading might have failed but code could still be valid
+                console.warn(`[ArchitectureValidator] This might indicate store extraction failed - cannot properly validate!`);
+                // Flag as error since we can't validate
+                violations.push({
+                  type: 'semantic-error',
+                  import: hookName,
+                  message: `⚠️ Cannot validate store properties - extraction failed. Component tries to destructure: ${properties.join(', ')}`,
+                  suggestion: `Verify store structure and ensure component destructuring matches store exports.`,
+                  severity: 'high',
+                });
               }
 
               // BONUS: Check for function calls that don't exist in store
@@ -948,6 +976,7 @@ export class ArchitectureValidator {
             }
           } catch (e) {
             // If we can't read store, skip property validation but still check usage
+            console.log(`[ArchitectureValidator] Could not validate store properties: ${e}`);
           }
 
           // Step 4: Validate destructured properties are actually USED
