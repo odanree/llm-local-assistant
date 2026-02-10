@@ -153,9 +153,23 @@ export class SmartAutoCorrection {
       'useMutation': '@tanstack/react-query',
       'useStore': 'zustand',
       
-      // Styling
+      // Styling & Utilities
       'clsx': 'clsx',
       'twMerge': 'tailwind-merge',
+      'cn': '../utils/cn',  // Tailwind class merging utility (CRITICAL: prevents ReferenceError)
+      'classNames': 'classnames',
+      
+      // Common Utilities
+      'logger': '../utils/logger',
+      'formatDate': '../utils/formatDate',
+      'parseDate': '../utils/parseDate',
+      'validateEmail': '../utils/validateEmail',
+      'debounce': 'lodash-es',
+      'throttle': 'lodash-es',
+      'isEmpty': 'lodash-es',
+      'pick': 'lodash-es',
+      'omit': 'lodash-es',
+      'merge': 'lodash-es',
       
       // Repositories
       'repository': './repository',
@@ -185,8 +199,7 @@ export class SmartAutoCorrection {
       'IBlog': './types/IBlog',
       'IPost': './types/IPost',
       
-      // Utils
-      'logger': './utils/logger',
+      // Config
       'config': './config',
       'constants': './constants',
     };

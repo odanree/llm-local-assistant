@@ -1163,6 +1163,52 @@ export class ArchitectureValidator {
       }
     });
 
+    // Step 7: CRITICAL - Check for UTILITY FUNCTIONS that are called but NOT IMPORTED
+    // Utilities: cn(), clsx(), twMerge(), logger(), etc.
+    // These commonly get used but are easy to forget to import
+    const utilityFunctions: { [key: string]: string[] } = {
+      'cn': ['../utils/cn', './utils/cn', '@/utils/cn'],
+      'clsx': ['clsx'],
+      'twMerge': ['tailwind-merge'],
+      'logger': ['../utils/logger', './utils/logger'],
+      'formatDate': ['../utils/formatDate', './utils/formatDate'],
+      'parseDate': ['../utils/parseDate', './utils/parseDate'],
+      'validateEmail': ['../utils/validateEmail', './utils/validateEmail'],
+    };
+
+    // Extract all imports to check what's available
+    const importedNames = new Set<string>();
+    const allImportRegex = /import\s+(?:{([^}]*)}|(\w+))/g;
+    let allImportMatch;
+    while ((allImportMatch = allImportRegex.exec(generatedCode)) !== null) {
+      if (allImportMatch[1]) {
+        // Named imports: { a, b, c }
+        allImportMatch[1].split(',').forEach(name => {
+          importedNames.add(name.trim().split(' as ')[0]);
+        });
+      } else if (allImportMatch[2]) {
+        // Default import: React
+        importedNames.add(allImportMatch[2].trim());
+      }
+    }
+
+    // Check for utility function calls
+    for (const [utilFunc, possibleSources] of Object.entries(utilityFunctions)) {
+      // Check if utility is called in code
+      const isUsed = new RegExp(`\\b${utilFunc}\\s*\\(`).test(generatedCode);
+      
+      if (isUsed && !importedNames.has(utilFunc)) {
+        console.log(`[ArchitectureValidator] ⚠️ Utility '${utilFunc}' is called but not imported`);
+        violations.push({
+          type: 'semantic-error',
+          import: utilFunc,
+          message: `Missing import: ${utilFunc}() is used but not imported`,
+          suggestion: `Add: import { ${utilFunc} } from '${possibleSources[0]}';`,
+          severity: 'high',
+        });
+      }
+    }
+
     return violations;
   }
 
