@@ -158,6 +158,10 @@ Output:
 Next: Use /write to create files
 ```
 
+**Real-World Example:**
+
+![Design System Command Example - User Authentication](./assets/design-system-command-example.png)
+
 **What it does:**
 - Generates complete feature architectures
 - Defines all 4 layers (schema, service, hook, component)
