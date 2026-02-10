@@ -507,6 +507,18 @@ export class Executor {
             );
           }
         }
+
+        // ✅ NEW: Validate semantic hook usage (prevents refactoring failures)
+        const hookUsageViolations = validator.validateHookUsage(content, filePath);
+        if (hookUsageViolations.length > 0) {
+          const hookErrors = hookUsageViolations.map(
+            v => `❌ Hook Usage: ${v.message}. ${v.suggestion}`
+          );
+          errors.push(...hookErrors);
+          console.warn(
+            `[Executor] ⚠️ Hook usage violations found in ${filePath}. Refactoring may not be complete.`
+          );
+        }
       } catch (error) {
         console.warn(`[Executor] Cross-file validation error: ${error}`);
         // Don't fail on validation errors, just log warning

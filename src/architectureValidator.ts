@@ -604,6 +604,132 @@ export class ArchitectureValidator {
   }
 
   /**
+   * Validate semantic usage of imported hooks
+   * Ensures that imported hooks are actually USED in the component
+   * 
+   * Detects:
+   * ❌ Hook imported but never called
+   * ❌ Hook called but state never destructured/used
+   * ❌ Local state (useState) still used alongside store hook
+   * ❌ Missing destructuring of store state properties
+   * 
+   * Example:
+   * ✅ VALID:
+   *   import { useLoginStore } from '../stores/loginStore';
+   *   const { formState, setFormState } = useLoginStore();
+   *   // Uses formState in JSX
+   * 
+   * ❌ INVALID:
+   *   import { useLoginStore } from '../stores/loginStore';  // Imported but never called!
+   *   const [formData, setFormData] = useState(...);         // Still using local state
+   */
+  public validateHookUsage(
+    generatedCode: string,
+    filePath: string
+  ): LayerViolation[] {
+    const violations: LayerViolation[] = [];
+
+    // Step 1: Extract all imports that LOOK like hooks (use* pattern)
+    const hookImportRegex = /import\s+{([^}]*\buse\w+[^}]*)}\s+from\s+['"]([^'"]+)['"]/g;
+    const importedHooks: Array<{ names: string[]; source: string }> = [];
+    let hookMatch;
+
+    while ((hookMatch = hookImportRegex.exec(generatedCode)) !== null) {
+      const importList = hookMatch[1];
+      const source = hookMatch[2];
+      const names = importList
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.startsWith('use'));
+      if (names.length > 0) {
+        importedHooks.push({ names, source });
+      }
+    }
+
+    // Step 2: For each imported hook, check if it's actually CALLED in the component
+    for (const hookImport of importedHooks) {
+      for (const hookName of hookImport.names) {
+        // Pattern: hookName() - must be called to work
+        const hookCallPattern = new RegExp(`const\\s+[{\\s]?\\w+[\\s}]*=\\s*${hookName}\\(`, 'g');
+        const isCalled = hookCallPattern.test(generatedCode);
+
+        if (!isCalled) {
+          violations.push({
+            type: 'semantic-error',
+            import: hookName,
+            message: `Hook '${hookName}' imported but never called`,
+            suggestion: `Add: const { ... } = ${hookName}(); to destructure hook state`,
+            severity: 'high',
+          });
+        }
+
+        // Step 3: If hook is called, verify state is actually USED (not just destructured)
+        if (isCalled) {
+          // Extract destructured properties: const { x, y, z } = hookName()
+          const destructureRegex = new RegExp(
+            `const\\s+{([^}]+)}\\s*=\\s*${hookName}\\(`,
+            'g'
+          );
+          let destructMatch;
+
+          while ((destructMatch = destructureRegex.exec(generatedCode)) !== null) {
+            const properties = destructMatch[1]
+              .split(',')
+              .map(p => p.trim());
+
+            // Check if each property is used in the code (not just destructured)
+            for (const prop of properties) {
+              const propUsagePattern = new RegExp(`\\b${prop}\\b`, 'g');
+              const usages = (generatedCode.match(propUsagePattern) || []).length;
+
+              // First match is the destructuring itself, so need at least 2
+              if (usages < 2) {
+                violations.push({
+                  type: 'semantic-error',
+                  import: hookName,
+                  message: `Property '${prop}' destructured from '${hookName}' but never used`,
+                  suggestion: `Remove unused property or use it: ${prop}, setForm(...), etc.`,
+                  severity: 'medium',
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Step 4: Check for MIXED STATE MANAGEMENT
+    // If a store hook is imported, local useState shouldn't still be used for the same state
+    if (importedHooks.length > 0) {
+      const hasLocalState = /const\s+\[\w+,\s*\w+\]\s*=\s*useState/.test(generatedCode);
+
+      if (hasLocalState) {
+        // Check if it looks like the component is still using local state instead of store
+        const stateVarMatch = generatedCode.match(/const\s+\[(\w+),\s*\w+\]\s*=\s*useState\s*\([^)]*\)/);
+        if (stateVarMatch) {
+          const localStateVar = stateVarMatch[1];
+          // If the local state and hook seem to manage similar things (heuristic)
+          if (
+            (importedHooks[0].names[0].includes('Form') && localStateVar.includes('form')) ||
+            (importedHooks[0].names[0].includes('Form') && localStateVar.includes('data')) ||
+            (importedHooks[0].names[0].includes('Store') && generatedCode.includes('setState'))
+          ) {
+            violations.push({
+              type: 'semantic-error',
+              import: importedHooks[0].names[0],
+              message: `Both store hook '${importedHooks[0].names[0]}' and local state '${localStateVar}' detected. Should use only store.`,
+              suggestion: `Remove useState and use only the store hook's state management`,
+              severity: 'high',
+            });
+          }
+        }
+      }
+    }
+
+    return violations;
+  }
+
+  /**
    * Generate human-readable error report
    */
   public generateErrorReport(result: LayerValidationResult): string {
