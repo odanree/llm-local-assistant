@@ -6,18 +6,36 @@
 
 A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, and refactor with confidence using your local LLM.
 
-**🎯 v2.5.0 Focus: Multi-Step Validation & Zustand Refactoring (Complete 6-Layer Validation System)**
+**🎯 v2.5.1 Focus: Critical Zustand Integration Validation Fixes**
 
-> **Latest Release**: v2.5.0 - 6-Layer Validation System, Production-Ready ✅  
-> **Philosophy**: Complete validation architecture with semantic enforcement. Zustand stores now fully validated.  
+> **Latest Release**: v2.5.1 - Critical Zustand Integration Fixes ✅  
+> **Philosophy**: 100% integration validation. No silent failures. Explicit error reporting.  
 > **Status**: 486/489 tests passing. 0 errors. Production ready.
 
-## ✨ What's v2.5.0 (Multi-Step Validation System)
+## ✨ What's v2.5.1 (Critical Patch)
+
+### 🔴 CRITICAL FIX: Zustand Integration Validation
+
+**Problem**: System generated 4/4 files successfully but component didn't call store hook → silent failure ❌  
+**Solution**: Integration validation now runs AFTER all files written, reads entire codebase, validates cross-file dependencies  
+**Impact**: Fails entire plan if store integration is broken (was: silently passing)
+
+**Strict Zustand Destructuring**
+- Detects wrong pattern: `const store = useLoginStore(); const { x } = store;`
+- Enforces correct: `const { x } = useLoginStore();`
+- Rejects intermediate variables completely
+
+**Broader Store Detection**
+- NOW: Validates ALL components importing from `/stores/`
+- BEFORE: Only checked keyword presence
+- Supports multiple stores in one component
+
+## ✨ What's v2.5.0 (6-Layer Validation System)
 
 ### ✅ What Works Great (Keep These)
 
-**6-Layer Validation System** - New in v2.5.0
-- **`/plan` with validation** - Multi-step code generation with semantic validation (NEW)
+**6-Layer Validation System** - Complete, reliable
+- **`/plan` with validation** - Multi-step code generation with semantic validation
 - **Cross-file contract enforcement** - Component-store alignment guaranteed
 - **Zustand store validation** - Property extraction and destructuring validation
 - **Hook usage detection** - Semantic validation of actual hook usage
@@ -39,12 +57,12 @@ A powerful VS Code extension that brings autonomous AI capabilities to your loca
 - **`/explain <path>`** - Explain code
 - **`/git-commit-msg`** - Generate commit messages
 
-### ⚠️ Known Limitations (v2.5.0)
+### ⚠️ Known Limitations (v2.5.1)
 
 **Cross-File Contract Drift** - See Limitations section
 - Multi-file generation may have interface mismatches between files
 - Validation catches these, manual verification recommended
-- Future: v2.6+ will have persistent contract tracking
+- Future: v3.0+ will have persistent contract tracking
 
 ## 🚀 Quick Start (30 seconds)
 

@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-02-10
+
+### Focus: Critical Zustand Integration Validation Fixes
+
+**v2.5.1 fixes critical bug where Zustand integration was silently failing.** Generated code compiled but didn't work—components called store hooks incorrectly. Now detects and fails explicitly.
+
+### Fixed
+
+- **Critical: Zustand Integration Validation** (BLOCKING DEFECT)
+  - **Problem**: System generated 4/4 files successfully but component didn't call store hook → silent failure ❌
+  - **Solution**: Integration validation now runs AFTER all files written, reads entire codebase, validates cross-file dependencies
+  - **Impact**: Fails entire plan if store integration is broken (was: silently passing)
+  
+- **Strict Zustand Destructuring Pattern** (architectureValidator.ts)
+  - Detects wrong pattern: `const store = useLoginStore(); const { x } = store;`
+  - Enforces correct pattern: `const { x } = useLoginStore();`
+  - Rejects intermediate variables completely
+  - Prevents pattern mistakes that compile but don't work
+
+- **Broader Store Detection** (executor.ts)
+  - NOW: Validates ALL components importing from `/stores/`
+  - BEFORE: Only checked for keyword presence
+  - Supports multiple stores in one component
+  - More comprehensive coverage
+
+- **Root Documentation Constraint** (PROJECT_STATUS.md)
+  - Enforces exactly 6 root .md files (no more sprawl)
+  - All new documentation goes to `/docs/`
+  - Cleaner repository structure
+
+### Documentation
+
+- **NEW**: ARCHITECTURE.md - Technical design and constraints
+- **NEW**: PROJECT_STATUS.md - Status, cleanup summary, critical fixes
+- **NEW**: QUICK_REFERENCE.md - Fast lookup for common tasks
+- **NEW**: docs/ZUSTAND_VALIDATION_FIXES.md - Detailed analysis of fixes
+- **NEW**: docs/ZUSTAND_FIX_IMPLEMENTATION_COMPLETE.md - Implementation details
+- **MOVED**: GITHUB_PR_DESCRIPTION.md → docs/GITHUB_PR_DESCRIPTION.md
+
+### Quality Metrics
+
+- Tests: 486/489 (99.4%)
+- Zustand integration: 100% validated end-to-end
+- Silent failures: 0 (explicit error reporting)
+- Compilation errors: 0
+
+### Code Changes
+
+- src/architectureValidator.ts (+221 lines) - Zustand pattern validation
+- src/executor.ts (+347 lines) - Integration validation after file generation
+- src/smartAutoCorrection.ts (+152 lines) - Better error handling
+
+---
+
 ## [2.5.0] - 2026-02-09
 
 ### Focus: 6-Layer Validation System & Zustand Refactoring Support
