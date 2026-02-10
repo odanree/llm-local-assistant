@@ -2,7 +2,7 @@
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
   "description": "Intelligent code refactoring & architecture analysis. Analyze code, suggest improvements, extract services, generate features. All locally, all safely.",
-  "version": "2.0.3",
+  "version": "2.5.0",
   "publisher": "odanree",
   "icon": "assets/icon.png",
   "repository": {
@@ -30,6 +30,11 @@
       {
         "command": "llm-local-assistant.testConnection",
         "title": "Test LLM Connection",
+        "category": "LLM Assistant"
+      },
+      {
+        "command": "llm-assistant.debugEnv",
+        "title": "Debug Environment",
         "category": "LLM Assistant"
       }
     ],

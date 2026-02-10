@@ -168,12 +168,24 @@ export class LLMClient {
       // Prepare request with system prompt injection
       const endpoint = `${this.config.endpoint}/v1/chat/completions`;
       const payload = {
-        model: this.config.model,
+        model: this.config.model.trim(),
         messages: this.buildMessagesWithSystemPrompt(userMessage),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         stream: true,
       };
+
+      // [LLM DEBUG] Log request details before sending
+      console.log('[LLM DEBUG] ========== HTTP REQUEST DETAILS ==========');
+      console.log('[LLM DEBUG] Endpoint URL:', endpoint);
+      console.log('[LLM DEBUG] Model Name:', this.config.model);
+      console.log('[LLM DEBUG] Request Method: POST');
+      console.log('[LLM DEBUG] Request Headers:', JSON.stringify({
+        'Content-Type': 'application/json',
+      }, null, 2));
+      console.log('[LLM DEBUG] Request Payload:', JSON.stringify(payload, null, 2));
+      console.log('[LLM DEBUG] Timeout (ms):', this.config.timeout);
+      console.log('[LLM DEBUG] ==========================================');
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
@@ -189,10 +201,24 @@ export class LLMClient {
 
       clearTimeout(timeoutId);
 
+      // [LLM DEBUG] Log response status
+      console.log('[LLM DEBUG] Response Status:', response.status, response.statusText);
+
       if (!response.ok) {
+        // [LLM DEBUG] Log error response details
+        let errorBody = '';
+        try {
+          errorBody = await response.clone().text();
+          console.log('[LLM DEBUG] Error Response Body:', errorBody);
+        } catch (e) {
+          console.log('[LLM DEBUG] Could not read error response body');
+        }
+
         const statusError = response.status === 404 ? 'Model not found. Check llm-assistant.model setting.' :
                             response.status === 503 ? 'LLM server is busy. Try again in a moment.' :
+                            response.status === 400 ? `Bad Request: ${errorBody}` :
                             `Server error: ${response.statusText}`;
+        console.log('[LLM DEBUG] Error thrown:', statusError);
         throw new Error(statusError);
       }
 
@@ -270,12 +296,24 @@ export class LLMClient {
       // Prepare request with system prompt injection
       const endpoint = `${this.config.endpoint}/v1/chat/completions`;
       const payload = {
-        model: this.config.model,
+        model: this.config.model.trim(),
         messages: this.buildMessagesWithSystemPrompt(userMessage),
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         stream: false,
       };
+
+      // [LLM DEBUG] Log request details before sending
+      console.log('[LLM DEBUG] ========== HTTP REQUEST DETAILS (Non-Streaming) ==========');
+      console.log('[LLM DEBUG] Endpoint URL:', endpoint);
+      console.log('[LLM DEBUG] Model Name:', this.config.model);
+      console.log('[LLM DEBUG] Request Method: POST');
+      console.log('[LLM DEBUG] Request Headers:', JSON.stringify({
+        'Content-Type': 'application/json',
+      }, null, 2));
+      console.log('[LLM DEBUG] Request Payload:', JSON.stringify(payload, null, 2));
+      console.log('[LLM DEBUG] Timeout (ms):', this.config.timeout);
+      console.log('[LLM DEBUG] ==================================================================');
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
@@ -291,8 +329,23 @@ export class LLMClient {
 
       clearTimeout(timeoutId);
 
+      // [LLM DEBUG] Log response status
+      console.log('[LLM DEBUG] Response Status:', response.status, response.statusText);
+
       if (!response.ok) {
-        throw new Error(`LLM server error: ${response.statusText}`);
+        // [LLM DEBUG] Log error response details
+        let errorBody = '';
+        try {
+          errorBody = await response.clone().text();
+          console.log('[LLM DEBUG] Error Response Body:', errorBody);
+        } catch (e) {
+          console.log('[LLM DEBUG] Could not read error response body');
+        }
+
+        const statusError = response.status === 400 ? `Bad Request: ${errorBody}` :
+                            `LLM server error: ${response.statusText}`;
+        console.log('[LLM DEBUG] Error thrown:', statusError);
+        throw new Error(statusError);
       }
 
       const data = await response.json() as any;

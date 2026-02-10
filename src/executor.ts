@@ -7,6 +7,12 @@ import { GitClient } from './gitClient';
 import CodebaseIndex from './codebaseIndex';
 import { ArchitectureValidator } from './architectureValidator';
 import { TaskPlan, PlanStep, StepResult } from './planner';
+import { validateExecutionStep } from './types/executor';
+import { PathSanitizer } from './utils/pathSanitizer';
+import { ValidationReport, formatValidationReportForLLM } from './types/validation';
+import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
+import { GOLDEN_TEMPLATES } from './constants/templates';
+import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -33,6 +39,7 @@ export interface ExecutionResult {
   results: Map<number, StepResult>;
   error?: string;
   totalDuration: number;
+  handover?: any; // ExecutionHandover from handoverSummary (avoid circular import)
 }
 
 /**
@@ -54,6 +61,128 @@ export class Executor {
   }
 
   /**
+   * Extract contract information from a previously created file
+   * Detects what the file exports (stores, components, utilities, etc.)
+   * Returns a human-readable description for LLM consumption
+   */
+  private async extractFileContract(filePath: string, workspace: vscode.Uri): Promise<string> {
+    try {
+      const fileUri = vscode.Uri.joinPath(workspace, filePath);
+      const fileContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
+
+      // ZUSTAND STORES: Detect useXXXStore patterns
+      const zustandMatch = fileContent.match(/export\s+const\s+(use\w+Store)\s*=\s*create<(\w+)>\(\(set\)\s*=>\s*\({([^}]*?)}\n\s*\}\)/s);
+      if (zustandMatch) {
+        const [, hookName, stateType, stateBody] = zustandMatch;
+        // Extract state properties from store
+        const stateProps = stateBody.match(/(\w+):\s*[^,}]+/g) || [];
+        const propList = stateProps.map(p => p.split(':')[0].trim()).join(', ');
+        return `📦 **Zustand Store** - \`${filePath}\`
+   - Export: \`const ${hookName} = create<${stateType}>()\`
+   - Hook name: \`${hookName}\`
+   - State object has: ${propList}
+   - Usage: \`const { ${propList} } = ${hookName}()\`
+   - ⚠️ State is structured - check field nesting. Example: if state is \`{ formState: { email, password } }\`, access as \`state.formState.email\`, NOT \`state.email\``;
+      }
+
+      // REACT COMPONENTS: Detect export function/const XXX components
+      const componentMatch = fileContent.match(/export\s+(?:const|function)\s+(\w+)\s*(?::|=|\()/);
+      const propsMatch = fileContent.match(/interface\s+(\w+Props)\s*{([^}]*)}/);
+      if (componentMatch) {
+        const [, componentName] = componentMatch;
+        const [, propsName, propsBody] = propsMatch || [null, 'Props', ''];
+        return `⚛️ **React Component** - \`${filePath}\`
+   - Export: \`export const ${componentName}: React.FC<${propsName || 'Props'}>\`
+   - Component name: \`${componentName}\`
+   - Props available: ${propsBody ? propsBody.split(';').map(l => l.trim()).filter(l => l).join(', ') : 'See component definition'}
+   - Usage: \`<${componentName} ... />\` or \`import { ${componentName} } from '...'\``;
+      }
+
+      // UTILITY EXPORTS: Detect exported functions or constants
+      const utilMatches = fileContent.match(/export\s+(?:const|function|interface|type)\s+(\w+)/g) || [];
+      if (utilMatches.length > 0) {
+        const exports = utilMatches.map(m => m.replace(/export\s+(?:const|function|interface|type)\s+/, ''));
+        return `🛠️ **Utility/Helper** - \`${filePath}\`
+   - Exports: ${exports.join(', ')}
+   - Usage: \`import { ${exports[0]} } from '...'\` or use as needed`;
+      }
+
+      // DEFAULT: Generic description
+      return `📄 **File** - \`${filePath}\` (use as reference for context)`;
+    } catch (error) {
+      // If file can't be read, just return generic description
+      return `📄 **File** - \`${filePath}\` (couldn't extract contract, use as reference)`;
+    }
+  }
+
+  /**
+   * CRITICAL FIX: Calculate the exact import statement from source file to target file
+   * This prevents the LLM from guessing at paths
+   * @param sourcePath Current file being generated (e.g., "src/components/LoginForm.tsx")
+   * @param targetPath File being imported (e.g., "src/stores/useLoginFormStore.ts")
+   * @returns Import statement (e.g., "import { useLoginFormStore } from '../stores/useLoginFormStore';")
+   */
+  private calculateImportStatement(sourcePath: string, targetPath: string): string | null {
+    try {
+      // Get directories
+      const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
+      const targetDir = targetPath.substring(0, targetPath.lastIndexOf('/'));
+      const targetFileName = targetPath.substring(targetPath.lastIndexOf('/') + 1);
+      
+      // Remove extension for import (import useLoginFormStore from '...' , not '.ts')
+      const importName = targetFileName.replace(/\.(ts|tsx|js|jsx)$/, '');
+      
+      // Calculate relative path
+      const sourceParts = sourceDir.split('/').filter(p => p);
+      const targetParts = targetDir.split('/').filter(p => p);
+      
+      // Find common prefix length
+      let commonLength = 0;
+      for (let i = 0; i < Math.min(sourceParts.length, targetParts.length); i++) {
+        if (sourceParts[i] === targetParts[i]) {
+          commonLength = i + 1;
+        } else {
+          break;
+        }
+      }
+      
+      // Calculate up path (..)
+      const upCount = sourceParts.length - commonLength;
+      const upPath = upCount > 0 ? '../'.repeat(upCount) : './';
+      
+      // Calculate down path
+      const downPath = targetParts.slice(commonLength).join('/');
+      
+      // Combine to get relative path
+      let relativePath = upPath + downPath;
+      if (downPath) {
+        relativePath = upPath + downPath + '/' + importName;
+      } else {
+        relativePath = upPath + importName;
+      }
+      
+      // Detect if it's a Zustand store (starts with 'use' and ends with 'Store')
+      const isZustandStore = importName.startsWith('use') && importName.endsWith('Store');
+      
+      // Generate import statement
+      if (isZustandStore) {
+        return `import { ${importName} } from '${relativePath}';`;
+      }
+      
+      // For utilities and helpers, use named imports
+      if (targetFileName === 'cn.ts' || targetFileName === 'cn.js') {
+        return `import { cn } from '${relativePath}';`;
+      }
+      
+      // Default: assume named export with same name as file
+      return `import { ${importName} } from '${relativePath}';`;
+    } catch (error) {
+      console.warn(`[Executor] Failed to calculate import for ${targetPath}: ${error}`);
+      return null;
+    }
+  }
+
+  /**
    * Execute a complete plan step-by-step
    */
   async executePlan(plan: TaskPlan): Promise<ExecutionResult> {
@@ -62,107 +191,230 @@ export class Executor {
     this.cancelled = false;
     plan.status = 'executing';
 
+    // CRITICAL: Initialize results Map if not already present
+    if (!plan.results) {
+      plan.results = new Map<number, StepResult>();
+    }
+
+    // CRITICAL FIX: Use workspace from plan context, not executor config
+    // This fixes the "RefactorTest selection not persisting" bug
+    const planWorkspaceUri = plan.workspacePath
+      ? vscode.Uri.file(plan.workspacePath)
+      : this.config.workspace;
+
+    if (plan.workspacePath) {
+      console.log(
+        `[Executor] Using workspace from plan: "${plan.workspaceName}" at ${plan.workspacePath}`
+      );
+    } else {
+      console.log(
+        `[Executor] No workspace in plan, using default: ${this.config.workspace.fsPath}`
+      );
+    }
+
     // Clear LLM conversation history to avoid context pollution from planning phase
     // This clears the LLM's internal context, NOT the chat UI history
     this.config.llmClient.clearHistory();
 
     const startTime = Date.now();
+    let succeededSteps = 0;
 
-    for (const step of plan.steps) {
-      // Check for pause/cancel
-      while (this.paused && !this.cancelled) {
-        await new Promise(r => setTimeout(r, 100));
-      }
+    // ✅ SURGICAL REFACTOR: Greenfield Guard (State-Aware Contract Enforcement)
+    // Check if workspace is greenfield (empty) and enforce READ constraints
+    const workspaceExists = await this.checkWorkspaceExists(planWorkspaceUri);
+    const hasInitialization = plan.steps.some(s => s.action === 'write');
 
-      if (this.cancelled) {
-        plan.status = 'failed';
-        return {
-          success: false,
-          completedSteps: plan.currentStep,
-          results: plan.results,
-          error: 'Execution cancelled by user',
-          totalDuration: Date.now() - startTime,
-        };
-      }
-
-      // Execute step with retry logic and auto-correction (Priority 2.1)
-      let retries = 0;
-      let result: StepResult | null = null;
-      let autoFixAttempted = false;
-      let retryCount = 0; // Track how many retries actually happened
-      const maxRetries = this.config.maxRetries || 2;
-
-      while (retries <= maxRetries) {
-        result = await this.executeStep(plan, step.stepId);
-
-        if (result.success) {
-          // Success! Show retry info if retries happened
-          if (retryCount > 0) {
-            this.config.onMessage?.(`✅ Step ${step.stepId} succeeded (after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''})`, 'info');
-          }
-          break;
-        }
-
-        // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
-        if (!autoFixAttempted && result.error) {
-          this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${this.MAX_VALIDATION_ITERATIONS})...`, 'info');
-          const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS);
-          if (fixedResult && fixedResult.success) {
-            result = fixedResult;
-            autoFixAttempted = true;
-            this.config.onMessage?.(`✅ Auto-correction succeeded for step ${step.stepId}`, 'info');
-            break; // Auto-fix succeeded, move to next step
-          }
-          autoFixAttempted = true; // Mark that we tried, don't try again
-        }
-
-        retries++;
-        retryCount++;
-        if (retries <= maxRetries) {
-          const msg = `❌ Step ${step.stepId} failed. Retrying (${retries}/${maxRetries})...`;
-          this.config.onMessage?.(msg, 'error');
-          await new Promise(r => setTimeout(r, 1000));
-        }
-      }
-
-      plan.results.set(step.stepId, result!);
-
-      if (!result!.success) {
-        plan.status = 'failed';
-        plan.currentStep = step.stepId;
-        const failureMsg = retryCount > 0 
-          ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
-          : `Step ${step.stepId} failed on first attempt`;
-        return {
-          success: false,
-          completedSteps: plan.currentStep,
-          results: plan.results,
-          error: failureMsg + `: ${result!.error}`,
-          totalDuration: Date.now() - startTime,
-        };
-      }
-
-      plan.currentStep = step.stepId;
-      this.config.onProgress?.(
-        plan.currentStep,
-        plan.steps.length,
-        step.description
+    if (!workspaceExists && !hasInitialization) {
+      // Greenfield workspace with no initialization - inform user
+      this.config.onMessage?.(
+        '⚠️ Greenfield Workspace: Plan starts with READ operations on empty workspace. Consider WRITE operations first.',
+        'info'
       );
     }
 
+    for (const step of plan.steps) {
+      try {
+        // ✅ SURGICAL REFACTOR: Pre-Flight Contract Check (State-Aware)
+        // Run atomic contract validation BEFORE any normalization/sanitization
+        this.preFlightCheck(step, workspaceExists);
+
+        // ✅ NEW: Dependency Validation (DAG Support)
+        // Track completed step IDs and validate dependencies
+        const completedStepIds = new Set<string>();
+        for (const completed of plan.results?.values() ?? []) {
+          if (completed.success && plan.steps[completed.stepId - 1]?.id) {
+            completedStepIds.add(plan.steps[completed.stepId - 1].id);
+          }
+        }
+        this.validateDependencies(step, completedStepIds);
+
+        // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
+        // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
+        if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
+          step.path = PathSanitizer.normalizeString(step.path);
+        }
+
+        // ✅ ATOMIC STEP VALIDATION (Danh's Fix A)
+        // 1. Deterministic Path Guard: Validate step contract BEFORE execution
+        this.validateStepContract(step);
+
+        // ✅ LIBERAL PATH SANITIZER (Danh's Fix B)
+        // Auto-fix common Qwen 7b artifacts: trailing dots, spaces, backticks
+        if ((step.action === 'write' || step.action === 'read' || step.action === 'delete') && step.path) {
+          step.path = this.sanitizePath(step.path);
+        }
+
+        // ✅ 2. Actual Execution with retry logic
+        let retries = 0;
+        let result: StepResult | null = null;
+        let autoFixAttempted = false;
+        let retryCount = 0;
+        const maxRetries = this.config.maxRetries || 2;
+
+        while (retries <= maxRetries) {
+          // Check for pause/cancel before executing
+          while (this.paused && !this.cancelled) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+
+          if (this.cancelled) {
+            plan.status = 'failed';
+            return {
+              success: false,
+              completedSteps: succeededSteps,
+              results: plan.results,
+              error: 'Execution cancelled by user',
+              totalDuration: Date.now() - startTime,
+            };
+          }
+
+          result = await this.executeStep(plan, step.stepId, planWorkspaceUri);
+
+          if (result.success) {
+            // Success! Show retry info if retries happened
+            if (retryCount > 0) {
+              this.config.onMessage?.(`✅ Step ${step.stepId} succeeded (after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''})`, 'info');
+            }
+            succeededSteps++;
+            break;
+          }
+
+          // ✅ SURGICAL REFACTOR: Smart Retry Strategy Switching
+          // Detect READ-ENOENT and attempt intelligent recovery
+          if (result.error && step.action === 'read' && result.error.includes('ENOENT')) {
+            const strategySwitch = this.attemptStrategySwitch(step, result.error);
+            if (strategySwitch) {
+              this.config.onMessage?.(
+                `⚠️ Step ${step.stepId}: File not found. ${strategySwitch.message}`,
+                'info'
+              );
+              // Update step with suggested action
+              step.action = strategySwitch.suggestedAction as any;
+              if (strategySwitch.suggestedPath) {
+                step.path = strategySwitch.suggestedPath;
+              }
+              // Retry with new strategy
+              retryCount++;
+              await new Promise(r => setTimeout(r, 500));
+              continue; // Retry this step with new action
+            }
+          }
+
+          // Try auto-correction on first failure (Priority 2.1: Auto-Correction)
+          if (!autoFixAttempted && result.error) {
+            this.config.onMessage?.(`Attempting automatic fix for step ${step.stepId} (iteration 1/${this.MAX_VALIDATION_ITERATIONS})...`, 'info');
+            const fixedResult = await this.attemptAutoFix(step, result.error, Date.now(), this.MAX_VALIDATION_ITERATIONS, planWorkspaceUri);
+            if (fixedResult && fixedResult.success) {
+              result = fixedResult;
+              autoFixAttempted = true;
+              succeededSteps++;
+              this.config.onMessage?.(`✅ Auto-correction succeeded for step ${step.stepId}`, 'info');
+              break; // Auto-fix succeeded, move to next step
+            }
+            autoFixAttempted = true; // Mark that we tried, don't try again
+          }
+
+          retries++;
+          retryCount++;
+          if (retries <= maxRetries) {
+            const msg = `❌ Step ${step.stepId} failed. Retrying (${retries}/${maxRetries})...`;
+            this.config.onMessage?.(msg, 'error');
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+
+        plan.results.set(step.stepId, result!);
+
+        if (!result!.success) {
+          plan.status = 'failed';
+          plan.currentStep = step.stepId;
+          const failureMsg = retryCount > 0
+            ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
+            : `Step ${step.stepId} failed on first attempt`;
+          return {
+            success: false,
+            completedSteps: succeededSteps,
+            results: plan.results,
+            error: failureMsg + `: ${result!.error}`,
+            totalDuration: Date.now() - startTime,
+          };
+        }
+
+        plan.currentStep = step.stepId;
+        this.config.onProgress?.(
+          plan.currentStep,
+          plan.steps.length,
+          step.description
+        );
+      } catch (error) {
+        // ✅ ATOMIC CATCH BLOCK (Danh's Fix A)
+        // Terminal failure at this step: mark as failed and break execution
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`[Executor] Terminal failure at step ${step.stepId}: ${errorMsg}`);
+
+        plan.results?.set(step.stepId, {
+          success: false,
+          stepId: step.stepId,
+          output: '',
+          error: errorMsg,
+          duration: 0,
+          timestamp: Date.now(),
+        });
+
+        // Return immediately with the current count
+        return {
+          success: false,
+          completedSteps: succeededSteps,
+          results: plan.results,
+          error: errorMsg,
+          totalDuration: Date.now() - startTime,
+        };
+      }
+    }
+
     plan.status = 'completed';
+
+    // Generate post-execution handover summary (Danh's Product Thinking)
+    const filesCreated = plan.steps
+      .filter(s => s.action === 'write')
+      .map(s => s.path)
+      .filter((p): p is string => !!p);
+
+    const handover = generateHandoverSummary(
+      plan.results!,
+      plan.steps.map(s => s.description).join('; '),
+      filesCreated
+    );
+
     return {
       success: true,
-      completedSteps: plan.steps.length,
+      completedSteps: succeededSteps,
       results: plan.results,
       totalDuration: Date.now() - startTime,
+      handover,
     };
   }
 
-  /**
-   * Suggest fixes for common errors (Priority 1.4: Smart Error Fixes)
-   * Provides helpful hints based on error type and context
-   */
   /**
    * Validate generated TypeScript/JavaScript code
    * Checks for:
@@ -188,7 +440,7 @@ export class Executor {
     }
 
     // Check 2: Architecture rule violations
-    const ruleErrors = await this.validateArchitectureRules(content);
+    const ruleErrors = await this.validateArchitectureRules(content, filePath);
     if (ruleErrors.length > 0) {
       errors.push(...ruleErrors);
     }
@@ -197,6 +449,84 @@ export class Executor {
     const patternErrors = this.validateCommonPatterns(content, filePath);
     if (patternErrors.length > 0) {
       errors.push(...patternErrors);
+    }
+
+    // Check 4: CRITICAL - Cross-file contract validation (multi-step orchestration)
+    // Verify that imported symbols actually exist in their source files
+    if ((filePath.endsWith('.ts') || filePath.endsWith('.tsx')) && this.plan) {
+      try {
+        // ✅ CRITICAL: Build context of files from previous steps
+        // Pass these to the validator so it can resolve imports without reading disk
+        const previousStepFiles = new Map<string, string>();
+        if (this.plan.results) {
+          for (let i = 1; i < step.stepId; i++) {
+            const prevResult = this.plan.results.get(i);
+            if (prevResult && prevResult.output && (prevResult as any).content) {
+              // If output is a file path, try to get content from plan storage
+              // The output format is usually "Wrote {filePath} (XX bytes)"
+              const pathMatch = prevResult.output.match(/Wrote\s+(\S+)\s+/);
+              if (pathMatch) {
+                const prevFilePath = pathMatch[1];
+                const fileContent = (prevResult as any).content;
+                
+                // Store with multiple variants for robust path matching
+                // e.g., "src/stores/loginStore.ts" also stored as "src/stores/loginStore"
+                previousStepFiles.set(prevFilePath, fileContent);
+                
+                // Also store without extension for relative import resolution
+                if (prevFilePath.endsWith('.ts') || prevFilePath.endsWith('.tsx') || 
+                    prevFilePath.endsWith('.js') || prevFilePath.endsWith('.jsx')) {
+                  const pathWithoutExt = prevFilePath.replace(/\.(ts|tsx|js|jsx)$/, '');
+                  previousStepFiles.set(pathWithoutExt, fileContent);
+                }
+                
+                console.log(`[Executor] ✅ Stored previous step file for validator: ${prevFilePath}`);
+              }
+            }
+          }
+        }
+
+        const validator = new ArchitectureValidator();
+        const contractResult = await validator.validateCrossFileContract(
+          content,
+          filePath,
+          this.config.workspace,
+          previousStepFiles.size > 0 ? previousStepFiles : undefined  // ✅ Pass previous files context
+        );
+
+        if (contractResult.hasViolations) {
+          const contractErrors = contractResult.violations.map(
+            v =>
+              `❌ Cross-file Contract: ${v.message}. ${v.suggestion}`
+          );
+          errors.push(...contractErrors);
+          
+          if (contractResult.recommendation === 'skip') {
+            console.warn(
+              `[Executor] ⚠️ CRITICAL: Cross-file contract violations found in ${filePath}. Component/feature will not work correctly.`
+            );
+          }
+        }
+
+        // ✅ NEW: Validate semantic hook usage (prevents refactoring failures)
+        const hookUsageViolations = await validator.validateHookUsage(
+          content,
+          filePath,
+          previousStepFiles.size > 0 ? previousStepFiles : undefined  // ✅ Pass previous files context
+        );
+        if (hookUsageViolations.length > 0) {
+          const hookErrors = hookUsageViolations.map(
+            v => `❌ Hook Usage: ${v.message}. ${v.suggestion}`
+          );
+          errors.push(...hookErrors);
+          console.warn(
+            `[Executor] ⚠️ Hook usage violations found in ${filePath}. Refactoring may not be complete.`
+          );
+        }
+      } catch (error) {
+        console.warn(`[Executor] Cross-file validation error: ${error}`);
+        // Don't fail on validation errors, just log warning
+      }
     }
 
     return {
@@ -263,7 +593,7 @@ export class Executor {
   /**
    * Check generated code against architecture rules
    */
-  private async validateArchitectureRules(content: string): Promise<string[]> {
+  private async validateArchitectureRules(content: string, filePath?: string): Promise<string[]> {
     const errors: string[] = [];
 
     // Get architecture rules if available
@@ -271,6 +601,11 @@ export class Executor {
     if (!rules) {
       return errors; // No rules to validate against
     }
+
+    // CRITICAL FIX: Check if this is a UI component
+    // Per .lla-rules: Components should NOT use Zod for props, only for form data
+    const isComponent = filePath && filePath.includes('src/components/');
+    const isFormComponent = filePath && filePath.includes('Form');
 
     // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
     if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
@@ -332,7 +667,7 @@ export class Executor {
       // If file has function parameters that accept objects but no Zod validation
       const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(content);
       const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
-      
+
       if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
         errors.push(
           `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
@@ -343,11 +678,22 @@ export class Executor {
     }
 
     // Check Rule: Validation with Zod
+    // CRITICAL: Do NOT suggest Zod for UI components or simple utilities (per .lla-rules)
+    // Exception: Allow Zod for Form components (form data validation) and domain logic
+    // Utilities like cn.ts, helpers.ts are exempt - they're simple transforms, not validators
+    const isUtilityFile = filePath.includes('/utils/') || filePath.match(/\.(util|helper)\.ts$/);
     if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
-      errors.push(
-        `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-      );
+      // Skip Zod suggestion for utility files - they don't need runtime validation
+      if (isUtilityFile) {
+        // Silently skip for utilities
+      } else if (!isComponent || (isComponent && isFormComponent)) {
+        // Only suggest for non-component/non-utility code or form components
+        errors.push(
+          `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+          `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+        );
+      }
+      // Silently skip for non-form UI components (they use TypeScript interfaces for props)
     }
 
     // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
@@ -362,11 +708,123 @@ export class Executor {
     }
 
     // PATTERN: Check for mixed resolver libraries
-    if ((content.includes('yupResolver') && content.includes('z.object')) || 
+    if ((content.includes('yupResolver') && content.includes('z.object')) ||
         (content.includes('yupResolver') && content.includes('zod'))) {
       errors.push(
         `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
         `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
+      );
+    }
+
+    return errors;
+  }
+
+  /**
+   * Validate form components against .lla-rules 7 required patterns
+   */
+  private validateFormComponentPatterns(content: string, filePath: string): string[] {
+    const errors: string[] = [];
+    
+    // Only validate if this is a form component
+    if (!filePath.includes('Form') || !filePath.endsWith('.tsx')) {
+      return errors;
+    }
+
+    // Pattern 1: State Interface - Must have interface for form state
+    const hasStateInterface = /interface\s+\w+State\s*{/.test(content) || 
+                            /type\s+\w+State\s*=\s*{/.test(content);
+    if (!hasStateInterface) {
+      errors.push(
+        `❌ Pattern 1 violation: Missing state interface. ` +
+        `Forms require: interface LoginFormState { email: string; password: string; }`
+      );
+    }
+
+    // Pattern 2: Handler Typing - FormEventHandler must be used, not any
+    const hasFormEventHandler = /FormEventHandler\s*<\s*HTMLFormElement\s*>/.test(content);
+    const hasInlineHandler = /const\s+handle\w+\s*=\s*\(\s*e\s*:\s*any\s*\)/.test(content);
+    if (hasInlineHandler) {
+      errors.push(
+        `❌ Pattern 2 violation: Handler typed as 'any'. ` +
+        `Use: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { ... }`
+      );
+    }
+    if (!hasFormEventHandler && (content.includes('handleChange') || content.includes('handleSubmit'))) {
+      errors.push(
+        `⚠️ Pattern 2 warning: Handlers should use FormEventHandler<HTMLFormElement> type.`
+      );
+    }
+
+    // Pattern 3: Consolidator Pattern - Single handleChange function for multi-field forms
+    // KEY: Only count field-change handlers (not submit handlers)
+    // A form legitimately needs: handleChange (field updates) + handleSubmit (form submission)
+    const fieldChangeHandlers = (content.match(/const\s+(handle(?:Change|Input|Update|Form(?!Submit))\w*)\s*=/gi) || []).length;
+    const hasConsolidator = /\[name,\s*value\]\s*=\s*.*currentTarget/.test(content) ||
+                           /currentTarget.*name.*value/.test(content);
+    
+    // Only fail if there are MULTIPLE field-change handlers without consolidator
+    // (handleChange + handleSubmit is OK - submit handler is allowed)
+    if (fieldChangeHandlers > 1 && !hasConsolidator) {
+      errors.push(
+        `❌ Pattern 3 violation: Multiple field handlers instead of consolidator. ` +
+        `Multi-field forms must use single handleChange: ` +
+        `const handleChange = (e) => { const { name, value } = e.currentTarget; }`
+      );
+    }
+
+    // Pattern 4: Submit Handler - onSubmit must be on <form>, not button click
+    const hasFormElement = /<form/.test(content);
+    const hasFormOnSubmit = /onSubmit\s*=\s*{?\s*handleSubmit/.test(content);
+    const hasButtonOnClick = /<button[^>]*onClick\s*=\s*{?\s*handle/.test(content);
+    
+    if (!hasFormOnSubmit && hasFormElement) {
+      errors.push(
+        `❌ Pattern 4 violation: Missing form onSubmit handler. ` +
+        `Use: <form onSubmit={handleSubmit}>` +
+        `Then: const handleSubmit: FormEventHandler<HTMLFormElement> = (e) => { e.preventDefault(); ... }`
+      );
+    }
+    if (hasButtonOnClick && !hasFormOnSubmit) {
+      errors.push(
+        `❌ Pattern 4 violation: Using button onClick instead of form onSubmit. ` +
+        `Forms should handle submission via: <form onSubmit={handleSubmit}>`
+      );
+    }
+
+    // Pattern 5: Validation Logic - Must have some form of input validation
+    // NOTE: Simple inline validation is preferred (NOT Zod). Zod was removed from form requirements.
+    // Validation can be done with simple if-checks in handlers: if (!email.includes('@')) { ... }
+    const hasValidationLogic = /if\s*\(\s*!/.test(content) || 
+                               /setErrors\s*\(/.test(content) ||
+                               /validate/.test(content);
+    
+    if (!hasValidationLogic && content.includes('email')) {
+      errors.push(
+        `⚠️ Pattern 5 info: Consider adding basic validation. ` +
+        `Example: if (!email.includes('@')) { setErrors(...); return; }`
+      );
+    }
+
+    // Pattern 6: Error State Tracking - Must track field-level errors
+    const hasErrorState = /useState\s*<\s*Record\s*<\s*string\s*,\s*string\s*>\s*>\s*\(\s*{}/.test(content);
+    const hasErrorDisplay = /\{errors\.\w+/.test(content) || /errors\[\w+\]/.test(content);
+    
+    if (!hasErrorState && (content.includes('validation') || content.includes('error'))) {
+      errors.push(
+        `⚠️ Pattern 6 warning: Consider tracking field-level errors. ` +
+        `Use: const [errors, setErrors] = useState<Record<string, string>>({})`
+      );
+    }
+
+    // Pattern 7: Semantic Form Markup - Input elements must have name attributes
+    const hasNamedInputs = /name\s*=\s*['"]\w+['"]/.test(content);
+    const hasInputElements = /<input|<textarea|<select/.test(content);
+    const hasMissingName = /<input[^>]*\/?>/.test(content) && !hasNamedInputs;
+    
+    if (hasInputElements && !hasNamedInputs) {
+      errors.push(
+        `❌ Pattern 7 violation: Input elements missing name attributes. ` +
+        `Use: <input type="email" name="email" value={formData.email} />`
       );
     }
 
@@ -379,24 +837,34 @@ export class Executor {
   private validateCommonPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
 
+    // Check form component patterns first
+    const formErrors = this.validateFormComponentPatterns(content, filePath);
+    if (formErrors.length > 0) {
+      errors.push(...formErrors);
+    }
+
     // Extract all imported items and namespaces
     const importedItems = new Set<string>();
     const importedNamespaces = new Set<string>();
+
+    // ✅ FIX: Handle mixed imports like "import React, { useState } from 'react'"
+    // Pattern: import [DefaultName] [, { NamedImports }] from 'module'
     
-    content.replace(/import\s+{([^}]+)}/g, (_, items) => {
+    // First, extract named imports (destructured)
+    content.replace(/import\s+(?:\w+\s*,\s*)?{([^}]+)}/g, (_, items) => {
       items.split(',').forEach((item: string) => {
         importedItems.add(item.trim());
       });
       return '';
     });
-    
+
     // Also capture namespace imports (import * as X)
     content.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
       importedNamespaces.add(namespace.trim());
       return '';
     });
-    
-    // And default imports
+
+    // And default imports (import React from 'react')
     content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
       importedNamespaces.add(name.trim());
       return '';
@@ -405,15 +873,49 @@ export class Executor {
     // GENERIC NAMESPACE PATTERN DETECTOR
     // Find all namespace.method() patterns and verify namespaces are imported
     const namespaceUsages = new Set<string>();
+    
+    // First, collect all local variable definitions and function parameters
+    const localVariables = new Set<string>();
+    
+    // Collect function parameters: (e) => or (e, f) =>
+    content.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
+      params.split(',').forEach((param: string) => {
+        const cleaned = param.trim().split(/[:\s=]/)[0].trim();
+        if (cleaned) localVariables.add(cleaned);
+      });
+      return '';
+    });
+    
+    // Collect variable definitions: const x = or let x = or var x =
+    content.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
+      localVariables.add(varName.trim());
+      return '';
+    });
+    
+    // Collect destructured variables: const { x, y } =
+    content.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
+      vars.split(',').forEach((v: string) => {
+        const cleaned = v.trim().split(/[:=]/)[0].trim();
+        if (cleaned) localVariables.add(cleaned);
+      });
+      return '';
+    });
+    
+    // Now find namespace usages, excluding local variables
     content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
       // Skip common JavaScript globals
       const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
-      if (!globalKeywords.includes(namespace)) {
+      // Skip single-letter params like 'e' (event parameters)
+      const isSingleLetter = namespace.length === 1;
+      // Skip if it's a local variable
+      const isLocal = localVariables.has(namespace);
+      
+      if (!globalKeywords.includes(namespace) && !isSingleLetter && !isLocal) {
         namespaceUsages.add(namespace);
       }
       return '';
     });
-    
+
     // Check if all used namespaces are imported
     Array.from(namespaceUsages).forEach((namespace) => {
       if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
@@ -426,8 +928,10 @@ export class Executor {
     });
 
     // Pattern: React/useState without import
-    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState')) {
-      if (!content.includes("import { useState")) {
+    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState') && !importedItems.has('useEffect')) {
+      // Check if useState is actually used in the code (not just mentioned in comments)
+      const useStateUsage = /\b(useState|useEffect)\s*\(/.test(content);
+      if (useStateUsage && !importedItems.has('useState')) {
         errors.push(
           `❌ Missing import: useState is used but not imported. ` +
           `Add: import { useState } from 'react'`
@@ -444,7 +948,8 @@ export class Executor {
 
     // Pattern: JSX without React import
     if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && content.includes('<')) {
-      if (!importedItems.has('React') && !content.includes("import React")) {
+      // React can be imported as default import or named import
+      if (!importedItems.has('React') && !importedNamespaces.has('React')) {
         // In newer React versions, this is optional, so just warn
         errors.push(
           `⚠️ Possible issue: JSX detected but no React import. ` +
@@ -485,17 +990,22 @@ export class Executor {
     importedItems.forEach((item) => {
       // Skip common React hooks that might be used indirectly
       if (['React', 'Component'].includes(item)) return;
-      
+
       // Check if this import is actually used in the code
-      // Pattern: used as identifier (standalone), not just in strings/comments
-      const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
-      const usageMatches = content.match(usagePattern) || [];
+      // Pattern 1: Used as value/identifier: Item.x or Item(...) or Item[...]
+      const valueUsagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+      const valueMatches = content.match(valueUsagePattern) || [];
       
-      if (usageMatches.length === 0) {
+      // Pattern 2: Used as type annotation (e.g., : ClassValue or ClassValue[])
+      const typeUsagePattern = new RegExp(`[:\\s<]${item}[\\s\\[,>]`, 'g');
+      const typeMatches = content.match(typeUsagePattern) || [];
+
+      // If used in either value or type position, it's not unused
+      if (valueMatches.length === 0 && typeMatches.length === 0) {
         unusedImports.push(item);
       }
     });
-    
+
     if (unusedImports.length > 0) {
       unusedImports.forEach((unused) => {
         errors.push(
@@ -548,11 +1058,92 @@ export class Executor {
   }
 
   /**
+   * ✅ FIX THE VALIDATION BULLY EFFECT
+   * 
+   * Separate critical errors from soft suggestions.
+   * Hard errors (missing imports, syntax) block validation.
+   * Soft suggestions (Zod recommendations, style) don't block, just warn.
+   * 
+   * This prevents the LLM from getting confused by contradictory messages.
+   */
+  private categorizeValidationErrors(errors: string[]): {
+    critical: string[];
+    suggestions: string[];
+  } {
+    const critical: string[] = [];
+    const suggestions: string[] = [];
+
+    errors.forEach(error => {
+      // CRITICAL: Hard blockers that must be fixed
+      if (
+        error.includes('❌') ||  // Explicit error marker
+        (error.includes('Pattern') && error.includes('violation')) ||  // Form pattern violations
+        error.includes('Missing import') ||
+        error.includes('Syntax error') ||
+        error.includes('unclosed') ||
+        error.includes('unmatched') ||
+        error.includes('not imported') ||
+        error.includes('Code wrapped in markdown') ||
+        error.includes('documentation/tutorial') ||
+        error.includes('Multiple file references') ||
+        error.includes('Typo detected') ||
+        error.includes('Multiple file') ||
+        error.includes('Incorrect resolver') ||
+        error.includes('Mixed validation') ||
+        error.includes('Zod used but not imported') ||
+        error.includes('TanStack Query used but not imported') ||
+        error.includes('@hookform') || // Import errors for hooks
+        error.match(/Missing return type|unclosed brace|unmatched/) // Type/syntax errors
+      ) {
+        critical.push(error);
+      } else {
+        // SUGGESTION: Advisory messages that don't block
+        suggestions.push(error);
+      }
+    });
+
+    return { critical, suggestions };
+  }
+
+  /**
+   * Filter validation errors to only return critical errors.
+   * Soft suggestions are logged but not returned as validation failures.
+   * 
+   * This prevents the "bully effect" where suggestions distract from hard errors.
+   */
+  private filterCriticalErrors(
+    errors: string[] | undefined,
+    verbose: boolean = false
+  ): { critical: string[]; suggestions: string[] } {
+    if (!errors || errors.length === 0) {
+      return { critical: [], suggestions: [] };
+    }
+
+    const { critical, suggestions } = this.categorizeValidationErrors(errors);
+
+    // Log suggestions as warnings, not as validation failures
+    if (verbose && suggestions.length > 0) {
+      this.config.onMessage?.(
+        `⚠️ Suggestions (not blocking): ${suggestions.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+        'info'
+      );
+    }
+
+    return { critical, suggestions };
+  }
+
+  /**
    * Auto-correct common errors (Priority 2.1: Auto-Correction)
    * Automatically attempts to fix failures without manual intervention
    * Returns null if no auto-fix is possible, or a fixed StepResult if successful
    */
-  private async attemptAutoFix(step: PlanStep, error: string, startTime: number, maxIterations: number = 3): Promise<StepResult | null> {
+  private async attemptAutoFix(
+    step: PlanStep,
+    error: string,
+    startTime: number,
+    maxIterations: number = 3,
+    workspace?: vscode.Uri
+  ): Promise<StepResult | null> {
     // Pattern 1: File not found on read → Try reading parent directory (walk up until exists)
     if (step.action === 'read' && error.includes('ENOENT') && step.path) {
       let currentPath = step.path;
@@ -580,7 +1171,7 @@ export class Executor {
     if (step.action === 'write' && step.path) {
       const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
       const parentDir = filePath.fsPath.substring(0, filePath.fsPath.lastIndexOf('/'));
-      
+
       try {
         // Check if parent directory exists
         await vscode.workspace.fs.stat(vscode.Uri.file(parentDir));
@@ -629,7 +1220,7 @@ export class Executor {
         const fixedCommand = step.command.replace(cmdBase, alt);
         const fixedStep: PlanStep = { ...step, command: fixedCommand };
         try {
-          return await this.executeRun(fixedStep, startTime);
+          return await this.executeRun(fixedStep, startTime, workspace);
         } catch {
           // Try next alternative
           continue;
@@ -695,7 +1286,7 @@ export class Executor {
         
         // Testing frameworks
         /jest|mocha|vitest|pytest|pytest-|cargo\s+test|go\s+test|mix\s+test/,
-        
+
         // Build tools
         /webpack|rollup|vite|tsc|typescript|babel/,
         /gradle|maven|make|cmake/,
@@ -725,13 +1316,21 @@ export class Executor {
         );
         console.log(`[Executor] User answered: ${answer}`);
 
+        // CRITICAL FIX: Check the actual answer string, not just return step
         if (answer === 'No, skip this step') {
+          console.log(`[Executor] User chose to skip this step`);
           return null;
         } else if (answer === 'Cancel execution') {
+          console.log(`[Executor] User chose to cancel execution`);
           throw new Error('User cancelled execution');
+        } else if (answer === 'Yes, proceed') {
+          console.log(`[Executor] User approved, proceeding with: ${step.command}`);
+          return step; // User approved, continue with step
+        } else {
+          // If no answer (callback failed), default to proceeding
+          console.log(`[Executor] No answer received, defaulting to proceed`);
+          return step;
         }
-        // If 'Yes, proceed' or no answer, return step to continue execution
-        return step;
       }
     }
 
@@ -741,7 +1340,12 @@ export class Executor {
   /**
    * Execute a single step
    */
-  async executeStep(plan: TaskPlan, stepId: number): Promise<StepResult> {
+  async executeStep(
+    plan: TaskPlan,
+    stepId: number,
+    planWorkspaceUri?: vscode.Uri
+  ): Promise<StepResult> {
+    const stepWorkspace = planWorkspaceUri || this.config.workspace;
     const step = plan.steps.find(s => s.stepId === stepId);
     if (!step) {
       return {
@@ -749,6 +1353,53 @@ export class Executor {
         success: false,
         error: `Step ${stepId} not found in plan`,
         duration: 0,
+        timestamp: Date.now(),
+      };
+    }
+
+    // INTERCEPTOR: Detect Manual Steps (Fix 2: Postel's Law)
+    // If path is missing but description mentions manual verification,
+    // treat as human instruction, not executable step
+    if (!step.path && /manual|verify|check|browser|test|visually/i.test(step.description)) {
+      console.log(`[Executor] Intercepted manual step: "${step.description}"`);
+      return {
+        stepId: step.stepId,
+        success: true,
+        output: `📝 MANUAL STEP: ${step.description}`,
+        duration: 0,
+        timestamp: Date.now(),
+        requiresManualVerification: true,
+      };
+    }
+
+    // VALIDATOR GATE 1: Check step schema (basic validation)
+    try {
+      const validatedStep = validateExecutionStep(step);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Executor] Schema Violation for Step ${stepId}:`, errorMsg);
+      return {
+        stepId,
+        success: false,
+        error: errorMsg,
+        duration: 0,
+        timestamp: Date.now(),
+      };
+    }
+
+    // VALIDATOR GATE 2: Contract Enforcement (Danh's Fix B)
+    // Catch "Manual" hallucinations and missing path errors BEFORE execution
+    try {
+      this.validateStepContract(step);
+    } catch (err) {
+      const contractError = err instanceof Error ? err.message : String(err);
+      console.error(`[Executor] CONTRACT_VIOLATION for Step ${stepId}:`, contractError);
+      return {
+        stepId,
+        success: false,
+        error: contractError,
+        duration: 0,
+        timestamp: Date.now(),
       };
     }
 
@@ -761,16 +1412,13 @@ export class Executor {
 
     try {
       let result: StepResult;
-      
+
       switch (step.action) {
         case 'read':
-          result = await this.executeRead(step, startTime);
+          result = await this.executeRead(step, startTime, stepWorkspace);
           break;
         case 'write':
-          result = await this.executeWrite(step, startTime);
-          break;
-        case 'suggestwrite':
-          result = await this.executeSuggestWrite(step, startTime);
+          result = await this.executeWrite(step, startTime, stepWorkspace);
           break;
         case 'run':
           // Ask clarification before running potentially long commands
@@ -784,12 +1432,38 @@ export class Executor {
               success: true,
               output: `Skipped: ${step.description}`,
               duration: Date.now() - startTime,
+              timestamp: Date.now(),
             };
           }
-          result = await this.executeRun(clarifiedStep || step, startTime);
+          result = await this.executeRun(clarifiedStep || step, startTime, stepWorkspace);
           break;
+        case 'manual':
+          // CONTEXT-AWARE PLANNING: Manual verification step (no automated testing)
+          // Show instructions to user, mark as requiring manual action
+          result = {
+            stepId: step.stepId,
+            success: true,
+            output: `MANUAL VERIFICATION (No Test Infrastructure)\n\n${step.description}\n\nInstructions:\n${(step as any).instructions || step.path || 'Follow step requirements manually'}\n\nExpected outcome:\n${step.expectedOutcome}`,
+            duration: Date.now() - startTime,
+            timestamp: Date.now(),
+            requiresManualVerification: true,
+          };
+          break;
+        case 'delete':
+          // Delete not yet implemented - return with helpful error
+          return {
+            stepId,
+            success: false,
+            error: `Delete action not yet implemented. Please implement executeDelete() method.`,
+            duration: 0,
+            timestamp: Date.now(),
+          };
         default:
-          throw new Error(`Unknown action: ${step.action}`);
+          // This should never happen if validator gate works
+          throw new Error(
+            `Schema Violation: Unknown action "${step.action}". ` +
+            `Valid actions: read, write, run, delete, manual`
+          );
       }
 
       // Emit step completion
@@ -812,15 +1486,291 @@ export class Executor {
   }
 
   /**
+   * ✅ SURGICAL REFACTOR: Pre-Flight Contract Check
+   *
+   * Runs BEFORE any normalization or sanitization.
+   * Enforces state-aware constraints based on workspace conditions.
+   *
+   * ✅ SENIOR FIX: "Angrier" Executor with strict path rules
+   *
+   * Purpose: Catch unrecoverable contract violations early
+   * - READ operations on greenfield (empty) workspaces
+   * - Paths with critical formatting issues (ellipses)
+   * - Paths with multiple spaces (sentences, not paths)
+   * - Paths without extensions
+   * - Action mismatches with workspace state
+   */
+
+  /**
+   * Validate step dependencies (DAG: Directed Acyclic Graph)
+   *
+   * NEW: Dependency-Linked Schema
+   * Forces LLM to explicitly state what each step depends on.
+   * Prevents "smushed" steps and ensures proper sequencing.
+   *
+   * If Step B depends on Step A, and Step A hasn't been completed yet,
+   * this throws an error to block Step B's execution.
+   */
+  private validateDependencies(step: PlanStep, completedStepIds: Set<string>): void {
+    // Only validate if step has dependencies
+    if (!step.dependsOn || step.dependsOn.length === 0) {
+      return;
+    }
+
+    // Check each dependency
+    for (const depId of step.dependsOn) {
+      if (!completedStepIds.has(depId)) {
+        throw new Error(
+          `DEPENDENCY_VIOLATION: Step "${step.id}" depends on "${depId}" which hasn't been completed yet. ` +
+          `Steps must be executed in dependency order. ` +
+          `Check that all dependencies are satisfied before this step.`
+        );
+      }
+    }
+  }
+
+  private preFlightCheck(step: PlanStep, workspaceExists: boolean): void {
+    // ✅ GREENFIELD GUARD: No READ on empty workspace without prior WRITE
+    if (!workspaceExists && step.action === 'read') {
+      throw new Error(
+        `GREENFIELD_VIOLATION: Cannot READ from "${step.path}" in empty workspace. ` +
+        `First step must WRITE or INIT files. Are you missing a WRITE step?`
+      );
+    }
+
+    // ✅ FIX 1: STRICT "NO-SPACE" RULE (Danh's Senior Fix)
+    // Multiple spaces indicate sentence/description, not a valid path
+    if (step.path) {
+      const spaceCount = (step.path.match(/ /g) || []).length;
+      if (spaceCount > 1) {
+        throw new Error(
+          `PATH_VIOLATION: Path "${step.path}" contains ${spaceCount} spaces. ` +
+          `This looks like a sentence, not a file path. ` +
+          `Use kebab-case or camelCase instead: src/components/my-component.tsx`
+        );
+      }
+    }
+
+    // ✅ FIX 2: STRICT EXTENSION REQUIREMENT (Danh's Senior Fix)
+    // Web project paths MUST have file extensions
+    if (step.path && !step.path.includes('.')) {
+      throw new Error(
+        `PATH_VIOLATION: Path "${step.path}" has no file extension. ` +
+        `Web project paths MUST include extension (.tsx, .ts, .js, .json, etc.).`
+      );
+    }
+
+    // ✅ PATH VIOLATION: Paths with ellipses are malformed
+    if (step.path && step.path.includes('...')) {
+      throw new Error(
+        `PATH_VIOLATION: Step path contains ellipses "...": "${step.path}". ` +
+        `Provide complete filename. Remove trailing prose.`
+      );
+    }
+
+    // ✅ ACTION MISMATCH: If path looks like a description, reject READ
+    if (step.action === 'read' && step.path && step.path.length > 80) {
+      throw new Error(
+        `ACTION_MISMATCH: READ action path looks like a description (too long): "${step.path.substring(0, 60)}...". ` +
+        `Provide a valid file path, not a description.`
+      );
+    }
+  }
+
+  /**
+   * ✅ SURGICAL REFACTOR: Check if workspace exists
+   *
+   * Determines if workspace has any files (greenfield check)
+   */
+  private async checkWorkspaceExists(workspaceUri: vscode.Uri): Promise<boolean> {
+    try {
+      const files = await vscode.workspace.fs.readDirectory(workspaceUri);
+      // Workspace exists if it has ANY files
+      return files.length > 0;
+    } catch (error) {
+      // Directory doesn't exist or is empty
+      return false;
+    }
+  }
+
+  /**
+   * ✅ SURGICAL REFACTOR: Intelligent Strategy Switching
+   *
+   * When READ fails with ENOENT (file not found), suggests alternative actions:
+   * - If file doesn't exist → WRITE (create it)
+   * - If path looks like template → init with template
+   * - Otherwise → null (can't fix)
+   *
+   * Returns correction signal for Executor to use in retry
+   */
+  private attemptStrategySwitch(
+    step: PlanStep,
+    error: string
+  ): { message: string; suggestedAction: string; suggestedPath?: string } | null {
+    // Only handle file not found errors
+    if (!error.includes('ENOENT') && !error.includes('not found')) {
+      return null;
+    }
+
+    // Heuristic: If trying to read a config file that doesn't exist, suggest init
+    const configPatterns = ['tsconfig', 'package.json', '.eslintrc', 'jest.config', 'babel.config'];
+    const isConfigFile = configPatterns.some(pattern => step.path?.includes(pattern));
+
+    if (isConfigFile) {
+      return {
+        message: `Config file "${step.path}" doesn't exist. Would you like to WRITE it?`,
+        suggestedAction: 'write',
+        suggestedPath: step.path,
+      };
+    }
+
+    // Heuristic: If trying to read a component/source file, suggest write
+    const sourcePatterns = ['.tsx', '.ts', '.jsx', '.js', '.vue', '.svelte'];
+    const isSourceFile = sourcePatterns.some(ext => step.path?.endsWith(ext));
+
+    if (isSourceFile) {
+      return {
+        message: `Source file "${step.path}" doesn't exist. Creating it...`,
+        suggestedAction: 'write',
+        suggestedPath: step.path,
+      };
+    }
+
+    // Can't determine recovery strategy
+    return null;
+  }
+
+  /**
+   * Validate Step Contract (Danh's Fix B: Pre-Flight Check)
+   *
+   * Purpose: Catch interface violations BEFORE execution:
+   * - "Manual" value in path or command fields (hallucination)
+   * - Missing path for file-based actions
+   * - Missing command for run actions
+   *
+   * Returns error message if contract violated, undefined if valid
+   */
+  private validateStepContract(step: PlanStep): void {
+    // Check for "manual" hallucination in path
+    if (step.path && typeof step.path === 'string') {
+      if (step.path.toLowerCase().includes('manual')) {
+        throw new Error(
+          `CONTRACT_VIOLATION: Step "${step.description}" has path="${step.path}". ` +
+          `Manual verification is not a valid executor action. ` +
+          `Use action='manual' instead, or describe verification in summary.`
+        );
+      }
+    }
+
+    // Check for "manual" hallucination in command
+    if ((step as any).command && typeof (step as any).command === 'string') {
+      if ((step as any).command.toLowerCase().includes('manual')) {
+        throw new Error(
+          `CONTRACT_VIOLATION: Step "${step.description}" has command="${(step as any).command}". ` +
+          `Manual verification is not a valid executor action.`
+        );
+      }
+    }
+
+    // Check for missing path on file-based actions
+    if (['read', 'write', 'delete'].includes(step.action)) {
+      if (!step.path || step.path.trim().length === 0) {
+        throw new Error(
+          `CONTRACT_VIOLATION: Action '${step.action}' requires a valid file path, but none was provided. ` +
+          `Step: "${step.description}"`
+        );
+      }
+    }
+
+    // Check for missing command on run action
+    if (step.action === 'run') {
+      if (!(step as any).command || ((step as any).command as string).trim().length === 0) {
+        throw new Error(
+          `CONTRACT_VIOLATION: Action 'run' requires a command, but none was provided. ` +
+          `Step: "${step.description}"`
+        );
+      }
+    }
+
+    // Contract validated - no error thrown
+  }
+
+  /**
+   * ✅ LIBERAL PATH SANITIZER (Danh's Fix B)
+   * Strips common Qwen 7b artifacts from LLM-generated paths:
+   * - Trailing ellipses (..., ..)
+   * - Accidental quotes and backticks
+   * - Trailing commas and semicolons
+   * - Placeholder paths (/path/to/ → src/)
+   */
+  private sanitizePath(path: string): string {
+    if (!path || typeof path !== 'string') return path;
+
+    // Remove trailing ellipses
+    let cleaned = path.replace(/\.{2,}$/, '');
+
+    // Remove accidental quotes and backticks
+    cleaned = cleaned.replace(/^[`'"]|[`'"]$/g, '');
+
+    // Remove trailing commas and semicolons
+    cleaned = cleaned.replace(/[,;]$/, '');
+
+    // Normalize placeholder paths
+    // Convert /path/to/filename.tsx → src/filename.tsx
+    cleaned = cleaned.replace(/^\/path\/to\//, 'src/');
+
+    // Trim whitespace
+    cleaned = cleaned.trim();
+
+    if (cleaned !== path) {
+      console.log(`[Executor] Path sanitized: "${path}" → "${cleaned}"`);
+    }
+
+    return cleaned;
+  }
+
+  /**
    * Execute /read step: Read file from workspace
    * Handles both individual files and directory structures (including globs like examples/**)
    */
-  private async executeRead(step: PlanStep, startTime: number): Promise<StepResult> {
+  private async executeRead(
+    step: PlanStep,
+    startTime: number,
+    workspace?: vscode.Uri
+  ): Promise<StepResult> {
+    // CONTEXT-AWARE PLANNING: Add diagnostic logging for debugging
+    console.log(`[Executor.executeRead] Step details:`, {
+      stepId: step.stepId,
+      action: step.action,
+      path: step.path,
+      targetFile: (step as any).targetFile,
+      command: (step as any).command,
+      description: step.description,
+    });
+
     if (!step.path) {
-      throw new Error('Read step requires path');
+      // Fallback: Check targetFile property
+      if ((step as any).targetFile) {
+        (step as any).path = (step as any).targetFile;
+      } else {
+        // No path found - log detailed error for debugging
+        console.error(`[Executor.executeRead] CRITICAL: No path in READ step`, {
+          step,
+          keys: Object.keys(step),
+        });
+        throw new Error(
+          `Read step requires path. Step received: ${JSON.stringify({
+            action: step.action,
+            description: step.description,
+            stepId: step.stepId,
+          })}`
+        );
+      }
     }
 
-    const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
+    // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
+    const workspaceUri = workspace || this.config.workspace;
+    const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
     try {
       // Check if path contains glob pattern
       if (step.path.includes('**') || step.path.includes('*')) {
@@ -874,7 +1824,7 @@ export class Executor {
 
     try {
       const structure = await this.readDirRecursive(baseUri, basePath);
-      
+
       return {
         stepId: step.stepId,
         success: true,
@@ -904,7 +1854,7 @@ export class Executor {
         if (name.startsWith('.')) {
           continue; // Skip hidden files
         }
-        
+
         const isDir = type === vscode.FileType.Directory;
         const icon = isDir ? '📁' : '📄';
         lines.push(`${indent}${icon} ${name}${isDir ? '/' : ''}`);
@@ -931,7 +1881,7 @@ export class Executor {
    */
   private shouldAskForWrite(filePath: string): boolean {
     const fileName = filePath.split('/').pop() || '';
-    
+
     // Files that warrant confirmation
     const riskPatterns = [
       // Core config files
@@ -941,7 +1891,7 @@ export class Executor {
       /pnpm-lock\.yaml$/,
       /tsconfig\.json$/,
       /jsconfig\.json$/,
-      
+
       // Build configs
       /webpack\.config/,
       /vite\.config/,
@@ -949,24 +1899,24 @@ export class Executor {
       /next\.config/,
       /nuxt\.config/,
       /gatsby\.config/,
-      
+
       // Linter/Formatter configs
       /\.eslintrc/,
       /\.prettierrc/,
       /\.stylelintrc/,
       /\.editorconfig/,
-      
+
       // CI/CD configs
       /\.github\/workflows\//,
       /\.gitlab-ci\.yml/,
       /\.travis\.yml/,
       /Jenkinsfile/,
-      
+
       // Environment and secrets
       /\.env/,
       /\.secrets/,
       /credentials/,
-      
+
       // Critical data files
       /database\.json/,
       /config\.json/,
@@ -975,33 +1925,133 @@ export class Executor {
       /\.dockerignore$/,
       /Dockerfile$/,
       /docker-compose\.ya?ml$/,
-      
+
       // Root-level files that are typically important
       /^README\.md$/,
       /^LICENSE$/,
       /^Makefile$/,
     ];
-    
+
     // Check if file matches any risk pattern
     const isRisky = riskPatterns.some(pattern => pattern.test(fileName));
-    
+
     return isRisky;
+  }
+
+  /**
+   * CRITICAL: Extract and store file contract after successful write
+   * This allows subsequent steps to use the ACTUAL API that was created,
+   * not a guessed API or calculated import paths
+   * 
+   * Runs AFTER file write succeeds, extracts real exports for validation/injection
+   */
+  private async extractAndStoreContract(
+    filePath: string,
+    content: string,
+    stepId: number,
+    workspace: vscode.Uri
+  ): Promise<void> {
+    try {
+      // Only extract contracts for code files
+      const ext = filePath.split('.').pop()?.toLowerCase();
+      if (!['ts', 'tsx', 'js', 'jsx'].includes(ext || '')) {
+        return;
+      }
+
+      // ZUSTAND STORES: Extract hook and state shape
+      const zustandMatch = content.match(/export\s+const\s+(use\w+)\s*=\s*create[<\(]/i);
+      if (zustandMatch) {
+        const [, hookName] = zustandMatch;
+        
+        // Extract state properties: look for patterns like "email: ...", "password: ...", etc
+        const propsMatch = content.match(/\{\s*([^}]+?(?::[^,}]+[,]?)*)\s*\}/);
+        const stateProps: string[] = [];
+        
+        if (propsMatch) {
+          // Split by comma and extract property names
+          const propLines = propsMatch[1].split(',');
+          for (const line of propLines) {
+            const match = line.match(/^\s*(\w+)\s*:/);
+            if (match) {
+              stateProps.push(match[1]);
+            }
+          }
+        }
+
+        // Store contract for later injection
+        const contract = {
+          type: 'zustand-store',
+          hookName,
+          filePath,
+          stateProps,
+          importStatement: `import { ${hookName} } from './${filePath.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '')}'`,
+          relativeImportExample: `import { ${hookName} } from '../stores/${filePath.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '')}';`,
+          usageExample: `const { ${stateProps.slice(0, 3).join(', ')}${stateProps.length > 3 ? ', ...' : ''} } = ${hookName}();`,
+          description: `**Zustand Store**: ${hookName}\n   Exports: ${stateProps.join(', ')}\n   Usage: const {...} = ${hookName}()`
+        };
+
+        // Store in plan results metadata
+        if (!this.plan) return;
+        if (!this.plan.results) this.plan.results = new Map();
+        
+        const stepResult = this.plan.results.get(stepId);
+        if (stepResult) {
+          (stepResult as any).contract = contract;
+          console.log(`[Executor] ✅ Stored Zustand contract for Step ${stepId}: ${hookName}`);
+          console.log(`  Exports: ${stateProps.join(', ')}`);
+        }
+        return;
+      }
+
+      // UTILITIES/HELPERS: Extract all exports
+      const exportMatches = content.match(/export\s+(?:const|function|interface|type)\s+(\w+)/g) || [];
+      if (exportMatches.length > 0) {
+        const exports = exportMatches.map(m => m.replace(/export\s+(?:const|function|interface|type)\s+/, ''));
+        
+        const contract = {
+          type: 'utility',
+          exports,
+          filePath,
+          description: `**Utility**: ${exports.join(', ')}`
+        };
+
+        // Store in plan results metadata
+        if (!this.plan) return;
+        if (!this.plan.results) this.plan.results = new Map();
+        
+        const stepResult = this.plan.results.get(stepId);
+        if (stepResult) {
+          (stepResult as any).contract = contract;
+          console.log(`[Executor] ✅ Stored utility contract for Step ${stepId}: ${exports.join(', ')}`);
+        }
+      }
+    } catch (error) {
+      // Don't fail the step if contract extraction fails
+      console.warn(`[Executor] Failed to extract contract for ${filePath}: ${error}`);
+    }
   }
 
   /**
    * Execute /write step: Generate content and write to file
    * Streams generated content back to callback
    */
-  private async executeWrite(step: PlanStep, startTime: number): Promise<StepResult> {
+  private async executeWrite(
+    step: PlanStep,
+    startTime: number,
+    workspace?: vscode.Uri
+  ): Promise<StepResult> {
     if (!step.path) {
       throw new Error('Write step requires path');
     }
+
+    // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
+    const workspaceUri = workspace || this.config.workspace;
 
     // Check if this is a risky write operation that warrants confirmation
     if (this.shouldAskForWrite(step.path)) {
       console.log(`[Executor] Detected risky write to: ${step.path}`);
       console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
-      
+
       const answer = await this.config.onQuestion?.(
         `About to write to important file: \`${step.path}\`\n\nThis is a critical configuration or data file. Should I proceed with writing?`,
         ['Yes, write the file', 'No, skip this step', 'Cancel execution']
@@ -1022,27 +2072,232 @@ export class Executor {
     }
 
     // Build a detailed prompt that asks for code-only output
+    // CONTRACT INJECTION: Inject step description as source of truth for intent
     let prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
-    
+
+    // CRITICAL: Use step.description as primary requirement (intent preservation)
+    // This bridges the planning → execution gap by injecting the actual requirement
+    const intentRequirement = step.description
+      ? `REQUIREMENT: ${step.description}\n\n`
+      : '';
+
+    // MULTI-STEP CONTEXT INJECTION WITH FILE CONTRACTS
+    // This prevents duplicate stores, unused imports, and pseudo-refactoring
+    // KEY ENHANCEMENT: Include actual exported APIs from previous files
+    let multiStepContext = '';
+    if (this.plan && step.stepId > 1) {
+      const previouslyCreatedFiles: string[] = [];
+      const completedSteps = new Map(this.plan.results || new Map());
+      
+      // Collect files created in previous steps
+      for (let i = 1; i < step.stepId; i++) {
+        const prevStep = this.plan.steps.find(s => s.stepId === i);
+        const prevResult = completedSteps.get(i);
+        
+        if (prevStep && prevResult && prevResult.success && prevStep.action === 'write') {
+          previouslyCreatedFiles.push(prevStep.path);
+        }
+      }
+      
+      if (previouslyCreatedFiles.length > 0) {
+        // ✅ CRITICAL: Use STORED CONTRACTS from previous steps (actual APIs)
+        // NOT calculated/guessed paths
+        const fileContracts: string[] = [];
+        const requiredImports: string[] = [];
+        const storedContracts: any[] = [];
+        
+        for (let i = 1; i < step.stepId; i++) {
+          const prevResult = this.plan.results?.get(i);
+          if (prevResult && (prevResult as any).contract) {
+            storedContracts.push((prevResult as any).contract);
+          }
+        }
+
+        // ✅ If we have stored contracts, use them (actual APIs that were created)
+        if (storedContracts.length > 0) {
+          console.log(`[Executor] ✅ Using ${storedContracts.length} stored contract(s) from previous steps`);
+          
+          for (const contract of storedContracts) {
+            if (contract.type === 'zustand-store') {
+              // Zustand store contract
+              fileContracts.push(`📦 **Zustand Store** - \`${contract.filePath}\`
+   - Hook name: \`${contract.hookName}\`
+   - Exports: \`${contract.stateProps.join(', ')}\`
+   - Usage: \`const { ${contract.stateProps.slice(0, 3).join(', ')}${contract.stateProps.length > 3 ? ', ...' : ''} } = ${contract.hookName}()\`
+   - Example import: \`${contract.relativeImportExample}\``);
+              
+              // Add import statement (use relative import from target file's perspective)
+              requiredImports.push(contract.relativeImportExample);
+            } else if (contract.type === 'utility') {
+              // Utility/Helper export
+              fileContracts.push(`🛠️ **Utility** - \`${contract.filePath}\`
+   - Exports: \`${contract.exports.join(', ')}\``);
+            }
+          }
+        } else {
+          // Fallback: extract contracts dynamically (same as before)
+          console.log(`[Executor] ℹ️ No stored contracts found, extracting dynamically...`);
+          
+          for (const filePath of previouslyCreatedFiles) {
+            try {
+              const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
+              fileContracts.push(contract);
+              
+              // CRITICAL FIX: Generate exact relative import paths
+              // Calculate the import statement for this file from the current file's perspective
+              const importStmt = this.calculateImportStatement(step.path, filePath);
+              if (importStmt) {
+                requiredImports.push(importStmt);
+              }
+            } catch {
+              // Fallback if contract extraction fails
+              fileContracts.push(`📄 **File** - \`${filePath}\``);
+            }
+          }
+        }
+
+        // Build the multiStepContext with both contracts and required imports
+        let importSection = '';
+        if (requiredImports.length > 0) {
+          importSection = `## REQUIRED IMPORTS
+You MUST start your file with these EXACT import statements (copy-paste):
+
+\`\`\`typescript
+${requiredImports.join('\n')}
+\`\`\`
+
+These are ${storedContracts.length > 0 ? 'extracted from files created in previous steps' : 'calculated based on actual file paths'}. Do NOT modify them.
+Do NOT create your own import paths - use EXACTLY what's shown above.
+
+`;
+        }
+
+        multiStepContext = `${importSection}## CONTEXT: Related Files Already Created
+The following files were created in previous steps. Use their exported APIs as shown below.
+
+${fileContracts.join('\n\n')}
+
+CRITICAL INTEGRATION RULES:
+1. Start with the REQUIRED IMPORTS shown above (copy them exactly)
+2. Use ONLY the APIs and exports documented above - do NOT invent new API calls
+3. For Zustand stores: Use ONLY the methods/properties exported (do NOT guess at other properties)
+4. Do NOT create duplicate stores/utilities if they already exist above
+5. Do NOT create inline implementations if a shared file already exists
+
+`;
+        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s)`);
+      }
+    }
+
+    // GOLDEN TEMPLATE INJECTION: For known files, inject exact template to copy
+    let goldenTemplateSection = '';
+    const fileName = step.path.split('/').pop() || '';
+    if (fileName === 'cn.ts' || fileName === 'cn.js') {
+      goldenTemplateSection = `GOLDEN TEMPLATE (copy this exactly - do NOT modify):
+\`\`\`typescript
+${GOLDEN_TEMPLATES.CN_UTILITY}
+\`\`\`
+
+Your ONLY job: Output this code exactly. Do NOT modify it.
+
+`;
+      console.log(`[Executor] ✅ Injecting golden template for ${fileName}`);
+    }
+
+    // REACT IMPORTS INJECTION: For single-step React components, explicitly require React imports
+    // This prevents the LLM from generating hooks without importing them
+    let reactImportsSection = '';
+    const isReactComponent = step.path.endsWith('.tsx') || step.path.endsWith('.jsx');
+    if (isReactComponent && !multiStepContext) {
+      // Only inject if this is a single-step plan (no multiStepContext already added)
+      // Multi-step plans handle imports differently
+      reactImportsSection = `## REQUIRED REACT IMPORTS
+For any React component using hooks, you MUST include these imports at the top:
+
+- If using useState: \`import { useState } from 'react';\`
+- If using React.FC or React.ReactNode: \`import React from 'react';\`
+- If using form events: \`import { FormEvent } from 'react';\`
+- If using components from external libs: \`import { Library } from 'library-name';\`
+
+CRITICAL: Every hook you use MUST be imported. The validator will reject any hook that isn't imported.
+Examples of hooks that need imports:
+- \`useState\` → must have \`import { useState } from 'react';\`
+- \`useEffect\` → must have \`import { useEffect } from 'react';\`
+- \`useContext\` → must have \`import { useContext } from 'react';\`
+
+`;
+      console.log(`[Executor] ✅ Injecting required React imports for ${fileName}`);
+    }
+
+    // FORM COMPONENT PATTERN INJECTION: Critical for form generation
+    // Extract and inject form patterns from .lla-rules if this is a form component
+    let formPatternSection = '';
+    const isFormComponent = fileName.includes('Form');
+    if (isFormComponent) {
+      const llmConfig = this.config.llmClient.getConfig();
+      const architectureRules = llmConfig.architectureRules || '';
+      
+      // Extract Form Component Architecture section from .lla-rules
+      const formPatternMatch = architectureRules.match(/###\s+Form Component Architecture[\s\S]*?(?=###\s+|$)/);
+      if (formPatternMatch) {
+        formPatternSection = `
+## REQUIRED: Form Component Patterns
+
+${formPatternMatch[0]}
+
+CRITICAL: ALL 7 PATTERNS ARE MANDATORY FOR FORM COMPONENTS.
+Validator will REJECT if any pattern is missing.
+
+`;
+        console.log(`[Executor] ✅ Injecting form component patterns for ${fileName}`);
+      } else {
+        // Fallback: Inject form patterns directly if not in rules
+        formPatternSection = `
+## REQUIRED: Form Component Patterns (7 Mandatory)
+
+1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
+2. **Event Typing** - Use FormEvent types:
+   - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
+   - Form: const handleSubmit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); ... }
+3. **Consolidator Pattern** - Single handleChange function that updates state: setFormData(prev => ({ ...prev, [name]: value }))
+4. **Submit Handler** - Use onSubmit on <form> element: <form onSubmit={handleSubmit}>
+5. **Error Tracking** - Use local error state: const [errors, setErrors] = useState<Record<string, string>>({})
+6. **Input Validation** - Simple validation in handlers (NOT Zod): if (!email.includes('@')) { setErrors(...); return; }
+7. **Semantic Form Markup** - Use proper HTML: <input name="email" type="email" required /> with name attributes
+
+CRITICAL RULES:
+- DO NOT use Zod, yup, or external schema validation in form components
+- Validation is simple: check string length, email format, etc in event handlers
+- Keep form logic simple and lean
+- No external dependencies for validation (useState is enough)
+
+Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
+
+`;
+        console.log(`[Executor] ⚠️ Fallback: Injecting hardcoded form patterns for ${fileName}`);
+      }
+    }
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
     const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
-    
+
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${prompt}
-
-STRICT REQUIREMENTS:
-1. Output ONLY valid, executable code for this file
-2. NO markdown backticks, NO code blocks, NO explanations
-3. NO documentation, NO comments about what you're doing
-4. NO instructions for other files
-5. Start with the first line of code immediately
-6. End with the last line of code
-7. Every line must be syntactically valid for a ${fileExtension} file
-8. This code will be parsed as pure code - nothing else matters
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
+1. Implement the exact logic described in the REQUIREMENT above
+2. Output ONLY valid, executable code for this file
+3. NO markdown backticks, NO code blocks, NO explanations
+4. NO documentation, NO comments about what you're doing
+5. NO instructions for other files
+6. Start with the first line of code immediately
+7. End with the last line of code
+8. Every line must be syntactically valid for a ${fileExtension} file
+9. This code will be parsed as pure code - nothing else matters
+10. Validate: Does this code fulfill the REQUIREMENT stated above?
+${multiStepContext ? '11. Integration Check: Does this code properly use/import files mentioned in CONTEXT above?' : ''}
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';
@@ -1063,18 +2318,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       throw new Error(response.error || 'LLM request failed');
     }
 
-    const filePath = vscode.Uri.joinPath(this.config.workspace, step.path);
-    
+    const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
+
     try {
       // Extract content and clean up if it's code
       let content = response.message || '';
-      
+
       // DETECTION: Check if LLM ignored instructions and provided markdown/documentation
       const hasMarkdownBackticks = content.includes('```');
       const hasExcessiveComments = (content.match(/^\/\//gm) || []).length > 5; // More than 5 comment lines at start
       const hasMultipleFileInstructions = (content.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
       const hasYAMLOrConfigMarkers = content.includes('---') || content.includes('package.json') || content.includes('tsconfig');
-      
+
       if (hasMarkdownBackticks) {
         // LLM wrapped code in markdown - extract it
         const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
@@ -1082,7 +2337,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           content = codeBlockMatch[1];
         }
       }
-      
+
       if (isCodeFile && (hasExcessiveComments || hasMultipleFileInstructions || hasYAMLOrConfigMarkers)) {
         // LLM provided documentation/setup instructions instead of just code
         // This will be caught by validation as unparseable, triggering auto-fix
@@ -1091,7 +2346,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           'info'
         );
       }
-      
+
       // For code files, try to extract just the code portion
       if (isCodeFile && !hasMarkdownBackticks) {
         // Remove common explanation patterns (but preserve code)
@@ -1101,40 +2356,54 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '') // Remove Setup sections
           .trim();
       }
-      
+
       // ============================================================================
       // GATEKEEPER: Validate code BEFORE writing to disk
       // LLM output is a PROPOSAL, not final. Must pass validation gates before committing.
       // ============================================================================
-      
+
       let finalContent = content;
-      
+
       if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
         this.config.onMessage?.(
           `🔍 Validating ${step.path}...`,
           'info'
         );
-        
+
         const validationResult = await this.validateGeneratedCode(step.path, content, step);
-        
-        if (!validationResult.valid && validationResult.errors) {
-          // ❌ VALIDATION FAILED - Try auto-correction up to MAX_VALIDATION_ITERATIONS
+
+        // ✅ FIX: Separate critical errors from soft suggestions
+        const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
+          validationResult.errors,
+          true // verbose: log suggestions as warnings
+        );
+
+        if (criticalErrors.length === 0) {
+          // ✅ No critical errors - validation passed!
+          // (Soft suggestions are logged but not blocking)
+          this.config.onMessage?.(
+            `✅ Validation passed for ${step.path}`,
+            'info'
+          );
+          finalContent = content;
+        } else {
+          // ❌ CRITICAL ERRORS FOUND - Try auto-correction up to MAX_VALIDATION_ITERATIONS
           let validationAttempt = 1;
           let currentContent = content;
-          let lastValidationErrors = validationResult.errors;
+          let lastCriticalErrors = criticalErrors;
           let loopDetected = false;
           const previousErrors: string[] = [];
-          
+
           while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
-            const errorList = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
-            
+            const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+
             this.config.onMessage?.(
-              `❌ Validation failed (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
+              `❌ Critical validation errors (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
               'error'
             );
-            
+
             // LOOP DETECTION: Check if same errors are repeating
-            if (previousErrors.length > 0 && JSON.stringify(lastValidationErrors.sort()) === JSON.stringify(previousErrors.sort())) {
+            if (previousErrors.length > 0 && JSON.stringify(lastCriticalErrors.sort()) === JSON.stringify(previousErrors.sort())) {
               this.config.onMessage?.(
                 `🔄 LOOP DETECTED: Same validation errors appearing again - stopping auto-correction to prevent infinite loop`,
                 'error'
@@ -1142,58 +2411,71 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               loopDetected = true;
               break;
             }
-            previousErrors.push(...lastValidationErrors);
-            
+            previousErrors.push(...lastCriticalErrors);
+
             // If last attempt, give up
             if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
-              const remainingErrors = lastValidationErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+              const remainingErrors = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
               this.config.onMessage?.(
                 `❌ Max validation attempts (${this.MAX_VALIDATION_ITERATIONS}) reached. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
                 'error'
               );
               throw new Error(`Validation failed after ${this.MAX_VALIDATION_ITERATIONS} attempts.\n${remainingErrors}`);
             }
-            
+
             // Attempt auto-correction
             this.config.onMessage?.(
               `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
               'info'
             );
-            
-            // SMART AUTO-CORRECTION: Try to fix common issues without LLM first
-            const canAutoFix = SmartAutoCorrection.isAutoFixable(lastValidationErrors);
+
+            // ✅ FIX: Only pass CRITICAL errors to auto-correction, not soft suggestions
+            const canAutoFix = SmartAutoCorrection.isAutoFixable(lastCriticalErrors);
             let correctedContent: string;
-            
+
             if (canAutoFix) {
               // Try smart auto-correction first
               this.config.onMessage?.(
                 `🧠 Attempting smart auto-correction (circular imports, missing/unused imports, etc.)...`,
                 'info'
               );
-              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastValidationErrors, step.path);
-              
-              // Validate the smart-fixed code
+              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastCriticalErrors, step.path);
+
+              // Validate the smart-fixed code - only check CRITICAL errors
               const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step);
-              if (smartValidation.valid) {
-                // Smart fix worked!
+              const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
+                smartValidation.errors,
+                false // Don't spam logs during auto-correction
+              );
+
+              if (criticalAfterFix.length === 0) {
+                // ✅ Smart fix worked! (No more critical errors)
                 this.config.onMessage?.(
-                  `✅ Smart auto-correction successful! Fixed: ${lastValidationErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastValidationErrors.length > 2 ? ', ...' : ''}`,
+                  `✅ Smart auto-correction successful! Fixed: ${lastCriticalErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastCriticalErrors.length > 2 ? ', ...' : ''}`,
                   'info'
                 );
+                // Log any remaining suggestions
+                if (suggestionsAfterFix.length > 0) {
+                  this.config.onMessage?.(
+                    `⚠️ Remaining suggestions: ${suggestionsAfterFix.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+                    'info'
+                  );
+                }
                 correctedContent = smartFixed;
               } else {
-                // Smart fix didn't fully work, fall back to LLM
+                // ❌ Smart fix didn't fully work, fall back to LLM with ONLY CRITICAL ERRORS
                 this.config.onMessage?.(
                   `⚠️ Smart fix incomplete, using LLM for context-aware correction...`,
                   'info'
                 );
-                const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
-                
+                // ✅ FIX: Only send CRITICAL errors to LLM, not soft suggestions
+                const fixPrompt = `The code you generated has CRITICAL validation errors that MUST be fixed:\n\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
                   throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
                 }
-                
+
                 correctedContent = fixResponse.message || '';
                 const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
                 if (codeBlockMatch) {
@@ -1206,68 +2488,80 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 `🤖 Using LLM for context-aware correction (complex errors detected)...`,
                 'info'
               );
-              const fixPrompt = `The code you generated has validation errors that MUST be fixed:\n\n${lastValidationErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
-              
+              // ✅ FIX: Only send CRITICAL errors to LLM
+              const fixPrompt = `The code you generated has CRITICAL validation errors that MUST be fixed:\n\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {
                 throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
               }
-              
+
               correctedContent = fixResponse.message || '';
               const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
               if (codeBlockMatch) {
                 correctedContent = codeBlockMatch[1];
               }
             }
-            
-            // Re-validate the corrected code
+
+            // Re-validate the corrected code - only check CRITICAL errors
             const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
-            
-            if (nextValidation.valid) {
+            const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
+              nextValidation.errors,
+              false // Don't spam logs during loops
+            );
+
+            if (nextCritical.length === 0) {
               // ✅ Auto-correction succeeded
               this.config.onMessage?.(
-                `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all validation checks.`,
+                `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all critical validation checks.`,
                 'info'
               );
+              if (nextSuggestions.length > 0) {
+                this.config.onMessage?.(
+                  `⚠️ Remaining suggestions: ${nextSuggestions.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+                  'info'
+                );
+              }
               finalContent = correctedContent;
               break;
             }
-            
+
             // Validation still failing - prepare for next iteration
             currentContent = correctedContent;
-            lastValidationErrors = nextValidation.errors || [];
+            lastCriticalErrors = nextCritical;
             validationAttempt++;
           }
-          
+
           if (loopDetected) {
             throw new Error(`Validation loop detected - infinite correction cycle prevented. Please fix manually.`);
           }
-        } else {
-          // ✅ Validation passed
-          this.config.onMessage?.(
-            `✅ Validation passed for ${step.path}`,
-            'info'
-          );
         }
+      } else {
+        // ✅ Non-code files (JSON, YAML, etc) - skip validation for now
+        this.config.onMessage?.(
+          `✅ Skipping validation for non-code file ${step.path}`,
+          'info'
+        );
+        finalContent = content;
       }
-      
+
       // Show preview of final (validated) content
       if (this.config.onStepOutput && finalContent.length > 0) {
-        const preview = finalContent.length > 200 
+        const preview = finalContent.length > 200
           ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
           : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
         this.config.onStepOutput(step.stepId, preview, false);
       }
-      
+
       // PRE-WRITE ARCHITECTURE VALIDATION (Phase 3.4.6)
       // Check if code violates layer-based architecture rules before writing
       const archValidator = new ArchitectureValidator();
       const archValidation = archValidator.validateAgainstLayer(finalContent, step.path);
-      
+
       if (archValidation.hasViolations) {
         const report = archValidator.generateErrorReport(archValidation);
         this.config.onMessage?.(report, 'error');
-        
+
         if (archValidation.recommendation === 'skip') {
           // High-severity violations - skip this file
           this.config.onMessage?.(
@@ -1286,13 +2580,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             `🔧 Attempting to fix architecture violations...`,
             'info'
           );
-          
+
           const violationDesc = archValidation.violations
             .map(v => `- ${v.type}: ${v.message}\n  Suggestion: ${v.suggestion}`)
             .join('\n');
-          
+
           const fixPrompt = `The code you generated has ARCHITECTURE VIOLATIONS in ${step.path}:\n\n${violationDesc}\n\nPlease FIX these violations and provide ONLY the corrected code. No explanations, no markdown.`;
-          
+
           const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
           if (fixResponse.success) {
             let fixedContent = fixResponse.message || finalContent;
@@ -1300,7 +2594,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             if (codeBlockMatch) {
               fixedContent = codeBlockMatch[1];
             }
-            
+
             // Re-validate the fixed code
             const revalidation = archValidator.validateAgainstLayer(fixedContent, step.path);
             if (!revalidation.hasViolations || revalidation.recommendation === 'allow') {
@@ -1314,11 +2608,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 fixedBytes[i] = fixedContent.charCodeAt(i);
               }
               await vscode.workspace.fs.writeFile(filePath, fixedBytes);
-              
+
               if (this.config.codebaseIndex) {
                 this.config.codebaseIndex.addFile(filePath.fsPath, fixedContent);
               }
-              
+
               return {
                 stepId: step.stepId,
                 success: true,
@@ -1327,7 +2621,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               };
             }
           }
-          
+
           // If LLM fix didn't work, skip this file
           this.config.onMessage?.(
             `⏭️ Could not auto-fix architecture violations. Skipping ${step.path}.`,
@@ -1341,26 +2635,34 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           };
         }
       }
-      
+
       // NOW safe to write (only reached if validation passed or non-code file)
       const bytes = new Uint8Array(finalContent.length);
       for (let i = 0; i < finalContent.length; i++) {
         bytes[i] = finalContent.charCodeAt(i);
       }
-      
+
       await vscode.workspace.fs.writeFile(filePath, bytes);
+
+      // ✅ CRITICAL: Post-step contract extraction
+      // After writing, immediately extract what was created (actual APIs, exports, etc)
+      // This allows next steps to use the REAL contract, not calculated/guessed paths
+      await this.extractAndStoreContract(step.path, finalContent, step.stepId, workspaceUri);
 
       // Phase 3.3.2: Track file in CodebaseIndex for next steps
       if (this.config.codebaseIndex) {
         this.config.codebaseIndex.addFile(filePath.fsPath, finalContent);
       }
 
-      return {
+      const result: any = {
         stepId: step.stepId,
         success: true,
-        output: `Wrote ${step.path} (${content.length} bytes)`,
+        output: `Wrote ${step.path} (${finalContent.length} bytes)`,
         duration: Date.now() - startTime,
+        content: finalContent,  // ✅ CRITICAL: Store the actual content for next steps
       };
+
+      return result;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const suggestion = this.suggestErrorFix('write', step.path, errorMsg);
@@ -1386,43 +2688,89 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
   /**
    * Execute /run step: Run shell command
    */
-  private async executeRun(step: PlanStep, startTime: number): Promise<StepResult> {
+  private async executeRun(
+    step: PlanStep,
+    startTime: number,
+    workspace?: vscode.Uri
+  ): Promise<StepResult> {
     if (!step.command) {
       throw new Error('Run step requires command');
     }
 
     const command = step.command; // TypeScript type narrowing
 
+    // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
+    const workspaceUri = workspace || this.config.workspace;
+
     return new Promise<StepResult>((resolve) => {
-      // Build environment with full PATH, explicitly including homebrew paths
-      const env: { [key: string]: string } = {};
-      for (const key in process.env) {
-        const value = process.env[key];
-        if (value !== undefined) {
-          env[key] = value;
-        }
-      }
-      
+      // Build environment: Start with full copy of process.env, then enhance
+      // This ensures all inherited environment variables are available
+      const env: { [key: string]: string } = { ...process.env };
+
       // Ensure PATH includes homebrew and common locations
       // macOS homebrew is typically at /opt/homebrew/bin
-      const pathParts = [
-        '/opt/homebrew/bin',
-        '/usr/local/bin',
-        '/usr/bin',
-        '/bin',
-        '/usr/sbin',
-        '/sbin',
-        env.PATH || '',
-      ].filter(p => p); // Remove empty strings
+      // Windows uses ; separator, Unix uses :
+      const pathSeparator = process.platform === 'win32' ? ';' : ':';
+      const existingPath = env.PATH || '';
       
-      env.PATH = pathParts.join(':');
+      const pathParts = process.platform === 'win32'
+        ? [
+            'C:\\Program Files\\nodejs',
+            'C:\\Program Files (x86)\\nodejs',
+            'C:\\Users\\odanree\\AppData\\Roaming\\npm',
+            existingPath,
+          ]
+        : [
+            '/opt/homebrew/bin',
+            '/usr/local/bin',
+            '/usr/bin',
+            '/bin',
+            '/usr/sbin',
+            '/sbin',
+            existingPath,
+          ];
 
-      // Use login shell (-l) to source shell configuration
-      const child = cp.spawn('/bin/bash', ['-l', '-c', command], {
-        cwd: this.config.workspace.fsPath,
-        env: env,
-        stdio: 'pipe',
-      });
+      env.PATH = pathParts.filter(p => p).join(pathSeparator);
+
+      // CRITICAL: On Windows, ensure SystemRoot is set (required to find cmd.exe)
+      // Windows relies on SystemRoot (usually C:\Windows) to locate system commands
+      if (process.platform === 'win32' && !env.SystemRoot) {
+        env.SystemRoot = 'C:\\Windows';
+      }
+
+      // CRITICAL: On Windows, ensure ComSpec is set (command interpreter specification)
+      // Some shells require this to find cmd.exe
+      if (process.platform === 'win32' && !env.ComSpec) {
+        env.ComSpec = 'cmd.exe';
+      }
+
+      // Log environment setup for debugging
+      console.log(`[Executor] Environment PATH: ${env.PATH?.substring(0, 100)}...`);
+      console.log(`[Executor] SystemRoot: ${env.SystemRoot}`);
+      console.log(`[Executor] ComSpec: ${env.ComSpec}`);
+      console.log(`[Executor] Platform: ${process.platform}`);
+
+      // CRITICAL FIX: Use platform-aware shell selection
+      // On Windows with shell: true, spawn uses default shell (cmd.exe)
+      // On Unix with shell: true, spawn uses /bin/sh
+      
+      console.log(`[Executor] Executing command: ${command}`);
+      console.log(`[Executor] Platform: ${process.platform}`);
+      console.log(`[Executor] Using shell: ${process.platform === 'win32' ? 'cmd.exe' : 'bash'}`);
+
+      const child = process.platform === 'win32'
+        ? cp.spawn('cmd.exe', ['/c', command], {
+            cwd: workspaceUri.fsPath,
+            env: env,
+            stdio: 'pipe',
+            shell: false, // Don't double-shell on Windows
+          })
+        : cp.spawn('bash', ['-l', '-c', command], {
+            cwd: workspaceUri.fsPath,
+            env: env,
+            stdio: 'pipe',
+            shell: false, // Don't double-shell on Unix
+          });
 
       let stdout = '';
       let stderr = '';

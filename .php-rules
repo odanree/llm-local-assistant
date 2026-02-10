@@ -1,0 +1,362 @@
+# .php-rules - WordPress Edition
+# Architectural constraints for WordPress plugin development
+# Auto-enforced by validator during code generation
+
+## 1. The Security First Pattern
+
+### Rule: WordPress Nonce Verification
+**When:** Function processes `$_POST` or `$_GET`  
+**Must Include:** `check_admin_referer()` or `check_ajax_referer()` call  
+**Severity:** BLOCKING
+
+```php
+// ❌ INVALID: No nonce check
+function handle_form_submission() {
+    $data = $_POST['form_data'];
+    // ... process data
+}
+
+// ✅ VALID: Nonce verified
+function handle_form_submission() {
+    check_admin_referer('form_action_nonce');
+    $data = $_POST['form_data'];
+    // ... process data
+}
+```
+
+**Reference:** [WordPress Nonce Verification](https://developer.wordpress.org/plugins/security/nonces/)
+
+### Rule: Output Escaping
+**When:** Any data is output to HTML/attributes/URLs  
+**Must Use:** Appropriate escape function  
+**Severity:** BLOCKING
+
+```php
+// ❌ INVALID: Unescaped output
+echo $user_input;
+echo '<a href="' . $url . '">Link</a>';
+echo '<img alt="' . $alt_text . '">';
+
+// ✅ VALID: Properly escaped
+echo esc_html($user_input);
+echo '<a href="' . esc_url($url) . '">Link</a>';
+echo '<img alt="' . esc_attr($alt_text) . '">';
+```
+
+**Escape Functions:**
+- `esc_html()` - For HTML content
+- `esc_attr()` - For HTML attributes
+- `esc_url()` - For URLs
+- `esc_js()` - For JavaScript
+- `wp_kses_post()` - For post content with allowed tags
+- `sanitize_text_field()` - For input sanitization
+
+**Reference:** [Data Validation](https://developer.wordpress.org/plugins/security/data-validation/), [Escaping](https://developer.wordpress.org/plugins/security/securing-output/)
+
+### Rule: Input Sanitization
+**When:** Accepting user input from `$_POST`, `$_GET`, `$_REQUEST`  
+**Must Sanitize:** Before processing  
+**Severity:** BLOCKING
+
+```php
+// ❌ INVALID: No sanitization
+$email = $_POST['email'];
+update_user_meta($user_id, 'email', $email);
+
+// ✅ VALID: Sanitized
+$email = sanitize_email($_POST['email']);
+update_user_meta($user_id, 'email', $email);
+```
+
+**Sanitization Functions:**
+- `sanitize_text_field()` - General text input
+- `sanitize_email()` - Email addresses
+- `sanitize_url()` - URLs
+- `intval()` / `floatval()` - Numbers
+- `wp_kses()` - HTML with allowed tags
+
+---
+
+## 2. The Hook-Registry Pattern
+
+### Rule: Direct Access Prevention
+**When:** Creating a plugin file  
+**Must Include:** Direct access check at top  
+**Severity:** BLOCKING
+
+```php
+// ❌ INVALID: Directly executable
+<?php
+function my_plugin_init() {
+    // ... code
+}
+
+// ✅ VALID: Protected from direct access
+<?php
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+function my_plugin_init() {
+    // ... code
+}
+```
+
+**Why:** Prevents direct file access via URL (e.g., `example.com/wp-content/plugins/myplugin/file.php`)
+
+### Rule: Init/Action/Filter Structure
+**When:** Executing plugin functionality  
+**Pattern:** Register hooks via actions/filters, not global scope  
+**Severity:** BLOCKING
+
+```php
+// ❌ INVALID: Logic in global scope
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+// Executed immediately - bad!
+$options = get_option( 'my_plugin_settings' );
+update_user_meta( get_current_user_id(), 'last_visit', time() );
+
+// ❌ INVALID: Direct hook registration outside class
+add_action( 'init', function() {
+    // ... code
+});
+
+// ✅ VALID: Structured Init pattern
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+class My_Plugin {
+    public function __construct() {
+        add_action( 'plugins_loaded', array( $this, 'init' ) );
+    }
+
+    public function init() {
+        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+        add_filter( 'the_content', array( $this, 'filter_content' ) );
+        add_shortcode( 'my_shortcode', array( $this, 'shortcode_handler' ) );
+    }
+
+    public function enqueue_assets() {
+        wp_enqueue_style( 'my-style', MY_PLUGIN_URL . 'css/style.css' );
+    }
+
+    public function filter_content( $content ) {
+        // Filter logic
+        return $content;
+    }
+
+    public function shortcode_handler( $atts ) {
+        // Shortcode logic
+    }
+}
+
+// Register the plugin
+new My_Plugin();
+```
+
+**Hook Types:**
+- `plugins_loaded` - Plugin is loaded by WordPress
+- `init` - WordPress initialization is complete
+- `wp_enqueue_scripts` - Frontend scripts/styles
+- `admin_enqueue_scripts` - Admin scripts/styles
+- `the_content` - Filter post content
+- `save_post` - When post is saved
+
+---
+
+## 3. The "Golden Shield" for PHP
+
+### Rule: Legacy WordPress Function Naming
+**When:** Calling WordPress core/plugin functions  
+**Pattern:** Allow `snake_case` for legacy functions (can't change WordPress core)  
+**Enforce:** `CamelCase` for all new Custom Class methods  
+**Severity:** NON-BLOCKING (warning only)
+
+```php
+// ✅ VALID: WordPress legacy functions (snake_case)
+get_post_meta()
+update_user_meta()
+wp_enqueue_script()
+do_action()
+apply_filters()
+sanitize_text_field()
+esc_html()
+
+// ✅ VALID: Custom class methods (CamelCase)
+class MyPluginHandler {
+    public function initializeHooks() {
+        // ...
+    }
+
+    public function enqueueAssets() {
+        wp_enqueue_script( 'my-script' );
+    }
+
+    public function handleAjaxRequest() {
+        // ...
+    }
+}
+
+// ❌ INVALID: Custom methods in snake_case
+class MyPluginHandler {
+    public function initialize_hooks() {  // Should be: initializeHooks()
+        // ...
+    }
+}
+```
+
+**Why This Exception:**
+- WordPress core uses `snake_case` by convention (e.g., `get_post()`, `update_option()`)
+- Can't change WordPress core naming
+- Custom code should follow modern PHP standards (PSR-12: CamelCase)
+
+**Golden Shield Rule:**
+- Ignore `snake_case` violations ONLY for WordPress core functions
+- Enforce `CamelCase` strictly for custom code
+- Plugin file contains list of "approved legacy functions"
+
+---
+
+## 4. Class Structure Pattern
+
+### Rule: Plugin Main Class
+**Pattern:** Single responsibility, Hook-focused  
+**Severity:** RECOMMENDED
+
+```php
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+class My_Plugin {
+    private static $instance = null;
+    
+    public static function get_instance() {
+        if ( null === self::$instance ) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    private function __construct() {
+        $this->init_hooks();
+    }
+
+    private function init_hooks() {
+        add_action( 'plugins_loaded', array( $this, 'on_plugins_loaded' ) );
+        add_action( 'init', array( $this, 'on_init' ) );
+        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
+    }
+
+    public function on_plugins_loaded() {
+        // Plugin initialization
+    }
+
+    public function on_init() {
+        // After WordPress is fully initialized
+    }
+
+    public function enqueue_scripts() {
+        // Register scripts/styles
+    }
+}
+
+// Bootstrap
+My_Plugin::get_instance();
+```
+
+---
+
+## 5. Database Queries Pattern
+
+### Rule: Always Use WordPress Functions
+**When:** Accessing database  
+**Never:** Use raw SQL directly  
+**Severity:** BLOCKING
+
+```php
+// ❌ INVALID: Raw SQL
+$results = $wpdb->query( "SELECT * FROM wp_posts WHERE post_author = " . $user_id );
+
+// ✅ VALID: WordPress Functions
+$posts = get_posts( array(
+    'author' => $user_id,
+    'numberposts' => -1,
+) );
+
+// ✅ VALID: Prepared statements (if raw query necessary)
+$results = $wpdb->get_results( $wpdb->prepare(
+    "SELECT * FROM {$wpdb->posts} WHERE post_author = %d",
+    $user_id
+) );
+```
+
+**WordPress Data Functions:**
+- `get_post()` / `get_posts()` - Post data
+- `get_user_meta()` / `update_user_meta()` - User metadata
+- `get_option()` / `update_option()` - Site options
+- `get_transient()` / `set_transient()` - Temporary data
+- `$wpdb->prepare()` - Safe SQL queries
+
+---
+
+## 6. Constants & Paths Pattern
+
+### Rule: Use Defined Constants
+**When:** Accessing plugin paths or URLs  
+**Pattern:** Define constants at plugin entry point  
+**Severity:** RECOMMENDED
+
+```php
+// plugin-main.php
+<?php
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+define( 'MY_PLUGIN_VERSION', '1.0.0' );
+define( 'MY_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
+define( 'MY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+
+// ✅ VALID: Use constants
+wp_enqueue_script( 'my-script', MY_PLUGIN_URL . 'js/script.js' );
+include MY_PLUGIN_PATH . 'includes/class-admin.php';
+
+// ❌ INVALID: Don't hardcode paths
+wp_enqueue_script( 'my-script', '/wp-content/plugins/my-plugin/js/script.js' );
+```
+
+---
+
+## Validation Rules Summary
+
+| Rule | Severity | Type |
+|------|----------|------|
+| Nonce verification for `$_POST/$_GET` | BLOCKING | Security |
+| Output escaping for HTML/attrs/URLs | BLOCKING | Security |
+| Input sanitization | BLOCKING | Security |
+| Direct access prevention (`ABSPATH` check) | BLOCKING | Structure |
+| Init/Action/Filter pattern | BLOCKING | Structure |
+| Legacy snake_case allowed for WordPress core | NON-BLOCKING | Naming |
+| Custom code must use CamelCase | BLOCKING | Naming |
+| No raw SQL (use WordPress functions) | BLOCKING | Safety |
+| Use constants for paths/URLs | RECOMMENDED | Best Practice |
+
+---
+
+## Auto-Enforcement Notes
+
+**For Validator:**
+1. Check every function processing `$_POST`/`$_GET` for nonce verification
+2. Flag all unescaped output (echo without esc_* wrapper)
+3. Check for `ABSPATH` guard at file start
+4. Validate class methods use CamelCase (allow snake_case only for known WP functions)
+5. Warn about direct SQL queries (suggest WordPress functions)
+
+**For Prompt Injection:**
+Include these rules in `.lla-rules` generation prompt to ensure LLM generates security-first code.
+
+---
+
+**Last Updated:** February 9, 2026  
+**Version:** 1.0.0  
+**Status:** Ready for validator integration

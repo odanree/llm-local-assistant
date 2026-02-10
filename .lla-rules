@@ -1,0 +1,310 @@
+# .lla-rules - LLM Local Assistant Architecture Rules
+
+⚠️ **CRITICAL - READ FIRST**: These rules are NOT optional documentation. They are:
+- ✅ Injected into LLM context for code generation
+- ✅ Validated against generated code by the validator
+- ✅ Required before plan approval
+- ✅ Enforced at code generation time
+
+**For Form Components**: ALL 7 patterns are non-negotiable. Generated forms will be REJECTED if any pattern is missing.
+
+---
+
+## File Structure & Layering
+
+### Logic vs UI Separation
+- **Logic Layer** (src/ root level): Business logic, utilities, executors
+  - No React imports
+  - No Tailwind classes
+  - Testable in isolation
+
+- **UI Layer** (src/components/): React components only
+  - Should use business logic imports
+  - Should NOT contain business logic
+  - Reusable and testable
+
+### Component Organization
+```
+src/
+├── components/          # React components only
+├── utils/              # Shared utilities (no React)
+├── executor.ts         # Core execution logic
+├── planner.ts          # Planning logic
+└── llmClient.ts        # LLM integration
+```
+
+## UI Component Rules
+
+### Props Definition
+- Use TypeScript `interface` or `type` for component props
+- Do NOT use Zod schemas for UI component props (unnecessary validation overhead)
+- Exception: Top-level Form wrappers MAY use Zod for form data validation
+- Example:
+  ```typescript
+  // ✅ Correct
+  interface ButtonProps {
+    onClick: () => void;
+    children: React.ReactNode;
+    variant?: 'primary' | 'secondary';
+  }
+
+  // ❌ Wrong (for simple components)
+  const ButtonProps = z.object({
+    onClick: z.function(),
+    children: z.union([z.string(), z.element()]),
+  });
+  ```
+
+### Styling & Extensibility
+- All reusable UI components must accept `className?: string` prop
+- Use `clsx` or `twMerge` to merge custom styles with defaults
+- Never hard-code style assumptions
+- Example:
+  ```typescript
+  interface ButtonProps {
+    className?: string;
+    children: React.ReactNode;
+  }
+
+  export const Button: React.FC<ButtonProps> = ({ 
+    className, 
+    children 
+  }) => (
+    <button className={clsx('px-4 py-2 rounded', className)}>
+      {children}
+    </button>
+  );
+  ```
+
+### Accessibility Standards
+- All interactive elements (Button, Input, Link, etc.) must include:
+  - Standard HTML attributes (`type`, `disabled`, `aria-label`, etc.)
+  - Proper semantic HTML (use `<button>`, not `<div onClick>`)
+  - ARIA attributes for screen readers (`aria-label`, `aria-describedby`, etc.)
+  - Keyboard navigation support (Tab, Enter, Escape)
+- Example:
+  ```typescript
+  interface ButtonProps {
+    type?: 'button' | 'submit' | 'reset';
+    disabled?: boolean;
+    ariaLabel?: string;
+    onClick: () => void;
+  }
+
+  export const Button: React.FC<ButtonProps> = ({
+    type = 'button',
+    disabled = false,
+    ariaLabel,
+    onClick,
+    children,
+  }) => (
+    <button
+      type={type}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+  ```
+
+### Form Component Architecture (7 Required Patterns)
+Form components are data-critical and require strict adherence to these 7 patterns:
+
+**1. State Interface**: Every form must have a typed interface for its state
+  ```typescript
+  interface LoginFormState {
+    email: string;
+    password: string;
+  }
+  ```
+
+**2. Handler Typing**: Form handlers must be explicitly typed as `FormEventHandler<HTMLFormElement>`, never `any`
+  ```typescript
+  const handleChange: FormEventHandler<HTMLFormElement> = (e) => {
+    const { name, value } = e.currentTarget;
+    // ...
+  };
+  ```
+
+**3. Consolidator Pattern**: Multi-field forms MUST use a single `handleChange` function, not separate handlers per field
+  ```typescript
+  const handleChange: FormEventHandler<HTMLFormElement> = (e) => {
+    const { name, value } = e.currentTarget;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+  // All inputs: onChange={handleChange}
+  ```
+
+**4. Submit Handler**: Forms MUST have explicit `onSubmit` handler on the `<form>` element (never callback-only buttons)
+  ```typescript
+  const handleSubmit: FormEventHandler<HTMLFormElement> = async (e) => {
+    e.preventDefault();
+    // Handle submission
+  };
+  return <form onSubmit={handleSubmit}>...</form>;
+  ```
+
+**5. Simple Validation Logic**: Add basic validation in handlers (NOT Zod - keep components lean)
+  ```typescript
+  const handleChange: FormEventHandler<HTMLInputElement> = (e) => {
+    const { name, value } = e.currentTarget;
+    // Simple validation
+    if (name === 'email' && value && !value.includes('@')) {
+      setErrors(prev => ({ ...prev, [name]: 'Invalid email' }));
+    } else {
+      setErrors(prev => ({ ...prev, [name]: '' }));
+    }
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+  ```
+
+**6. Error State Tracking**: Track field-level errors separately and display near inputs
+  ```typescript
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  {errors.email && <span className="error">{errors.email}</span>}
+  ```
+
+**7. Semantic Form Markup**: Always use proper `<form>` HTML with typed handlers
+  - Form element with `onSubmit` handler
+  - Input elements with `name` attributes
+  - Proper input types (`type="email"`, `type="password"`, etc.)
+  - Error messages paired with fields
+
+**Why These Matter**:
+- Prevents infinite validation loops (missing imports, regeneration issues)
+- Ensures type safety throughout form lifecycle
+- Enables scalability (adding fields doesn't require handler changes)
+- Provides professional UX (field-level error display)
+- Follows web standards (Enter key submission, accessibility)
+
+## Code Generation Rules
+
+### Pre-Flight Check (MANDATORY - NO EXCEPTIONS)
+Before generating ANY plan or component, the system MUST output:
+```
+Pre-flight check: [List of rules that apply to this task]
+- Logic/UI separation? [Yes/No]
+- Component prop typing? [interface/Zod/None]
+- Accessibility required? [Yes/No]
+- Styling extensibility? [className prop required]
+- Is this a form component? [Yes/No - if YES, ALL 7 form patterns REQUIRED]
+- [Any other relevant rules]
+
+Deviations: [Justify any rule deviations for this specific task]
+```
+
+### CRITICAL: Form Component Generation
+If generating ANY form component (file name containing "Form"):
+- **ALL 7 FORM PATTERNS ARE NON-NEGOTIABLE**
+- No exceptions, no partial compliance
+- If any pattern is missing, the generated code will be REJECTED
+- Validator will catch and require regeneration with all patterns
+
+### Plan Generation
+- Output pre-flight check before plan
+- Validate each step against applicable rules
+- If a step violates rules, reject and explain
+- For form components: ensure ALL 7 patterns are in the plan
+- Example: "Step 2: Generate LoginForm.tsx with State Interface, Consolidator, handleSubmit, Zod schema, error tracking"
+
+### Code Quality
+- Type safety: All components must have proper TypeScript types
+- Props validation: Use types or runtime validation (Zod for forms only)
+- Styling: Components must be style-extensible (className prop)
+- Accessibility: All interactive elements must be accessible
+- Testing: All utilities and logic must be testable
+- **Form Components**: All 7 patterns VERIFIED BY VALIDATOR
+
+## Validation Strictness Levels
+
+### Level 1: Logic/UI Separation
+- Enforce: No React in non-component files
+- Enforce: No business logic in components
+- Severity: ERROR
+
+### Level 2: Component Props
+- Enforce: Props defined with TS interface/type
+- Allow: Zod for top-level forms only
+- Severity: ERROR for violations, WARN for over-use
+
+### Level 3: Styling Extensibility
+- Enforce: `className?: string` on reusable components
+- Use: `clsx` or `twMerge` for merging
+- Severity: ERROR for library components, WARN for internal
+
+### Level 4: Accessibility
+- Enforce: Standard HTML attributes on interactive elements
+- Enforce: ARIA labels where needed
+- Enforce: Semantic HTML usage
+- Severity: ERROR for interactive components
+
+### Level 5: Pre-Flight Checks
+- Enforce: Mandatory pre-flight output before plan generation
+- Show: Which rules apply and why
+- Severity: ERROR - no plan without pre-flight
+
+## Example Pre-Flight Checks
+
+### Adding a Button Component
+```
+Pre-flight check: Button component
+- Logic/UI separation? Yes (component in src/components)
+- Component prop typing? interface (not Zod)
+- Accessibility required? Yes (interactive element)
+- Styling extensibility? Yes (className prop required)
+- Must include: type, disabled, aria-label attributes
+- Must use: clsx for className merging
+
+Deviations: None
+Plan: ✅ Approved
+```
+
+### Adding a Form Component
+```
+Pre-flight check: LoginForm component
+- Logic/UI separation? Yes (component in src/components)
+- Component prop typing? Zod (exception: top-level form)
+- Accessibility required? Yes (interactive element)
+- Styling extensibility? Yes (className prop required)
+- Is this a form component? YES - ALL 7 PATTERNS REQUIRED
+
+Patterns to implement:
+1. ✅ State Interface: interface LoginFormState { email, password }
+2. ✅ Handler Typing: FormEventHandler<HTMLFormElement> for all handlers
+3. ✅ Consolidator: Single handleChange for all form fields
+4. ✅ Submit Handler: <form onSubmit={handleSubmit}>
+5. ✅ Zod Validation: const loginSchema = z.object(...)
+6. ✅ Error Tracking: useState<Record<string, string>>({})
+7. ✅ Semantic Markup: Input name attributes, proper form structure
+
+Deviations: None - all patterns required for form components
+Validator will REJECT if patterns are missing
+Plan: ✅ Approved (all 7 patterns will be implemented)
+```
+
+### Adding a Utility Function
+```
+Pre-flight check: dateUtils.ts utility
+- Logic/UI separation? Yes (logic in src/utils)
+- Component prop typing? N/A (not a component)
+- Accessibility required? No
+- Styling extensibility? N/A
+- Must be: Testable, pure functions, no side effects
+
+Deviations: None
+Plan: ✅ Approved
+```
+
+## Summary
+
+These rules move the codebase from 5.5/10 (inconsistent patterns) to 9/10 (predictable, maintainable, extensible):
+
+1. **Clear Separation** - Logic stays in src/, UI in components/
+2. **Type Safety** - TS interfaces for props, Zod for forms only
+3. **Extensibility** - Components accept className overrides
+4. **Accessibility** - Interactive elements are keyboard/screen-reader friendly
+5. **Validation** - Pre-flight checks ensure rules are followed before generation
+
+When the LLM generator sees these rules, it makes better architectural decisions automatically.

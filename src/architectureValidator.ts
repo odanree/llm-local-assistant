@@ -415,6 +415,656 @@ export class ArchitectureValidator {
   }
 
   /**
+   * Validate cross-file contracts: Do imported symbols actually exist in dependencies?
+   * CRITICAL for multi-step execution: Verifies component uses store API correctly
+   * 
+   * Example:
+   * - Component imports: `import { useLoginStore } from '../stores/loginStore'`
+   * - Component uses: `const { formState, setFormState } = useLoginStore()`
+   * - Store exports: `export const useLoginStore = create<T>()`
+   * - This validates: formState and setFormState actually exist in the store
+   */
+  public async validateCrossFileContract(
+    generatedCode: string,
+    filePath: string,
+    workspace: vscode.Uri,
+    previousStepFiles?: Map<string, string>  // ✅ CRITICAL: Files from previous steps (path -> content)
+  ): Promise<LayerValidationResult> {
+    const violations: LayerViolation[] = [];
+
+    // Extract all import statements
+    const importRegex = /import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]/g;
+    let match;
+    const imports: Array<{ symbols: string[]; source: string; isDefault: boolean }> = [];
+
+    while ((match = importRegex.exec(generatedCode)) !== null) {
+      const namedImports = match[1]; // Named exports: { a, b, c }
+      const defaultImport = match[2]; // Default: import X
+      const source = match[3]; // Path
+
+      if (namedImports) {
+        const symbols = namedImports
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s);
+        imports.push({ symbols, source, isDefault: false });
+      } else if (defaultImport) {
+        imports.push({ symbols: [defaultImport], source, isDefault: true });
+      }
+    }
+
+    // For each import, verify it exists in the source file
+    for (const imp of imports) {
+      try {
+        // Resolve source path relative to current file
+        const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+        let resolvedPath = imp.source;
+
+        // Handle different path formats
+        if (resolvedPath.startsWith('.')) {
+          // ✅ Relative paths: ../utils/cn, ./helpers
+          // Resolve ../ and ./
+          resolvedPath = resolvedPath
+            .split('/')
+            .reduce((acc, part) => {
+              if (part === '.' || part === '') return acc;
+              if (part === '..') {
+                const parts = acc.split('/');
+                parts.pop();
+                return parts.join('/');
+              }
+              return acc + '/' + part;
+            }, currentDir);
+        } else if (!resolvedPath.startsWith('/')) {
+          // ✅ Absolute-from-workspace-root paths: src/utils/cn, components/Form
+          // These are already workspace-root-relative, use as-is
+          // The vscode.Uri.joinPath below will handle them correctly
+        } else {
+          // ✅ Absolute paths: /src/utils/cn (less common but supported)
+          // Already absolute, use as-is
+        }
+
+        // Try to read the source file
+        try {
+          let sourceContent: string | null = null;
+
+          // ✅ CRITICAL: Check previousStepFiles FIRST (from previous steps in the same plan)
+          // This avoids disk I/O and prevents "file not found" errors for just-written files
+          // Try exact match first, then with .ts/.tsx extensions (path normalization)
+          const pathVariants = [
+            resolvedPath,
+            resolvedPath + '.ts',
+            resolvedPath + '.tsx',
+            resolvedPath + '.js',
+            resolvedPath + '.jsx',
+          ];
+
+          for (const pathVariant of pathVariants) {
+            if (previousStepFiles && previousStepFiles.has(pathVariant)) {
+              sourceContent = previousStepFiles.get(pathVariant) || '';
+              console.log(
+                `[ArchitectureValidator] ✅ Using context of previously-written file: ${pathVariant} (matched from ${resolvedPath})`
+              );
+              break;
+            }
+          }
+
+          // If not in previous step files, try reading from disk
+          if (!sourceContent) {
+            console.log(
+              `[ArchitectureValidator] 📁 Reading from disk: ${resolvedPath} (variants: ${pathVariants.join(', ')})`
+            );
+            
+            // Try each path variant until we find the file
+            for (const pathVariant of pathVariants) {
+              try {
+                const sourceUri = vscode.Uri.joinPath(workspace, pathVariant);
+                console.log(`[ArchitectureValidator] 🔗 Trying: ${sourceUri.fsPath}`);
+                sourceContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(sourceUri));
+                console.log(`[ArchitectureValidator] ✅ Successfully read: ${sourceUri.fsPath}`);
+                break;  // Found it!
+              } catch (variantError) {
+                console.log(`[ArchitectureValidator] ❌ Not found: ${pathVariant}`);
+                // Try next variant
+              }
+            }
+            
+            if (!sourceContent) {
+              throw new Error(`File not found: tried variants ${pathVariants.join(', ')}`);
+            }
+          }
+
+          if (!sourceContent) {
+            throw new Error(`File is empty: ${resolvedPath}`);
+          }
+
+          // Extract what the source file exports
+          const exportRegex = /export\s+(?:const|function|interface|type)\s+(\w+)/g;
+          const sourceExports: Set<string> = new Set();
+          let exportMatch;
+
+          while ((exportMatch = exportRegex.exec(sourceContent)) !== null) {
+            sourceExports.add(exportMatch[1]);
+          }
+
+          // For named imports, verify each symbol exists in source exports
+          if (!imp.isDefault) {
+            for (const symbol of imp.symbols) {
+              // Check for exact match or pattern matching (e.g., useStore hook)
+              const exists = sourceExports.has(symbol);
+              const isHookPattern = symbol.startsWith('use') && 
+                                    Array.from(sourceExports).some(e => e.startsWith('use'));
+
+              if (!exists && !isHookPattern) {
+                violations.push({
+                  type: 'missing-export',
+                  import: symbol,
+                  message: `Symbol '${symbol}' not found in '${resolvedPath}'`,
+                  suggestion: `Available exports: ${Array.from(sourceExports).join(', ') || 'none'}`,
+                  severity: 'high',
+                });
+              }
+            }
+          }
+
+          // Extract usage of imported symbols in generated code
+          // Look for patterns like: const { x, y } = hookName() or hookName.method()
+          for (const symbol of imp.symbols) {
+            const usagePatterns = [
+              // Destructuring: const { x } = symbol()
+              new RegExp(`{[^}]*\\b${symbol}\\b[^}]*}\\s*=\\s*${symbol}\\(`, 'g'),
+              // Property access: symbol.method or symbol.property
+              new RegExp(`${symbol}\\.[a-zA-Z_][a-zA-Z0-9_]*`, 'g'),
+            ];
+
+            for (const pattern of usagePatterns) {
+              const usages = generatedCode.match(pattern) || [];
+              
+              // Extract accessed properties
+              for (const usage of usages) {
+                const propMatch = usage.match(/\.([a-zA-Z_][a-zA-Z0-9_]*)/);
+                if (propMatch) {
+                  const property = propMatch[1];
+                  // For Zustand stores, the export is the hook, but we should verify
+                  // that the accessed property makes sense (rough check)
+                  if (symbol.includes('Store') && !sourceContent.includes(property)) {
+                    violations.push({
+                      type: 'semantic-error',
+                      import: symbol,
+                      message: `Property '${property}' used on '${symbol}' but not found in store definition`,
+                      suggestion: `Verify '${property}' is defined in the store's state object`,
+                      severity: 'high',
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          // Source file not found or read failed - could be external package
+          // Check if this is likely an external package or a workspace-relative path
+          const isExternalPackage = [
+            'node_modules', '@types', 'react', 'zustand', 'axios', 'clsx', 'tailwind-merge',
+            'lodash', 'date-fns', 'zod', 'express', 'next', 'vite'
+          ].some(p => imp.source.includes(p) || imp.source.startsWith(p));
+          
+          const isWorkspaceRelativePath = ['src/', 'utils/', 'components/', 'services/', 'hooks/', 'types/'].some(
+            p => resolvedPath.startsWith(p)
+          );
+
+          if (!isExternalPackage && !isWorkspaceRelativePath) {
+            // Truly unknown import
+            violations.push({
+              type: 'missing-export',
+              import: imp.symbols[0],
+              message: `Cannot find module '${resolvedPath}' from '${filePath}'`,
+              suggestion: `Verify the import path is correct`,
+              severity: 'medium',
+            });
+          } else if (isWorkspaceRelativePath) {
+            // Workspace-relative path but file not found - this is a real error
+            violations.push({
+              type: 'missing-export',
+              import: imp.symbols[0],
+              message: `Cannot find module '${resolvedPath}' from '${filePath}'`,
+              suggestion: `Verify the file exists at: ${resolvedPath}.ts (or .tsx)`,
+              severity: 'high',
+            });
+            console.warn(
+              `[ArchitectureValidator] ⚠️ Workspace file not found: ${resolvedPath}`
+            );
+          }
+          // If external package, silently skip (assumed to be available)
+        }
+      } catch (error) {
+        // Skip validation for this import if something goes wrong
+        console.warn(`[ArchitectureValidator] Error validating import: ${error}`);
+      }
+    }
+
+    const recommendation: 'allow' | 'fix' | 'skip' = violations.some(v => v.severity === 'high')
+      ? 'skip'
+      : violations.length > 0
+      ? 'fix'
+      : 'allow';
+
+    return {
+      hasViolations: violations.length > 0,
+      violations,
+      layer: 'cross-file-contracts',
+      recommendation,
+    };
+  }
+
+  /**
+   * Validate semantic usage of imported hooks
+   * Ensures that imported hooks are actually USED correctly in the component
+   * 
+   * CRITICAL CHECKS:
+   * 1. Hook must be called (not just imported)
+   * 2. Destructured properties must exist in source
+   * 3. All used imports must be properly imported (e.g., useState from React)
+   * 4. No mixed state management (useState + store hook together)
+   * 5. Destructured properties must be used
+   * 
+   * Detects:
+   * ❌ Hook imported but never called
+   * ❌ Destructuring properties that don't exist in store
+   * ❌ Using useState without importing it
+   * ❌ Mixed state management
+   * ❌ Destructured but unused properties
+   */
+  public async validateHookUsage(
+    generatedCode: string,
+    filePath: string,
+    previousStepFiles?: Map<string, string>
+  ): Promise<LayerViolation[]> {
+    const violations: LayerViolation[] = [];
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) return violations;
+
+    // Step 0: Validate all React imports (useState, etc.)
+    // Check if code uses useState but doesn't import it
+    if (/\s*useState\s*</.test(generatedCode) || /\s*useState\s*\(/.test(generatedCode)) {
+      if (!/import\s+{[^}]*useState[^}]*}\s+from\s+['"]react['"]/.test(generatedCode)) {
+        violations.push({
+          type: 'semantic-error',
+          import: 'useState',
+          message: `useState is used but not imported from React`,
+          suggestion: `Add: import { useState } from 'react';`,
+          severity: 'high',
+        });
+      }
+    }
+
+    // Step 1: Extract all imports that LOOK like hooks (use* pattern)
+    const hookImportRegex = /import\s+{([^}]*\buse\w+[^}]*)}\s+from\s+['"]([^'"]+)['"]/g;
+    const importedHooks: Array<{ names: string[]; source: string }> = [];
+    let hookMatch;
+
+    while ((hookMatch = hookImportRegex.exec(generatedCode)) !== null) {
+      const importList = hookMatch[1];
+      const source = hookMatch[2];
+      const names = importList
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.startsWith('use'));
+      if (names.length > 0) {
+        importedHooks.push({ names, source });
+      }
+    }
+
+    // IMPORTANT: Detect refactoring context
+    // If component has store hooks, useState being unused is OK (it's being replaced)
+    const hasStoreHook = importedHooks.some(h => 
+      h.names.some(n => n.includes('Store') || n.includes('store')) &&
+      generatedCode.includes(`const`)
+    );
+    const usingStoreHook = importedHooks.some(h => 
+      h.source.includes('store') &&
+      h.names.some(n => {
+        const escapedName = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(
+          `const\\s+(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedName}\\s*\\(`,
+          'g'
+        );
+        return pattern.test(generatedCode);
+      })
+    );
+
+    // Step 2: For each imported hook, check if it's actually CALLED in the component
+    for (const hookImport of importedHooks) {
+      for (const hookName of hookImport.names) {
+        const escapedHookName = hookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // STRICT: Hook MUST be called
+        // Only match actual function calls, not just references
+        const hookCallPattern = new RegExp(
+          `const\\s+(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedHookName}\\s*\\(`,
+          'g'
+        );
+        const isCalled = hookCallPattern.test(generatedCode);
+
+        if (!isCalled) {
+          // EXCEPTION: useState imported but not called is OK if using store hooks
+          // This is a refactoring scenario (local state → store management)
+          if (hookName === 'useState' && usingStoreHook) {
+            console.log(
+              `[ArchitectureValidator] ℹ️ useState imported but not called (OK in refactoring to store)`
+            );
+            continue; // Skip this error - refactoring is intentional
+          }
+
+          violations.push({
+            type: 'semantic-error',
+            import: hookName,
+            message: `Hook '${hookName}' is imported but never called`,
+            suggestion: hookName === 'useState' && usingStoreHook 
+              ? `Remove unused useState import since using store hook instead`
+              : `Must call the hook: const { ... } = ${hookName}();`,
+            severity: 'high',
+          });
+          continue; // Can't validate destructuring if hook isn't called
+        }
+
+        // Step 3: Extract destructured properties and validate they exist per store
+        const objectDestructureRegex = new RegExp(
+          `const\\s+{([^}]+)}\\s*=\\s*${escapedHookName}\\s*\\(`,
+          'g'
+        );
+        let destructMatch;
+        const destructuredProps: Set<string> = new Set();
+
+        while ((destructMatch = objectDestructureRegex.exec(generatedCode)) !== null) {
+          const properties = destructMatch[1]
+            .split(',')
+            .map(p => {
+              // Handle { x: y } and { x } patterns
+              const parts = p.trim().split(':');
+              return parts[0].trim();
+            })
+            .filter(p => p.length > 0);
+
+          properties.forEach(p => destructuredProps.add(p));
+
+          // CRITICAL: For each destructured property, validate it exists in the store
+          // Read the source store file to get available exports
+          try {
+            const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+            let resolvedPath = hookImport.source;
+
+            // Resolve the path
+            if (resolvedPath.startsWith('.')) {
+              resolvedPath = resolvedPath
+                .split('/')
+                .reduce((acc, part) => {
+                  if (part === '.' || part === '') return acc;
+                  if (part === '..') {
+                    const parts = acc.split('/');
+                    parts.pop();
+                    return parts.join('/');
+                  }
+                  return acc + '/' + part;
+                }, currentDir);
+            }
+
+            // Try to read store file (similar to cross-file validation)
+            let storeContent: string | null = null;
+            const pathVariants = [
+              resolvedPath,
+              resolvedPath + '.ts',
+              resolvedPath + '.tsx',
+              resolvedPath + '.js',
+              resolvedPath + '.jsx',
+            ];
+
+            // Check previousStepFiles first
+            for (const variant of pathVariants) {
+              if (previousStepFiles && previousStepFiles.has(variant)) {
+                storeContent = previousStepFiles.get(variant) || '';
+                break;
+              }
+            }
+
+            // If not found, try disk
+            if (!storeContent) {
+              for (const variant of pathVariants) {
+                try {
+                  const storeUri = vscode.Uri.joinPath(workspace.uri, variant);
+                  storeContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(storeUri));
+                  break;
+                } catch {
+                  // Try next variant
+                }
+              }
+            }
+
+            if (storeContent) {
+              // Extract available state properties from Zustand store
+              // Zustand pattern: export const useXxxStore = create<Type>((set) => ({ prop: value, ... }))
+              // Key insight: We need to find the RUNTIME object, not TypeScript type params
+              
+              let storeProps: Set<string> = new Set();
+              
+              // Strategy 1: Find create call and extract state object properties
+              // Pattern: => { prop1: ..., prop2: ..., etc
+              // Look for the arrow function body that contains property definitions
+              const arrowFunctionRegex = /create[^]*?\)\s*=>\s*\(\s*{([^}]+)}/;
+              const arrowMatch = storeContent.match(arrowFunctionRegex);
+              
+              if (arrowMatch) {
+                const stateBody = arrowMatch[1];
+                console.log(`[ArchitectureValidator] Found state body: ${stateBody.substring(0, 100)}...`);
+                
+                // Extract ALL property names that look like key: value
+                // Handle: propName: ..., nestedObj: { ... }, function: () => ...
+                const propRegex = /(\w+)\s*:\s*(?:[^,}]|\{[^}]*\}|function|\([^)]*\))/g;
+                let propMatch;
+                while ((propMatch = propRegex.exec(stateBody)) !== null) {
+                  storeProps.add(propMatch[1]);
+                  console.log(`[ArchitectureValidator] Found store property: ${propMatch[1]}`);
+                }
+              } else {
+                console.warn(`[ArchitectureValidator] ⚠️ Could not match arrow function pattern in store`);
+              }
+
+              // Strategy 2: If that fails, try simpler regex
+              if (storeProps.size === 0) {
+                console.log(`[ArchitectureValidator] Strategy 1 failed, trying fallback...`);
+                // Look for exports: interface exports, named exports
+                const exportRegex = /export\s+(?:const\s+(\w+)|interface\s+(\w+))/g;
+                let exportMatch;
+                while ((exportMatch = exportRegex.exec(storeContent)) !== null) {
+                  const name = exportMatch[1] || exportMatch[2];
+                  if (name) {
+                    storeProps.add(name);
+                    console.log(`[ArchitectureValidator] Found export: ${name}`);
+                  }
+                }
+              }
+
+              console.log(
+                `[ArchitectureValidator] 📦 Store '${hookName}' has TOP-LEVEL properties: [${Array.from(storeProps).join(', ')}]`
+              );
+              console.log(
+                `[ArchitectureValidator] 🔍 Component tries to destructure: [${properties.join(', ')}]`
+              );
+
+              // Check each destructured property against store exports
+              let hasPropertyMismatch = false;
+              if (storeProps.size > 0) {
+                for (const prop of properties) {
+                  // Skip setter patterns - if prop exists, that's OK
+                  if (prop.toLowerCase().startsWith('set')) {
+                    if (storeProps.has(prop)) {
+                      console.log(`[ArchitectureValidator] ✅ Setter '${prop}' found in store`);
+                    } else {
+                      console.log(`[ArchitectureValidator] ⚠️ Setter '${prop}' not found (might be nested or might not exist)`);
+                    }
+                    continue;
+                  }
+
+                  if (!storeProps.has(prop)) {
+                    console.log(
+                      `[ArchitectureValidator] ❌ CRITICAL MISMATCH: Component destructures '${prop}' but store exports: ${Array.from(storeProps).join(', ')}`
+                    );
+                    hasPropertyMismatch = true;
+                    violations.push({
+                      type: 'semantic-error',
+                      import: hookName,
+                      message: `❌ CRITICAL: Property '${prop}' destructured but NOT in store. Store exports: ${Array.from(storeProps).join(', ')}. This will cause runtime TypeError!`,
+                      suggestion: `Component expects: { ${properties.join(', ')} } but store has: { ${Array.from(storeProps).join(', ')} }. Refactoring is INCOMPLETE.`,
+                      severity: 'high',
+                    });
+                  } else {
+                    console.log(`[ArchitectureValidator] ✅ Property '${prop}' found in store`);
+                  }
+                }
+              } else if (properties.length > 0) {
+                // Could not extract store props - might be an error or might be intentional
+                console.warn(
+                  `[ArchitectureValidator] ⚠️ Could not extract store properties JSON object, but component destructures: [${properties.join(', ')}]`
+                );
+                console.warn(`[ArchitectureValidator] This might indicate store extraction failed - cannot properly validate!`);
+                // Flag as error since we can't validate
+                violations.push({
+                  type: 'semantic-error',
+                  import: hookName,
+                  message: `⚠️ Cannot validate store properties - extraction failed. Component tries to destructure: ${properties.join(', ')}`,
+                  suggestion: `Verify store structure and ensure component destructuring matches store exports.`,
+                  severity: 'high',
+                });
+              }
+
+              // BONUS: Check for function calls that don't exist in store
+              // E.g., component calls submitLogin() but store doesn't export it
+              if (hookName.includes('Store')) {
+                // Extract all function calls on the component code
+                // Pattern: functionName() that looks like a store method
+                const functionCallRegex = /([a-zA-Z_]\w*)\s*\(/g;
+                let funcMatch;
+                const functionsUsed = new Set<string>();
+                
+                while ((funcMatch = functionCallRegex.exec(generatedCode)) !== null) {
+                  const funcName = funcMatch[1];
+                  // Check if this might be a store function (heuristic)
+                  if (funcName.startsWith('set') || funcName.startsWith('handle') || funcName.startsWith('submit')) {
+                    functionsUsed.add(funcName);
+                  }
+                }
+
+                // Check if any of these functions exist in the store
+                for (const func of functionsUsed) {
+                  if (!storeContent.includes(`${func}:`)) {
+                    // Function called but not defined in store
+                    console.log(
+                      `[ArchitectureValidator] ⚠️ Function call '${func}()' but not found in store definition`
+                    );
+                    if (!properties.includes(func)) {
+                      // Not destructured AND not in store = definitely broken
+                      violations.push({
+                        type: 'semantic-error',
+                        import: hookName,
+                        message: `Function '${func}' is called but not in destructuring or store exports`,
+                        suggestion: `Add '${func}' to destructuring: const { ..., ${func} } = ${hookName}() OR define it in the store`,
+                        severity: 'high',
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // If we can't read store, skip property validation but still check usage
+            console.log(`[ArchitectureValidator] Could not validate store properties: ${e}`);
+          }
+
+          // Step 4: Validate destructured properties are actually USED
+          for (const prop of properties) {
+            // Skip validation for setters - they're meant for updates
+            if (prop.toLowerCase().startsWith('set')) {
+              continue;
+            }
+
+            // Count usage (excluding the destructuring line itself)
+            const propUsagePattern = new RegExp(`\\b${prop}\\b`, 'g');
+            const allMatches = generatedCode.match(propUsagePattern) || [];
+            const usages = allMatches.length - 1; // Subtract the destructuring occurrence
+
+            if (usages === 0) {
+              violations.push({
+                type: 'semantic-error',
+                import: hookName,
+                message: `Property '${prop}' destructured but never used`,
+                suggestion: `Either use '${prop}' in your code or remove it from destructuring`,
+                severity: 'medium',
+              });
+            }
+          }
+        }
+
+        // Also handle array destructuring for useState
+        const arrayDestructureRegex = new RegExp(
+          `const\\s+\\[\\s*([\\w\\s,]*?)\\s*\\]\\s*=\\s*${escapedHookName}\\s*\\(`,
+          'g'
+        );
+        let arrayMatch;
+        
+        while ((arrayMatch = arrayDestructureRegex.exec(generatedCode)) !== null) {
+          const vars = arrayMatch[1]
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+          // For array destructuring (useState), check both value and setter are used
+          if (vars.length === 2) {
+            const [stateVar, setterVar] = vars;
+            const stateUsages = (generatedCode.match(new RegExp(`\\b${stateVar}\\b`, 'g')) || []).length - 1;
+            const setterUsages = (generatedCode.match(new RegExp(`\\b${setterVar}\\b`, 'g')) || []).length - 1;
+
+            if (stateUsages === 0) {
+              violations.push({
+                type: 'semantic-error',
+                import: hookName,
+                message: `State variable '${stateVar}' destructured but never used`,
+                suggestion: `Use '${stateVar}' in your code or remove it`,
+                severity: 'medium',
+              });
+            }
+
+            if (setterUsages === 0 && !setterVar.startsWith('_')) {
+              violations.push({
+                type: 'semantic-error',
+                import: hookName,
+                message: `Setter '${setterVar}' destructured but never used`,
+                suggestion: `Use '${setterVar}' to update state or prefix with underscore: _${setterVar}`,
+                severity: 'low',
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Step 5: Check for MIXED STATE MANAGEMENT
+    // Using both useState and store hooks means you're not fully refactored
+    const stateHooks = importedHooks.filter(h => h.names.some(n => n.includes('Store') || n.includes('store')));
+    const usesLocalState = /const\s+\[\w+,\s*\w+\]\s*=\s*useState/.test(generatedCode);
+
+    if (stateHooks.length > 0 && usesLocalState) {
+      violations.push({
+        type: 'semantic-error',
+        import: stateHooks[0].names[0],
+        message: `Both store hook and local useState detected - use only store for state management`,
+        suggestion: `Remove all useState calls and use store hook exclusively`,
+        severity: 'high',
+      });
+    }
+
+    return violations;
+  }
+
+  /**
    * Generate human-readable error report
    */
   public generateErrorReport(result: LayerValidationResult): string {
