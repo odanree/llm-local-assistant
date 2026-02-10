@@ -2204,6 +2204,31 @@ Your ONLY job: Output this code exactly. Do NOT modify it.
       console.log(`[Executor] ✅ Injecting golden template for ${fileName}`);
     }
 
+    // REACT IMPORTS INJECTION: For single-step React components, explicitly require React imports
+    // This prevents the LLM from generating hooks without importing them
+    let reactImportsSection = '';
+    const isReactComponent = step.path.endsWith('.tsx') || step.path.endsWith('.jsx');
+    if (isReactComponent && !multiStepContext) {
+      // Only inject if this is a single-step plan (no multiStepContext already added)
+      // Multi-step plans handle imports differently
+      reactImportsSection = `## REQUIRED REACT IMPORTS
+For any React component using hooks, you MUST include these imports at the top:
+
+- If using useState: \`import { useState } from 'react';\`
+- If using React.FC or React.ReactNode: \`import React from 'react';\`
+- If using form events: \`import { FormEvent } from 'react';\`
+- If using components from external libs: \`import { Library } from 'library-name';\`
+
+CRITICAL: Every hook you use MUST be imported. The validator will reject any hook that isn't imported.
+Examples of hooks that need imports:
+- \`useState\` → must have \`import { useState } from 'react';\`
+- \`useEffect\` → must have \`import { useEffect } from 'react';\`
+- \`useContext\` → must have \`import { useContext } from 'react';\`
+
+`;
+      console.log(`[Executor] ✅ Injecting required React imports for ${fileName}`);
+    }
+
     // FORM COMPONENT PATTERN INJECTION: Critical for form generation
     // Extract and inject form patterns from .lla-rules if this is a form component
     let formPatternSection = '';
@@ -2261,7 +2286,7 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${multiStepContext}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
