@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-02-10
+
+### Focus: Critical Zustand Integration Validation Fixes
+
+**v2.5.1 fixes critical bug where Zustand integration was silently failing.** Generated code compiled but didn't work—components called store hooks incorrectly. Now detects and fails explicitly.
+
+### Fixed
+
+- **CRITICAL: Zustand Integration Validation** (BLOCKING DEFECT)
+  - Problem: System generated 4/4 files successfully but component didn't call store hook → silent failure
+  - Solution: Integration validation runs AFTER all files written, validates cross-file dependencies
+  - Impact: Fails entire plan if store integration is broken (was: silently passing)
+
+- **Strict Zustand Destructuring Pattern**
+  - Detects: `const store = useLoginStore(); const { x } = store;` (wrong)
+  - Enforces: `const { x } = useLoginStore();` (correct)
+
+- **Root Documentation Constraint**
+  - Enforces exactly 6 root .md files
+  - All new docs go to `/docs/`
+
+### Quality Metrics
+- Tests: 486/489 (99.4%)
+- Silent failures: 0
+- Compilation errors: 0
+
+---
+
 ## [2.5.0] - 2026-02-09
 
 ### Focus: 6-Layer Validation System & Zustand Refactoring Support

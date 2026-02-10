@@ -1,8 +1,8 @@
 # ROADMAP - LLM Local Assistant
 
-## Current Status: v2.5.0 Production Ready ✅
+## Current Status: v2.5.1 Production Ready ✅
 
-**Release Date:** February 9, 2026  
+**Release Date:** February 10, 2026  
 **Status:** Stable, Production-Ready  
 **Tests:** 486/489 passing  
 **TypeScript:** Strict mode, 0 errors  
@@ -10,9 +10,37 @@
 
 ---
 
-## 🟢 v2.5.0: The Governance Foundation (CURRENT - PR #18) ✅
+## 🟢 v2.5.1: Critical Zustand Integration Validation (CURRENT) ✅
 
-**Focus:** Stabilizing the local execution loop and enforcing architectural standards.
+**Focus:** Fixing silent failures in Zustand integration validation.
+
+### Critical Fixes (Patch Release)
+
+**Integration Validation After File Generation** ✅
+- Reads all generated files after plan completes
+- Validates they actually integrate (not just individually valid)
+- Fails entire plan if cross-file dependencies broken
+- Impact: Was silently passing broken code, now explicitly fails
+
+**Strict Zustand Destructuring** ✅
+- Detects wrong pattern: `const store = useLoginStore(); const { x } = store;`
+- Enforces correct: `const { x } = useLoginStore();`
+
+**Broader Store Detection** ✅
+- Validates ALL components importing from `/stores/`
+- Supports multiple stores in one component
+
+### Quality Metrics
+- 486/489 tests passing (99.4%)
+- Zustand integration: 100% validated
+- Silent failures: 0
+- 0 compilation errors
+
+---
+
+## 🟢 v2.5.0: The Governance Foundation (Previous Release) ✅
+
+**Release Date:** February 9, 2026
 
 ### Foundation Layer (Complete)
 
