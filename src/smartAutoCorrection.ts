@@ -229,24 +229,54 @@ export class SmartAutoCorrection {
    * Add an import statement to the code
    */
   private static addImport(code: string, name: string, source: string): string {
-    // Check if import already exists
-    if (code.includes(`import`) && code.includes(name)) {
+    console.log(`[SmartAutoCorrection.addImport] Processing: name=${name}, source=${source}`);
+    console.log(`[SmartAutoCorrection.addImport] Code length: ${code.length}, starts with: ${code.substring(0, 100)}`);
+    
+    // Check if the SPECIFIC import already exists (not just if name is used somewhere)
+    // Pattern: import { name } from 'source' OR import Default, { name } from 'source' (accounts for default imports)
+    // NOTE: Do NOT use 'g' flag - it maintains state between test() calls, causing alternating true/false!
+    const specificImportPattern = new RegExp(`import\\s+[^{]*{[^}]*\\b${name}\\b[^}]*}\\s+from\\s+['"]${source}['"]`);
+    if (specificImportPattern.test(code)) {
+      // Import already exists, don't add duplicate
+      console.log(`[SmartAutoCorrection.addImport] ✓ Import already exists, returning unchanged`);
+      return code;
+    }
+
+    // Also check if source is already imported (to add to existing import)
+    const sourceImportPattern = new RegExp(`import\\s+(?:\\w+\\s*,\\s*)?{([^}]*)}\\s+from\\s+['"]${source}['"]`, 'm');
+    const sourceMatch = code.match(sourceImportPattern);
+
+    if (sourceMatch && sourceMatch[1]) {
+      // Source is already imported, add name to existing import statement
+      const existingImports = sourceMatch[1];
+      if (!existingImports.includes(name)) {
+        const updatedImport = `import { ${existingImports}, ${name} } from '${source}'`;
+        const result = code.replace(sourceMatch[0], updatedImport);
+        console.log(`[SmartAutoCorrection.addImport] ✓ Added to existing import, result length: ${result.length}`);
+        return result;
+      }
+      console.log(`[SmartAutoCorrection.addImport] ✓ ${name} already in existing import`);
       return code;
     }
 
     // Find where to insert import (after existing imports or at top)
     const importRegex = /^(import\s+.*from\s+['"][^'"]*['"];?\n?)*/m;
     const match = code.match(importRegex);
+    console.log(`[SmartAutoCorrection.addImport] Import regex match: ${match ? `length=${match[0].length}` : 'NO MATCH'}`);
     
     if (match && match[0]) {
       // Insert after last import
       const insertPos = match[0].length;
       const newImport = `import { ${name} } from '${source}';\n`;
-      return code.slice(0, insertPos) + newImport + code.slice(insertPos);
+      const result = code.slice(0, insertPos) + newImport + code.slice(insertPos);
+      console.log(`[SmartAutoCorrection.addImport] ✓ Added after existing imports at pos=${insertPos}, result length: ${result.length}`);
+      return result;
     } else {
       // No imports found, add at very top
       const newImport = `import { ${name} } from '${source}';\n\n`;
-      return newImport + code;
+      const result = newImport + code;
+      console.log(`[SmartAutoCorrection.addImport] ✓ Added at top (no existing imports), result length: ${result.length}`);
+      return result;
     }
   }
 
@@ -280,6 +310,32 @@ export class SmartAutoCorrection {
     }
 
     validationErrors.forEach(error => {
+      // Fix: Hook is used but not imported (e.g., "useState is used but not imported from React")
+      // This is the most common pattern for React components
+      const hookNotImportedMatch = error.match(/(\w+) is used but not imported from React/);
+      if (hookNotImportedMatch) {
+        const hookName = hookNotImportedMatch[1];
+        console.log(`[SmartAutoCorrection] Found hook '${hookName}' used but not imported`);
+        
+        // Check if the hook is actually used in the code
+        if (fixed.includes(hookName)) {
+          // Add the import at the top
+          fixed = this.addImport(fixed, hookName, 'react');
+          console.log(`[SmartAutoCorrection] Added import for ${hookName} from 'react'`);
+        }
+      }
+
+      // Fix: Hook imported but never called → Remove the import
+      // Pattern: "Hook 'useState' is imported but never called in src/..."
+      if (error.includes('Hook') && error.includes('imported but never called')) {
+        const hookMatch = error.match(/Hook '(\w+)' is imported but never called/);
+        if (hookMatch) {
+          const hookName = hookMatch[1];
+          fixed = this.removeUnusedImport(fixed, hookName);
+          console.log(`[SmartAutoCorrection] Removed unused hook import: ${hookName}`);
+        }
+      }
+
       // Fix: Unused import → Remove it
       if (error.includes('Unused import')) {
         const match = error.match(/Unused import: '(\w+)'/);
@@ -322,8 +378,11 @@ export class SmartAutoCorrection {
     const fixablePatterns = [
       'Missing import',
       'Unused import',
+      'is used but not imported from React',  // NEW: Specific hook import pattern
       'any type',
       'typo',
+      'Hook',  // Added: Hook usage errors (imported but never called)
+      'imported but never called',  // Added: More specific pattern
     ];
 
     const unfixablePatterns = [
@@ -346,6 +405,91 @@ export class SmartAutoCorrection {
 
     // Fixable if has fixable errors and no unfixable ones
     return hasFixable && !hasUnfixable;
+  }
+
+  /**
+   * Extract what a Zustand store actually exports
+   * Analyzes the store code to find the initial state and actions
+   * 
+   * Example: create<LoginState>((set) => ({ email: '', password: '', setEmail: (e) => ... }))
+   * Extracts: { email, password, setEmail }
+   */
+  static extractStoreExports(storeCode: string): string[] {
+    const exports: string[] = [];
+    
+    // Look for create<Type>((set) => ({ ... }))
+    const createMatch = storeCode.match(/create<[\w\s,|&]+>\s*\(\s*\(set\)\s*=>\s*\({([^}]+)}\)/s);
+    if (createMatch) {
+      const stateBlock = createMatch[1];
+      // Extract property names (email: '', setEmail: (e) => ...)
+      const propMatches = stateBlock.match(/(\w+)\s*[:=]/g) || [];
+      propMatches.forEach(prop => {
+        const name = prop.replace(/[:=].*/g, '').trim();
+        if (name) {
+          exports.push(name);
+        }
+      });
+    }
+    
+    return exports.length > 0 ? exports : ['email', 'password']; // Default if extraction fails
+  }
+
+  /**
+   * Fix Zustand component to match what the store actually exports
+   * 
+   * Problem: Component destructures `{ state, setFormData, handleSubmit }`
+   * but store only exports `{ email, password }`
+   * 
+   * Solution: Fix the destructuring to only include what exists in the store
+   */
+  static fixZustandMismatch(componentCode: string, storeExports: string[]): string {
+    if (storeExports.length === 0) {
+      return componentCode;
+    }
+
+    // Find the destructuring pattern: const { ... } = useStore();
+    const hookPattern = /const\s+{([^}]*)}\s*=\s*(use\w+)\s*\(\)/g;
+    
+    let fixed = componentCode;
+    let match;
+    
+    while ((match = hookPattern.exec(componentCode)) !== null) {
+      const currentDestructure = match[1];
+      const hookName = match[2];
+      
+      // Only keep properties that exist in store
+      const requestedProps = currentDestructure
+        .split(',')
+        .map(p => p.trim().split(/\s+as\s+/)[0].trim())
+        .filter(p => storeExports.includes(p));
+      
+      if (requestedProps.length > 0 && requestedProps.length !== currentDestructure.split(',').length) {
+        // The component was asking for properties that don't exist - fix it
+        const newDestructure = requestedProps.join(', ');
+        const oldLine = `const {${currentDestructure}} = ${hookName}()`;
+        const newLine = `const { ${newDestructure} } = ${hookName}()`;
+        
+        fixed = fixed.replace(oldLine, newLine);
+      }
+    }
+    
+    return fixed;
+  }
+
+  /**
+   * Overall strategy: If component imports from store but has mismatched properties,
+   * and we have access to the store code, fix the component to match the store
+   */
+  static fixZustandComponentFromStore(
+    componentCode: string,
+    storeCode: string | undefined
+  ): string {
+    if (!storeCode) {
+      return componentCode; // Can't fix without store code
+    }
+    
+    const storeExports = this.extractStoreExports(storeCode);
+    return this.fixZustandMismatch(componentCode, storeExports);
   }
 }
 
