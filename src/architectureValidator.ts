@@ -658,29 +658,44 @@ export class ArchitectureValidator {
 
   /**
    * Validate semantic usage of imported hooks
-   * Ensures that imported hooks are actually USED in the component
+   * Ensures that imported hooks are actually USED correctly in the component
+   * 
+   * CRITICAL CHECKS:
+   * 1. Hook must be called (not just imported)
+   * 2. Destructured properties must exist in source
+   * 3. All used imports must be properly imported (e.g., useState from React)
+   * 4. No mixed state management (useState + store hook together)
+   * 5. Destructured properties must be used
    * 
    * Detects:
    * ❌ Hook imported but never called
-   * ❌ Hook called but state never destructured/used
-   * ❌ Local state (useState) still used alongside store hook
-   * ❌ Missing destructuring of store state properties
-   * 
-   * Example:
-   * ✅ VALID:
-   *   import { useLoginStore } from '../stores/loginStore';
-   *   const { formState, setFormState } = useLoginStore();
-   *   // Uses formState in JSX
-   * 
-   * ❌ INVALID:
-   *   import { useLoginStore } from '../stores/loginStore';  // Imported but never called!
-   *   const [formData, setFormData] = useState(...);         // Still using local state
+   * ❌ Destructuring properties that don't exist in store
+   * ❌ Using useState without importing it
+   * ❌ Mixed state management
+   * ❌ Destructured but unused properties
    */
-  public validateHookUsage(
+  public async validateHookUsage(
     generatedCode: string,
-    filePath: string
-  ): LayerViolation[] {
+    filePath: string,
+    previousStepFiles?: Map<string, string>
+  ): Promise<LayerViolation[]> {
     const violations: LayerViolation[] = [];
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) return violations;
+
+    // Step 0: Validate all React imports (useState, etc.)
+    // Check if code uses useState but doesn't import it
+    if (/\s*useState\s*</.test(generatedCode) || /\s*useState\s*\(/.test(generatedCode)) {
+      if (!/import\s+{[^}]*useState[^}]*}\s+from\s+['"]react['"]/.test(generatedCode)) {
+        violations.push({
+          type: 'semantic-error',
+          import: 'useState',
+          message: `useState is used but not imported from React`,
+          suggestion: `Add: import { useState } from 'react';`,
+          severity: 'high',
+        });
+      }
+    }
 
     // Step 1: Extract all imports that LOOK like hooks (use* pattern)
     const hookImportRegex = /import\s+{([^}]*\buse\w+[^}]*)}\s+from\s+['"]([^'"]+)['"]/g;
@@ -702,12 +717,10 @@ export class ArchitectureValidator {
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {
       for (const hookName of hookImport.names) {
-        // Much more flexible pattern - handles:
-        // - Array destructuring: const [x, setX] = useState(...)
-        // - Object destructuring: const { x } = useStore(...)
-        // - Simple assignment: const store = useStore(...)
-        // Matches: const [anything] = hookName( OR const {anything} = hookName( OR const anything = hookName(
         const escapedHookName = hookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // STRICT: Hook MUST be called
+        // Only match actual function calls, not just references
         const hookCallPattern = new RegExp(
           `const\\s+(?:\\[\\s*[\\w\\s,]*\\s*\\]|\\{\\s*[\\w\\s,]*\\s*\\}|\\w+)\\s*=\\s*${escapedHookName}\\s*\\(`,
           'g'
@@ -718,98 +731,201 @@ export class ArchitectureValidator {
           violations.push({
             type: 'semantic-error',
             import: hookName,
-            message: `Hook '${hookName}' imported but never called`,
-            suggestion: `Add: const { ... } = ${hookName}(); to destructure hook state`,
+            message: `Hook '${hookName}' is imported but never called`,
+            suggestion: `Must call the hook: const { ... } = ${hookName}();`,
             severity: 'high',
           });
+          continue; // Can't validate destructuring if hook isn't called
         }
 
-        // Step 3: If hook is called, verify state is actually USED (not just destructured)
-        if (isCalled) {
-          // Check for object destructuring: const { x, y, z } = hookName()
-          const objectDestructureRegex = new RegExp(
-            `const\\s+{([^}]+)}\\s*=\\s*${escapedHookName}\\s*\\(`,
-            'g'
-          );
-          let destructMatch;
+        // Step 3: Extract destructured properties and validate they exist per store
+        const objectDestructureRegex = new RegExp(
+          `const\\s+{([^}]+)}\\s*=\\s*${escapedHookName}\\s*\\(`,
+          'g'
+        );
+        let destructMatch;
+        const destructuredProps: Set<string> = new Set();
 
-          while ((destructMatch = objectDestructureRegex.exec(generatedCode)) !== null) {
-            const properties = destructMatch[1]
-              .split(',')
-              .map(p => p.trim().split(':')[0]) // Handle { x: xValue } syntax
-              .filter(p => p.length > 0);
+        while ((destructMatch = objectDestructureRegex.exec(generatedCode)) !== null) {
+          const properties = destructMatch[1]
+            .split(',')
+            .map(p => {
+              // Handle { x: y } and { x } patterns
+              const parts = p.trim().split(':');
+              return parts[0].trim();
+            })
+            .filter(p => p.length > 0);
 
-            // Check if each property is used in the code (not just destructured)
-            for (const prop of properties) {
-              // Don't flag setters (setX, setState, etc.) as needing usage - they're for updates
-              if (prop.toLowerCase().startsWith('set')) {
-                continue;
+          properties.forEach(p => destructuredProps.add(p));
+
+          // CRITICAL: For each destructured property, validate it exists in the store
+          // Read the source store file to get available exports
+          try {
+            const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+            let resolvedPath = hookImport.source;
+
+            // Resolve the path
+            if (resolvedPath.startsWith('.')) {
+              resolvedPath = resolvedPath
+                .split('/')
+                .reduce((acc, part) => {
+                  if (part === '.' || part === '') return acc;
+                  if (part === '..') {
+                    const parts = acc.split('/');
+                    parts.pop();
+                    return parts.join('/');
+                  }
+                  return acc + '/' + part;
+                }, currentDir);
+            }
+
+            // Try to read store file (similar to cross-file validation)
+            let storeContent: string | null = null;
+            const pathVariants = [
+              resolvedPath,
+              resolvedPath + '.ts',
+              resolvedPath + '.tsx',
+              resolvedPath + '.js',
+              resolvedPath + '.jsx',
+            ];
+
+            // Check previousStepFiles first
+            for (const variant of pathVariants) {
+              if (previousStepFiles && previousStepFiles.has(variant)) {
+                storeContent = previousStepFiles.get(variant) || '';
+                break;
               }
+            }
 
-              const propUsagePattern = new RegExp(`\\b${prop}\\b`, 'g');
-              const usages = (generatedCode.match(propUsagePattern) || []).length;
-
-              // First match is the destructuring itself, so need at least 2
-              // BUT: Also consider usage in JSX, function calls, etc. more liberally
-              if (usages < 2) {
-                // Additional check: see if the variable appears in JSX or as part of expressions
-                const inJSXOrExpr = new RegExp(
-                  `[{<(,\\s]${prop}[}\\s)\\.,;]|\\$\\{${prop}\\}|\\{${prop}\\}`,
-                  'g'
-                ).test(generatedCode);
-
-                if (!inJSXOrExpr) {
-                  violations.push({
-                    type: 'semantic-error',
-                    import: hookName,
-                    message: `Property '${prop}' destructured from '${hookName}' but never used`,
-                    suggestion: `Remove unused property or use it in your JSX/code`,
-                    severity: 'medium',
-                  });
+            // If not found, try disk
+            if (!storeContent) {
+              for (const variant of pathVariants) {
+                try {
+                  const storeUri = vscode.Uri.joinPath(workspace.uri, variant);
+                  storeContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(storeUri));
+                  break;
+                } catch {
+                  // Try next variant
                 }
               }
             }
+
+            if (storeContent) {
+              // Extract available state properties from Zustand store
+              // Zustand pattern: create((set) => ({ prop: value, ... }))
+              const zustandStateRegex = /create\s*\(\s*(?:set|get|state)[^{]*{([^}]+)}\s*\)/gs;
+              const zustandMatch = zustandStateRegex.exec(storeContent);
+              
+              let storeProps: Set<string> = new Set();
+              if (zustandMatch) {
+                // Extract property names from state object
+                const stateObj = zustandMatch[1];
+                const propRegex = /(\w+)\s*:/g;
+                let propMatch;
+                while ((propMatch = propRegex.exec(stateObj)) !== null) {
+                  storeProps.add(propMatch[1]);
+                }
+              }
+
+              if (storeProps.size > 0) {
+                // Check each destructured property exists in store
+                for (const prop of properties) {
+                  if (!storeProps.has(prop)) {
+                    violations.push({
+                      type: 'semantic-error',
+                      import: hookName,
+                      message: `Property '${prop}' destructured from '${hookName}' but not found in store state`,
+                      suggestion: `Available in store: ${Array.from(storeProps).join(', ')}. Remove or check spelling of '${prop}'`,
+                      severity: 'high',
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // If we can't read store, skip property validation but still check usage
           }
 
-          // Also check array destructuring: const [x, setX] = useState(...)
-          // But be less strict - these are expected patterns
-          const arrayDestructureRegex = new RegExp(
-            `const\\s+\\[\\s*([\\w\\s,]*?)\\s*\\]\\s*=\\s*${escapedHookName}\\s*\\(`,
-            'g'
-          );
-          // We're less strict here because array destructuring (useState pattern) is well-understood
+          // Step 4: Validate destructured properties are actually USED
+          for (const prop of properties) {
+            // Skip validation for setters - they're meant for updates
+            if (prop.toLowerCase().startsWith('set')) {
+              continue;
+            }
+
+            // Count usage (excluding the destructuring line itself)
+            const propUsagePattern = new RegExp(`\\b${prop}\\b`, 'g');
+            const allMatches = generatedCode.match(propUsagePattern) || [];
+            const usages = allMatches.length - 1; // Subtract the destructuring occurrence
+
+            if (usages === 0) {
+              violations.push({
+                type: 'semantic-error',
+                import: hookName,
+                message: `Property '${prop}' destructured but never used`,
+                suggestion: `Either use '${prop}' in your code or remove it from destructuring`,
+                severity: 'medium',
+              });
+            }
+          }
+        }
+
+        // Also handle array destructuring for useState
+        const arrayDestructureRegex = new RegExp(
+          `const\\s+\\[\\s*([\\w\\s,]*?)\\s*\\]\\s*=\\s*${escapedHookName}\\s*\\(`,
+          'g'
+        );
+        let arrayMatch;
+        
+        while ((arrayMatch = arrayDestructureRegex.exec(generatedCode)) !== null) {
+          const vars = arrayMatch[1]
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+          // For array destructuring (useState), check both value and setter are used
+          if (vars.length === 2) {
+            const [stateVar, setterVar] = vars;
+            const stateUsages = (generatedCode.match(new RegExp(`\\b${stateVar}\\b`, 'g')) || []).length - 1;
+            const setterUsages = (generatedCode.match(new RegExp(`\\b${setterVar}\\b`, 'g')) || []).length - 1;
+
+            if (stateUsages === 0) {
+              violations.push({
+                type: 'semantic-error',
+                import: hookName,
+                message: `State variable '${stateVar}' destructured but never used`,
+                suggestion: `Use '${stateVar}' in your code or remove it`,
+                severity: 'medium',
+              });
+            }
+
+            if (setterUsages === 0 && !setterVar.startsWith('_')) {
+              violations.push({
+                type: 'semantic-error',
+                import: hookName,
+                message: `Setter '${setterVar}' destructured but never used`,
+                suggestion: `Use '${setterVar}' to update state or prefix with underscore: _${setterVar}`,
+                severity: 'low',
+              });
+            }
+          }
         }
       }
     }
 
-    // Step 4: Check for MIXED STATE MANAGEMENT
-    // Only flag if a store hook AND useState are BOTH actually being USED
-    if (importedHooks.length > 0) {
-      const hasLocalState = /const\s+\[\w+,\s*\w+\]\s*=\s*useState/.test(generatedCode);
-      const hasStoreHook = importedHooks.some(h => h.names.some(n => n.includes('Store') || n.includes('store')));
+    // Step 5: Check for MIXED STATE MANAGEMENT
+    // Using both useState and store hooks means you're not fully refactored
+    const stateHooks = importedHooks.filter(h => h.names.some(n => n.includes('Store') || n.includes('store')));
+    const usesLocalState = /const\s+\[\w+,\s*\w+\]\s*=\s*useState/.test(generatedCode);
 
-      if (hasLocalState && hasStoreHook) {
-        // Only report if BOTH are clearly being used (not just imported)
-        // Check if useState variables are actually used
-        const stateVarMatch = generatedCode.match(/const\s+\[(\w+),\s*(\w+)\]\s*=\s*useState\s*\([^)]*\)/);
-        if (stateVarMatch) {
-          const [, stateVar, setterVar] = stateVarMatch;
-          // Count actual usage of state variable
-          const stateUsages = (generatedCode.match(new RegExp(`\\b${stateVar}\\b`, 'g')) || []).length;
-          const setterUsages = (generatedCode.match(new RegExp(`\\b${setterVar}\\b`, 'g')) || []).length;
-
-          // Both need to appear at least twice (once in destructure, once in use)
-          if (stateUsages >= 2 || setterUsages >= 2) {
-            violations.push({
-              type: 'semantic-error',
-              import: importedHooks[0].names[0],
-              message: `Both store hook '${importedHooks[0].names[0]}' and local state '${stateVar}' detected and USED. Should use only store.`,
-              suggestion: `Remove useState and use only the store hook's state management`,
-              severity: 'high',
-            });
-          }
-        }
-      }
+    if (stateHooks.length > 0 && usesLocalState) {
+      violations.push({
+        type: 'semantic-error',
+        import: stateHooks[0].names[0],
+        message: `Both store hook and local useState detected - use only store for state management`,
+        suggestion: `Remove all useState calls and use store hook exclusively`,
+        severity: 'high',
+      });
     }
 
     return violations;

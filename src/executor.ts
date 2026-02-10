@@ -509,7 +509,11 @@ export class Executor {
         }
 
         // ✅ NEW: Validate semantic hook usage (prevents refactoring failures)
-        const hookUsageViolations = validator.validateHookUsage(content, filePath);
+        const hookUsageViolations = await validator.validateHookUsage(
+          content,
+          filePath,
+          previousStepFiles.size > 0 ? previousStepFiles : undefined  // ✅ Pass previous files context
+        );
         if (hookUsageViolations.length > 0) {
           const hookErrors = hookUsageViolations.map(
             v => `❌ Hook Usage: ${v.message}. ${v.suggestion}`
