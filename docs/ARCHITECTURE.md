@@ -11,7 +11,10 @@
 1. **Create `.lla-rules` in your project root** with team patterns:
 ```yaml
 - Use functional components only
-- Validate with Zod
+- Form state must use typed interfaces (e.g., LoginFormState)
+- Form handlers must be explicitly typed (FormEventHandler<HTMLFormElement>)
+- Multi-field forms use handleChange consolidator pattern
+- Validate with Zod (never inline validators)
 - State: Zustand (not Redux)
 - API: TanStack Query
 ```
@@ -19,6 +22,15 @@
 2. **Extension loads automatically** on startup
 3. **Rules injected into LLM system prompt** before every `/plan` or `/write`
 4. **Generated code matches project patterns** without manual guidance
+
+### Built-in Form Component Pattern
+
+The extension recognizes form component rules and applies:
+- **State Interface**: Automatically creates typed form state interface
+- **Handler Typing**: Explicitly types handlers as `FormEventHandler<HTMLFormElement>`
+- **Consolidator**: Multi-field forms use `handleChange` to manage updates
+- **Submit Handler**: Always includes onSubmit (never callback-only)
+- **Validation**: Uses Zod schema patterns for runtime validation
 
 ### Example
 

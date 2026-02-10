@@ -1,18 +1,44 @@
 # ROADMAP - LLM Local Assistant
 
-## Current Status: v2.0.3 Production Ready ✅
+## Current Status: v2.5.0 Production Ready ✅
 
-**Release Date:** February 8, 2026  
+**Release Date:** February 9, 2026  
 **Status:** Stable, Production-Ready  
-**Tests:** 284/284 passing  
+**Tests:** 486/489 passing  
 **TypeScript:** Strict mode, 0 errors  
 **Blockers:** None
 
 ---
 
-## v2.0.3: Analysis-Only, Production-Ready (CURRENT) ✅
+## v2.5.0: 6-Layer Validation & Zustand Support (CURRENT) ✅
 
-### What's Included (Phase 3)
+### What's Included (Phase 4: Validation)
+
+**6-Layer Validation System** (New!)
+- ✅ Syntax validation - Valid TypeScript
+- ✅ Type validation - Correct types
+- ✅ Import validation - Files exist
+- ✅ Cross-file validation - Contracts match
+- ✅ Hook usage validation - Hooks actually used
+- ✅ Store contract validation - Properties match exports
+
+**Pre-Validation Enhancement** (New!)
+- ✅ Calculate exact import paths BEFORE generation
+- ✅ Inject REQUIRED IMPORTS into prompt
+- ✅ Eliminate path guessing, validation loops
+
+**Zustand Store Support** (New!)
+- ✅ Store property extraction (with TypeScript generics)
+- ✅ Component destructuring validation
+- ✅ Cross-file property alignment
+- ✅ Refactoring scenario detection (useState → store)
+- ✅ Working RefactorTest example included
+
+**Code Generation with Planning** (NOW ENABLED!)
+- ✅ `/plan` - Multi-step generation with validation (FIXED!)
+- ✅ `/design-system` - Feature generation with validation (FIXED!)
+- ✅ `/approve` - Approval workflow (works again!)
+- ✅ No more infinite loops (pre-validation + semantic validation)
 
 **Pattern Detection & Architecture Analysis**
 - ✅ `/refactor <file>` - 5-layer semantic analysis
@@ -22,9 +48,9 @@
 - ✅ `/context show patterns` - Detected patterns
 - ✅ `/git-review` - Code review
 
-**File Operations (Phase 1-2)**
+**File Operations**
 - ✅ `/read <path>` - Read files
-- ✅ `/write <path>` - Generate file content
+- ✅ `/write <path>` - Generate file content with validation
 - ✅ `/suggestwrite <path>` - Preview before writing
 - ✅ `/explain <path>` - Code explanation
 - ✅ `/git-commit-msg` - Generate commit messages
@@ -35,19 +61,23 @@
 - ✅ Plans execute in correct workspace
 - ✅ File discovery scans src AND root
 - ✅ Context-aware analysis
+- ✅ Cross-file validation works across workspaces
 
-### What's NOT Included (Intentionally Disabled)
+### What's NOT Included (By Design)
 
-**Code Generation with Planning** - Infinite Loop Bugs
-- ❌ `/plan` - Disabled (infinite validation loop)
-- ❌ `/design-system` - Disabled (infinite validation loop)
-- ❌ `/approve` - Disabled (tied to above)
+**Advanced Features (Future Releases)**
+- Cloud-based code generation
+- Real-time collaboration
+- Team-wide pattern enforcement
+- Advanced caching strategies
 
-**Why disabled:**
-- LLM generates code missing imports (e.g., `useState`)
-- Auto-correction detects error but regenerates same broken code
-- Creates infinite loop: generate → validate → regenerate → validate...
-- Traps users in retry cycles, wastes tokens
+---
+
+## v2.4.0: Reserved for Future Use
+
+## v2.3.0: Reserved for Future Use
+
+## v2.2.0: Reserved for Future Use
 
 **Better alternatives:**
 - Cursor, Windsurf, or Copilot (better multi-file context)
