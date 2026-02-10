@@ -73,41 +73,89 @@
 
 ---
 
-## 🟡 v3.0: Semantic Orchestration (The "Contract" Release)
+## 🟡 v3.0: Code Generation with Contract Guarantees (The "Validation" Release)
 
-**Focus:** Solving "Semantic Drift" and ensuring multi-file integration.
+**Focus:** Bridge the gap from v2.5.0 (5.5/10) to Claude Haiku baseline (8.5/10) via explicit cross-file validation.
 
-### Features (Planned)
+**Derived from:** Claude Haiku test case — login form with Zustand + Zod + Component (8.5/10 quality)
 
-- [ ] **Cross-File Contract Validation**
-  - Implement an "Interface Sniffer" that extracts public exports from Step N
-  - Enforce extracted interfaces as constraints in Step N+1
-  - 100% type-safety across multi-file workflows
+### The Gap Analysis
 
-- [ ] **State-Management Guardrails**
-  - Strict enforcement of "No Mixed State"
-  - Automatically detect and fail builds that mix `useState` with global store hooks (Zustand/Redux)
-  - Prevent accidental state management conflicts
+**v2.5.0 Limitation:** Validates individual files in isolation (9/10 per file) but lacks cross-file integration (5.5/10 overall).  
+**Haiku Strength:** Naturally connects files through implicit understanding. All three layers (schema → store → component) work together.  
+**v3.0 Goal:** Make cross-file integration **explicit** and **verified** — no broken imports, no scope creep, no missing dependencies.
 
-- [ ] **Atomic Refactoring**
-  - Support for safe logic migration (e.g., moving local form state to a global store)
-  - 100% interface matching verification
-  - Rollback capability if contracts break
+### Three Critical Phases (Sequential)
 
-- [ ] **Type-Safe Event Handling**
-  - Standardized enforcement of `FormEvent<T>` and `React.FC` patterns
-  - Automatic type generation for event handlers
-  - Consistent across all generated UI components
+#### Phase 3a: Dynamic Import Verification ⭐ (Quick Win)
 
-- [ ] **Automated Dependency Installation**
-  - Planner identifies missing npm packages
-  - Executor installs them before writing code
-  - No more "module not found" errors
+**Problem:** Files created with missing or broken imports. Component references `useForm` that doesn't exist in store.  
+**Solution:** Pre-save AST scan ensures every variable used has a corresponding `import` statement.
+
+**Implementation:**
+- Scan generated file for all identifier usage
+- Match against import statements
+- Fail build if reference is undefined
+- Provide auto-fix suggestions
+
+**Impact:** Catches broken imports before code lands in user's editor.  
+**Difficulty:** Medium (TypeScript AST parsing)
+
+#### Phase 3b: Strict Plan Adherence ⭐⭐ (Scope Enforcement)
+
+**Problem:** Model introduces unapproved dependencies. Plan says "use Zod for validation" but code adds `react-hook-form` anyway.  
+**Solution:** Build constraint that fails if unapproved npm packages are detected.
+
+**Implementation:**
+- Extract all imports from generated files
+- Compare against "approved dependencies" from the plan
+- Reject files if new dependencies detected
+- Require explicit plan update to approve new packages
+
+**Impact:** Prevents scope creep, enforces plan fidelity.  
+**Difficulty:** Medium (dependency tracking + constraint validation)
+
+#### Phase 3c: Schema-Store-Component Binding ⭐⭐⭐ (Cross-File Contracts)
+
+**Problem:** Schema is "created" (9/10) but not actually "imported" into the component. Three files exist but don't connect.  
+**Solution:** Verify the entire chain: Schema → exported, Store → imports schema, Component → imports store + uses store.
+
+**Implementation:**
+- Extract public exports from schema file
+- Verify store imports and uses those exports
+- Verify component imports store
+- Verify component actually destructures store properties
+- Ensure no unused imports
+
+**Impact:** Guarantees all three layers connect end-to-end, matching Claude's implicit understanding.  
+**Difficulty:** Hard (semantic analysis + cross-file contract validation)
+
+### Validation Architecture (Updated for v3.0)
+
+**Before v3.0 (v2.5.0):**
+```
+File 1 Syntax ✅ → File 1 Types ✅ → File 1 Patterns ✅
+File 2 Syntax ✅ → File 2 Types ✅ → File 2 Patterns ✅
+File 3 Syntax ✅ → File 3 Types ✅ → File 3 Patterns ✅
+Integration ❌ (not verified)
+```
+
+**After v3.0:**
+```
+File 1 Syntax ✅ → File 1 Types ✅ → File 1 Patterns ✅
+File 2 Syntax ✅ → File 2 Types ✅ → File 2 Patterns ✅
+File 3 Syntax ✅ → File 3 Types ✅ → File 3 Patterns ✅
+Imports Valid ✅ (Phase 3a)
+No Scope Creep ✅ (Phase 3b)
+Schema→Store→Component ✅ (Phase 3c)
+```
 
 ### Quality Goals
-- Contract validation on 100% of multi-file operations
-- Zero "semantic drift" defects
-- Full IDE integration (IntelliSense support)
+- **Score Target:** 8.5/10+ (match Claude Haiku)
+- **Import Verification:** 100% of generated files
+- **Plan Adherence:** 0 unapproved dependencies
+- **Cross-File Binding:** 100% of multi-file operations verified end-to-end
+- **Fidelity:** Plan → Execution alignment ≥ 9/10
 
 ---
 
