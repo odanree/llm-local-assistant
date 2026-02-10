@@ -866,6 +866,16 @@ export class ArchitectureValidator {
         let destructMatch;
         const destructuredProps: Set<string> = new Set();
 
+        // CRITICAL: Only validate destructuring for Zustand store hooks
+        // Custom hooks like useCounter should use basic destructuring without full property validation
+        // Zustand stores must have their destructured properties validated against store exports
+        const isZustandStore = hookName.includes('Store') || hookImport.source.includes('stores');
+        
+        if (!isZustandStore) {
+          console.log(`[ArchitectureValidator] ℹ️ Skipping store property validation for non-store hook: ${hookName}`);
+          continue;
+        }
+
         while ((destructMatch = objectDestructureRegex.exec(generatedCode)) !== null) {
           const properties = destructMatch[1]
             .split(',')
