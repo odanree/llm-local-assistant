@@ -216,6 +216,19 @@ export class Executor {
     // This clears the LLM's internal context, NOT the chat UI history
     this.config.llmClient.clearHistory();
 
+    // 🔴 CRITICAL: Reorder steps based on file dependencies (topological sort)
+    // This ensures store/interface files are written BEFORE components that import them
+    const reorderedSteps = this.reorderStepsByDependencies(plan.steps);
+    if (reorderedSteps.length !== plan.steps.length) {
+      console.warn('[Executor] Warning: Step reordering changed step count');
+    } else if (!this.stepsAreEqual(plan.steps, reorderedSteps)) {
+      this.config.onMessage?.(
+        '🔄 Reordering steps to satisfy import dependencies...',
+        'info'
+      );
+      plan.steps = reorderedSteps;
+    }
+
     const startTime = Date.now();
     let succeededSteps = 0;
 
@@ -394,11 +407,85 @@ export class Executor {
 
     plan.status = 'completed';
 
-    // Generate post-execution handover summary (Danh's Product Thinking)
+    // 🔴 CRITICAL: Integration Validation (User's Recommendation)
+    // After all files are generated, validate they ACTUALLY integrate
+    // This catches issues like "Zustand store imported but component doesn't call it correctly"
+    this.config.onMessage?.(
+      '🔍 Validating integration between dependent files...',
+      'info'
+    );
+
     const filesCreated = plan.steps
       .filter(s => s.action === 'write')
       .map(s => s.path)
       .filter((p): p is string => !!p);
+
+    // Read all generated files and check they work together
+    const validator = new ArchitectureValidator();
+    const generatedFileContents = new Map<string, string>();
+
+    for (const filePath of filesCreated) {
+      try {
+        const fileUri = vscode.Uri.joinPath(planWorkspaceUri, filePath);
+        const fileData = await vscode.workspace.fs.readFile(fileUri);
+        const content = new TextDecoder().decode(fileData);
+        generatedFileContents.set(filePath, content);
+      } catch (err) {
+        console.warn(`[Executor] Could not read generated file for integration check: ${filePath}`);
+      }
+    }
+
+    // Check each file against all others for integration issues
+    const integrationErrors: string[] = [];
+    
+    for (const [filePath, content] of generatedFileContents) {
+      // Check if this file imports from stores but doesn't use the hook correctly
+      const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/)
+      if (storeImportMatch) {
+        const storeHookMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}/g)
+        for (const match of storeHookMatches) {
+          const hookNames = match[1].split(',').map((h: string) => h.trim());
+          for (const hookName of hookNames) {
+            // Check if hook is actually called/destructured in the component
+            if (!content.match(new RegExp(`const\\s+{[^}]+}\\s*=\\s*${hookName}\\s*\\(\\)`))) {
+              integrationErrors.push(
+                `\u274c ${filePath}: Imports '${hookName}' but never calls it. ` +
+                `Expected: const { state } = ${hookName}();`
+              );
+            }
+            // Check for wrong calling pattern: const store = useStoreHook(); then store.x or store()
+            if (content.match(new RegExp(`const\\s+\\w+\\s*=\\s*${hookName}\\s*\\(\\)`))) {
+              integrationErrors.push(
+                `\u274c ${filePath}: WRONG: Storing store hook in variable. Must destructure directly.` +
+                `Change: const { x } = ${hookName}(); NOT const store = ${hookName}();`
+              );
+            }
+          }
+        }
+      }
+    }
+
+    if (integrationErrors.length > 0) {
+      console.error('[Executor] \u274c Integration validation failed:');
+      for (const error of integrationErrors) {
+        console.error(`  ${error}`);
+        this.config.onMessage?.(error, 'error');
+      }
+      
+      // Integration failures are CRITICAL - files won't work together
+      return {
+        success: false,
+        completedSteps: succeededSteps,
+        results: plan.results,
+        error: `Integration validation failed: ${integrationErrors[0]}`,
+        totalDuration: Date.now() - startTime,
+      };
+    }
+
+    this.config.onMessage?.(
+      '✅ All files validated for integration consistency',
+      'info'
+    );
 
     const handover = generateHandoverSummary(
       plan.results!,
@@ -523,14 +610,67 @@ export class Executor {
             `[Executor] ⚠️ Hook usage violations found in ${filePath}. Refactoring may not be complete.`
           );
         }
+
+        // ✅ Validate import usage (catch unused/missing imports)
+        const importUsageViolations = validator.validateImportUsage(content);
+        if (importUsageViolations.length > 0) {
+          for (const violation of importUsageViolations) {
+            if (violation.severity === 'high') {
+              errors.push(`❌ Import Usage: ${violation.message}. ${violation.suggestion}`);
+            } else {
+              console.log(`[Executor] ⚠️ Import Usage: ${violation.message}`);
+            }
+          }
+        }
+
+        // ✅ Validate Zustand components for correctness
+        // Check if component imports ANY store hook (use*Store pattern)
+        const allStoreImportMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}\s+from\s+['"]([^'"]*store[^'"]*)['"]\s*;/gi);
+        
+        for (const match of allStoreImportMatches) {
+          const importedItems = match[1]; // e.g., "useLoginStore"
+          const importPath = match[2];  // e.g., "../stores/loginStore"
+          
+          // Extract all store hooks from the import statement
+          const hookNames = importedItems
+            .split(',')
+            .map(item => {
+              const parts = item.trim().split(/\s+as\s+/);
+              return parts[parts.length - 1].trim(); // Get the name used in code
+            })
+            .filter(name => name.toLowerCase().includes('use') && name.toLowerCase().includes('store'));
+          
+          // Validate EACH store hook used in this component
+          for (const hookName of hookNames) {
+            const zustandViolations = validator.validateZustandComponent(content, hookName);
+            if (zustandViolations.length > 0) {
+              const zustandErrors = zustandViolations.map(
+                v => `❌ Zustand Pattern (${hookName}): ${v.message}. ${v.suggestion}`
+              );
+              errors.push(...zustandErrors);
+            }
+          }
+        }
+        
+        // If component imports from stores but Zustand pattern not detected, that's also an error
+        if (content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
+          errors.push(
+            `❌ Zustand Pattern: Component imports from stores but doesn't use destructuring pattern. ` +
+            `Expected: const { x, y } = useStoreHook();`
+          );
+        }
       } catch (error) {
-        console.warn(`[Executor] Cross-file validation error: ${error}`);
-        // Don't fail on validation errors, just log warning
+        console.error(`[Executor] ❌ CRITICAL: Cross-file validation threw exception:`, error);
+        // Don't silently swallow - this is a critical issue
+        errors.push(`❌ Validation system error: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
+    // ✅ NEW: Ensure all errors are treated as block if they contain ❌
+    const finalValid = !errors.some(e => e.includes('❌ Zustand'));
+    
     return {
-      valid: errors.length === 0,
+      valid: finalValid && errors.length === 0,
       errors: errors.length > 0 ? errors : undefined,
     };
   }
@@ -1502,6 +1642,141 @@ export class Executor {
    */
 
   /**
+   * Reorder steps based on file import dependencies (topological sort)
+   * 
+   * Problem: Planner generates steps in logical order, not dependency order.
+   * Example: LoginForm.tsx (Step 1) imports useLoginStore (Step 3)
+   * This causes validation failures because the dependency doesn't exist yet.
+   *
+   * Solution: Analyze import statements and reorder WRITE steps so:
+   * - Store files (containing exports) are written FIRST
+   * - Components (importing stores) are written AFTER  
+   * - Interface files are written when first needed
+   *
+   * Algorithm:
+   * 1. Extract all import patterns from each step's description/path
+   * 2. Build dependency graph (which files import which others)
+   * 3. Topological sort: dependencies first
+   * 4. Return reordered steps
+   */
+  private reorderStepsByDependencies(steps: PlanStep[]): PlanStep[] {
+    // Only reorder WRITE steps (READ/DELETE don't create dependencies)
+    const writeSteps = steps.filter(s => s.action === 'write');
+    const nonWriteSteps = steps.filter(s => s.action !== 'write');
+
+    if (writeSteps.length <= 1) {
+      return steps; // No reordering needed
+    }
+
+    // Build dependency map: for each write step, what other write steps does it depend on?
+    const dependencies = new Map<number, Set<number>>();
+    const stepDescriptions = new Map<number, { path?: string; description?: string }>();
+
+    writeSteps.forEach((step, idx) => {
+      dependencies.set(idx, new Set());
+      stepDescriptions.set(idx, { path: step.path, description: step.description });
+    });
+
+    // Analyze imports in descriptions to detect dependencies
+    writeSteps.forEach((step, currentIdx) => {
+      const pathLower = (step.path || '').toLowerCase();
+      const descLower = (step.description || '').toLowerCase();
+      const fullText = `${pathLower} ${descLower}`;
+
+      writeSteps.forEach((otherStep, otherIdx) => {
+        if (currentIdx === otherIdx) return;
+
+        const otherPath = (otherStep.path || '').toLowerCase();
+        const otherDesc = (otherStep.description || '').toLowerCase();
+
+        // Check if current step imports from other step
+        // Look for patterns like "import from stores/useAuthStore" or "import from types/LoginFormState"
+        const importPatterns = [
+          `imports?.*from.*${this.getFileBaseName(otherPath)}`,
+          `uses?.*${this.getFileBaseName(otherPath)}`,
+          `from.*['"]([^'"]*${this.getFileBaseName(otherPath)}[^'"]*)['"]`,
+        ];
+
+        for (const pattern of importPatterns) {
+          if (new RegExp(pattern, 'i').test(fullText)) {
+            dependencies.get(currentIdx)?.add(otherIdx);
+            break;
+          }
+        }
+
+        // Also check: if other step creates "useLoginStore" and current is "LoginForm", likely dependency
+        if (
+          otherPath.includes('store') && !pathLower.includes('store') &&
+          (pathLower.includes('component') || pathLower.includes('form'))
+        ) {
+          dependencies.get(currentIdx)?.add(otherIdx);
+        }
+      });
+    });
+
+    // Topological sort: Kahn's algorithm
+    const inDegree = new Map<number, number>();
+    writeSteps.forEach((_, idx) => {
+      const depCount = Array.from(dependencies.values()).filter(deps => deps.has(idx)).length;
+      inDegree.set(idx, depCount);
+    });
+
+    const queue: number[] = [];
+    inDegree.forEach((degree, idx) => {
+      if (degree === 0) queue.push(idx);
+    });
+
+    const sorted: number[] = [];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      sorted.push(current);
+
+      // Remove edges from current
+      dependencies.get(current)?.forEach(dependent => {
+        inDegree.set(dependent, (inDegree.get(dependent) ?? 0) - 1);
+        if (inDegree.get(dependent) === 0) {
+          queue.push(dependent);
+        }
+      });
+    }
+
+    // If we couldn't sort all (cycle detected), return original order
+    if (sorted.length !== writeSteps.length) {
+      console.warn('[Executor] Circular dependency detected in plan steps, keeping original order');
+      return steps;
+    }
+
+    // Rebuild: [sorted writes] + [non-writes in original positions where possible]
+    const result: PlanStep[] = [];
+    const sortedWriteSteps = sorted.map(idx => writeSteps[idx]);
+    const writeIndices = new Set(steps.map((s, i) => s.action === 'write' ? i : -1).filter(i => i >= 0));
+    
+    let writeIdx = 0;
+    for (let i = 0; i < steps.length; i++) {
+      if (writeIndices.has(i)) {
+        result.push(sortedWriteSteps[writeIdx++]);
+      } else {
+        result.push(steps[i]);
+      }
+    }
+
+    return result;
+  }
+
+  /** Helper: Get base filename without path or extension */
+  private getFileBaseName(filePath: string): string {
+    const withoutExt = filePath.replace(/\.[^.]+$/, '');
+    const parts = withoutExt.split('/');
+    return parts[parts.length - 1];
+  }
+
+  /** Helper: Check if step order changed (for logging) */
+  private stepsAreEqual(steps1: PlanStep[], steps2: PlanStep[]): boolean {
+    if (steps1.length !== steps2.length) return false;
+    return steps1.every((s, i) => s.stepId === steps2[i].stepId && s.path === steps2[i].path);
+  }
+
+  /**
    * Validate step dependencies (DAG: Directed Acyclic Graph)
    *
    * NEW: Dependency-Linked Schema
@@ -2441,8 +2716,40 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               );
               const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastCriticalErrors, step.path);
 
-              // Validate the smart-fixed code - only check CRITICAL errors
-              const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step);
+              // 🔴 CRITICAL: Try Zustand mismatch fix if component imports from stores
+              let zustandFixed = smartFixed;
+              if (smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/) && lastCriticalErrors.some(e => e.includes('Zustand'))) {
+                this.config.onMessage?.(
+                  `🛠️ Attempting Zustand-specific fix (matching component to store exports)...`,
+                  'info'
+                );
+                
+                // Try to find and read the store file
+                const storeImportMatch = smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/)
+                if (storeImportMatch) {
+                  const storeImportPath = storeImportMatch[1];
+                  const storeFilePath = vscode.Uri.joinPath(workspaceUri, storeImportPath.replace(/^\.\//, 'src/').replace(/^\.\.\//, ''));
+                  
+                  try {
+                    const storeData = await vscode.workspace.fs.readFile(storeFilePath);
+                    const storeCode = new TextDecoder().decode(storeData);
+                    zustandFixed = SmartAutoCorrection.fixZustandComponentFromStore(smartFixed, storeCode);
+                    
+                    if (zustandFixed !== smartFixed) {
+                      this.config.onMessage?.(
+                        `✅ Applied Zustand mismatch fix`,
+                        'info'
+                      );
+                    }
+                  } catch (storeReadErr) {
+                    // Store file not found yet - will be created in later step
+                    console.warn('[Executor] Store file not yet available for Zustand mismatch fix');
+                  }
+                }
+              }
+
+              // Validate the fixed code - only check CRITICAL errors
+              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step);
               const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
                 smartValidation.errors,
                 false // Don't spam logs during auto-correction
@@ -2461,7 +2768,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     'info'
                   );
                 }
-                correctedContent = smartFixed;
+                correctedContent = zustandFixed;
               } else {
                 // ❌ Smart fix didn't fully work, fall back to LLM with ONLY CRITICAL ERRORS
                 this.config.onMessage?.(
@@ -2469,7 +2776,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   'info'
                 );
                 // ✅ FIX: Only send CRITICAL errors to LLM, not soft suggestions
-                const fixPrompt = `The code you generated has CRITICAL validation errors that MUST be fixed:\n\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+                // Format errors with context and specific guidance for the LLM
+                const formattedErrors = lastCriticalErrors.map((e, i) => {
+                  // For hook errors, add specific guidance
+                  if (e.includes('Hook') && e.includes('imported but never called')) {
+                    const hookMatch = e.match(/Hook '(\w+)'/);
+                    const hookName = hookMatch ? hookMatch[1] : 'hook';
+                    return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR use the hook. If using the hook, call it like: const [state, setState] = ${hookName}(initialValue);`;
+                  }
+                  return `${i + 1}. ${e}`;
+                }).join('\n');
+                
+                const fixPrompt = `The code you generated for ${step.path} has CRITICAL validation errors that MUST be fixed:\n\n${formattedErrors}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
@@ -2489,7 +2807,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 'info'
               );
               // ✅ FIX: Only send CRITICAL errors to LLM
-              const fixPrompt = `The code you generated has CRITICAL validation errors that MUST be fixed:\n\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+              // Format errors with context and specific guidance for the LLM
+              const formattedErrors = lastCriticalErrors.map((e, i) => {
+                // For hook errors, add specific guidance
+                if (e.includes('Hook') && e.includes('imported but never called')) {
+                  const hookMatch = e.match(/Hook '(\w+)'/);
+                  const hookName = hookMatch ? hookMatch[1] : 'hook';
+                  return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR use the hook. If using the hook, call it like: const [state, setState] = ${hookName}(initialValue);`;
+                }
+                return `${i + 1}. ${e}`;
+              }).join('\n');
+              
+              const fixPrompt = `The code you generated for ${step.path} has CRITICAL validation errors that MUST be fixed:\n\n${formattedErrors}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
 
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {
