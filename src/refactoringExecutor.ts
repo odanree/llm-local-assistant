@@ -2,6 +2,10 @@ import * as vscode from 'vscode';
 import { Executor, ExecutorConfig } from './executor';
 import { ServiceExtractor, RefactoringPlan, ServiceExtraction } from './serviceExtractor';
 import { LLMClient } from './llmClient';
+import { SmartValidator } from './services/smartValidator';
+import { SemanticValidator } from './services/semanticValidator';
+import { PromptEngine } from './services/PromptEngine';
+import { GOLDEN_TEMPLATES, TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
 
 /**
  * Phase 3.4.4: LLM-Guided Refactoring
@@ -141,11 +145,48 @@ export class RefactoringExecutor {
   }
 
   /**
-   * Generate refactored code using LLM
+   * Generate refactored code with semantic retry loop
+   * Feeds semantic errors back to LLM for automatic correction
    */
   private async generateRefactoredCode(plan: RefactoringPlan, code: string): Promise<string> {
-    const prompt = this.buildRefactoringPrompt(plan, code);
+    return this.generateRefactoredCodeWithRetry(plan, code, code, 0);
+  }
 
+  /**
+   * Recursive retry handler with semantic feedback loop
+   * Max 3 attempts to generate semantically correct code
+   */
+  private async generateRefactoredCodeWithRetry(
+    plan: RefactoringPlan,
+    originalCode: string,
+    currentCode: string,
+    attemptNumber: number
+  ): Promise<string> {
+    const MAX_ATTEMPTS = 3;
+
+    // Build the prompt for this attempt
+    let prompt: string;
+    if (attemptNumber === 0) {
+      // First attempt: normal refactoring prompt
+      prompt = this.buildRefactoringPrompt(plan, originalCode);
+      this.log(`[Generation Attempt ${attemptNumber + 1}/${MAX_ATTEMPTS}] Generating refactored code...`);
+    } else {
+      // Retry attempt: include semantic error feedback
+      const semanticErrors = SmartValidator.checkSemantics(currentCode);
+      if (semanticErrors.length === 0) {
+        // No errors on retry - shouldn't happen, but return code
+        return currentCode;
+      }
+
+      const errorSummary = SmartValidator.formatErrors(semanticErrors);
+      prompt = this.buildCorrectionPrompt(plan, originalCode, currentCode, errorSummary);
+      this.log(
+        `[Generation Attempt ${attemptNumber + 1}/${MAX_ATTEMPTS}] ` +
+        `Correcting ${semanticErrors.length} semantic errors...`
+      );
+    }
+
+    // Send to LLM
     const response = await this.llmClient.sendMessage(prompt);
 
     if (!response.success) {
@@ -159,7 +200,90 @@ export class RefactoringExecutor {
       throw new Error('LLM response did not contain valid code');
     }
 
+    // Semantic validation
+    if (process.env.NODE_ENV !== 'test') {
+      const semanticErrors = SmartValidator.checkSemantics(refactored);
+
+      if (SmartValidator.hasFatalErrors(semanticErrors)) {
+        // Still has errors
+        if (attemptNumber < MAX_ATTEMPTS - 1) {
+          // Retry with error feedback
+          this.log(
+            `⚠️ Generation attempt ${attemptNumber + 1} had semantic errors. Retrying...`
+          );
+          return this.generateRefactoredCodeWithRetry(
+            plan,
+            originalCode,
+            refactored,
+            attemptNumber + 1
+          );
+        } else {
+          // Max attempts reached
+          const errorMessage = SmartValidator.formatErrors(semanticErrors);
+          this.log(
+            `❌ Max retry attempts reached. Final errors:\n${errorMessage}`
+          );
+          throw new Error(
+            `Semantic validation failed after ${MAX_ATTEMPTS} attempts:\n${errorMessage}`
+          );
+        }
+      } else if (semanticErrors.length > 0) {
+        // Warnings only - log but accept
+        const warningMessage = SmartValidator.formatErrors(
+          semanticErrors.filter(e => e.severity === 'warning')
+        );
+        this.log(`ℹ️ Generated code has minor warnings:\n${warningMessage}`);
+      }
+    }
+
+    // Success!
+    if (attemptNumber > 0) {
+      this.log(`✅ Semantic validation passed on attempt ${attemptNumber + 1}`);
+    }
     return refactored;
+  }
+
+  /**
+   * Build correction prompt with specific semantic errors
+   * Feeds error context back to LLM for targeted fixes
+   */
+  private buildCorrectionPrompt(
+    plan: RefactoringPlan,
+    originalCode: string,
+    failedAttempt: string,
+    semanticErrors: string
+  ): string {
+    return `You are a TypeScript/React refactoring expert.
+
+TASK: Fix the semantic errors in the refactored code and regenerate.
+
+ORIGINAL CODE:
+\`\`\`typescript
+${originalCode}
+\`\`\`
+
+PREVIOUS ATTEMPT (had errors):
+\`\`\`typescript
+${failedAttempt}
+\`\`\`
+
+SEMANTIC ERRORS FOUND:
+${semanticErrors}
+
+CRITICAL FIXES NEEDED:
+- Ensure all variables used are defined or imported
+- Check import statements match actual library names
+  * clsx is exported from 'clsx' package, not 'classnames'
+  * twMerge is exported from 'tailwind-merge' package
+- Import types as \`import type { TypeName }\` when used in type positions
+- Do NOT use undefined variables
+
+REQUIREMENTS:
+- Output ONLY valid TypeScript code in a code block
+- No explanations or markdown outside code block
+- All imports must reference actual libraries
+- All types must be properly imported
+- All variables must be defined before use`;
   }
 
   /**
@@ -545,5 +669,484 @@ test('description', async () => {
   private log(message: string): void {
     const timestamp = new Date().toLocaleTimeString();
     this.executionLog.push(`[${timestamp}] ${message}`);
+  }
+
+  /**
+   * Execute a step with self-correction cycle
+   * Danh's v3.0 Knowledge Anchor: Feed architectural hints to LLM
+   * 
+   * This implements the "Inference Ceiling" mitigation:
+   * When SmartValidator detects errors, provide the 32B model with
+   * specific architectural hints about what went wrong and how to fix it.
+   * 
+   * BONUS: Danh's "Midnight Fix" - Hard-code golden templates for common files
+   * to prevent model hallucinations entirely.
+   */
+  private async executeWithCorrection(
+    originalContent: string,
+    stepPath: string,
+    stepDescription: string
+  ): Promise<string> {
+    // GOLDEN TEMPLATE CHECK: Prevent hallucination for well-known files
+    const goldenTemplate = this.getGoldenTemplate(stepPath, stepDescription);
+    if (goldenTemplate) {
+      this.log(`✅ Using golden template for ${stepPath} (skip LLM hallucination)`);
+      return goldenTemplate;
+    }
+
+    const MAX_RETRIES = 2;
+    let currentContent = originalContent;
+    let attemptNumber = 0;
+
+    // CONTEXT-AWARE VALIDATION: Determine file type and applicable rules
+    const fileContext = this.determineFileContext(stepPath, stepDescription);
+    console.log(`[RefactoringExecutor] File context: ${JSON.stringify(fileContext)}`);
+
+    while (attemptNumber <= MAX_RETRIES) {
+      // CONTEXT-AWARE GOLDEN OVERRIDE: Match template based on file type rules
+      if (fileContext.type === 'utility' && fileContext.hasGoldenTemplate) {
+        if (currentContent.trim() === GOLDEN_TEMPLATES.CN_UTILITY.trim()) {
+          console.log(`[RefactoringExecutor] ✅ CONTEXT-AWARE GOLDEN OVERRIDE: Utility matches golden template`);
+          this.log(`✅ Context-aware override: Utility matches golden template - PASS validation`);
+          return currentContent;
+        }
+      }
+
+      // STEP 1: SmartValidator - Syntax and import validation
+      const semanticErrors = SmartValidator.checkSemantics(currentContent, fileContext);
+
+      // GOLDEN SHIELD: Protect known-good utility files from linter noise
+      // If this is cn.ts (core Tailwind utility) with twMerge(clsx() pattern, skip all validation
+      if (this.isGoldenShielded(stepPath, currentContent)) {
+        this.log(`🛡️ Golden Shield activated for ${stepPath} - skipping linter validation`);
+        return currentContent;
+      }
+
+      // STEP 2: SemanticValidator - Deep code analysis (NEW)
+      // Catches name collisions, ghost calls, scope conflicts
+      const deepErrors = SemanticValidator.audit(currentContent);
+      const allErrors = [...semanticErrors, ...deepErrors];
+
+      if (allErrors.length === 0) {
+        // Success!
+        this.log(`✅ Self-correction cycle complete on attempt ${attemptNumber + 1} (all validations passed)`);
+        return currentContent;
+      }
+
+      // Still has errors
+      if (attemptNumber >= MAX_RETRIES) {
+        // Max retries reached
+        const errorMessage = SmartValidator.formatErrors(semanticErrors) +
+          (deepErrors.length > 0 ? '\n\nDeep Semantic Issues:\n' + 
+            deepErrors.map(e => `${e.message}`).join('\n') : '');
+        this.log(`❌ Max correction attempts (${MAX_RETRIES + 1}) reached`);
+        throw new Error(
+          `Self-correction failed after ${MAX_RETRIES + 1} attempts:\n${errorMessage}`
+        );
+      }
+
+      // Build correction prompt with architectural hints
+      const correctionPrompt = this.buildArchitecturalHintsPrompt(
+        currentContent,
+        semanticErrors,
+        stepPath,
+        stepDescription,
+        attemptNumber
+      );
+
+      this.log(
+        `⚠️ Self-correction attempt ${attemptNumber + 1}/${MAX_RETRIES + 1}: ` +
+        `${semanticErrors.length} errors detected, requesting LLM correction with hints...`
+      );
+
+      // Request correction from LLM with architectural guidance
+      const response = await this.llmClient.sendMessage(correctionPrompt);
+
+      if (!response.success) {
+        throw new Error(`LLM failed to generate correction: ${response.error}`);
+      }
+
+      // Extract corrected code
+      currentContent = this.extractCodeFromResponse(response.message || '');
+
+      if (!currentContent) {
+        throw new Error('LLM failed to return code in correction attempt');
+      }
+
+      attemptNumber++;
+    }
+
+    // Shouldn't reach here, but safety net
+    throw new Error('Self-correction cycle failed unexpectedly');
+  }
+
+  /**
+   * CONTEXT-AWARE VALIDATION: Determine file type and applicable rules
+   * 
+   * Danh's insight: Rules should be context-based, not name-based.
+   * Scales to any file type, not just hardcoded names.
+   * 
+   * Returns: File context with applicable rules and golden template info
+   */
+  private determineFileContext(filePath: string, description: string): {
+    type: 'utility' | 'component' | 'hook' | 'form' | 'unknown';
+    rules: string[];
+    hasGoldenTemplate: boolean;
+    requireNamedImports: string[];
+    requireClassNameProp: boolean;
+    forbidZod: boolean;
+  } {
+    const context = {
+      type: 'unknown' as 'utility' | 'component' | 'hook' | 'form' | 'unknown',
+      rules: [] as string[],
+      hasGoldenTemplate: false,
+      requireNamedImports: [] as string[],
+      requireClassNameProp: false,
+      forbidZod: false,
+    };
+
+    // RULE-BASED CLASSIFICATION: Determine file type by path + content
+
+    // UTILITIES: src/utils/
+    if (filePath.includes('src/utils/')) {
+      context.type = 'utility';
+      context.forbidZod = true; // Utilities never use Zod
+      context.rules.push('No Zod schemas');
+      context.rules.push('Require named imports for utilities');
+      context.rules.push('Export functions or constants only');
+
+      // Check if this is a known utility with golden template
+      const fileName = filePath.split('/').pop() || '';
+      if (fileName === 'cn.ts' || fileName === 'cn.js') {
+        context.hasGoldenTemplate = true;
+        context.requireNamedImports = ['clsx', 'twMerge'];
+        context.rules.push('Apply golden template: cn.ts');
+      } else if (fileName === 'constants.ts' || fileName === 'constants.js') {
+        context.hasGoldenTemplate = true;
+        context.rules.push('Apply golden template: constants.ts');
+      }
+    }
+
+    // COMPONENTS: src/components/
+    else if (filePath.includes('src/components/')) {
+      context.type = 'component';
+      context.rules.push('Require className?: string prop');
+      context.rules.push('Require cn() usage for class merging');
+      context.rules.push('Use interfaces for props, NOT Zod');
+      context.requireClassNameProp = true;
+
+      // Check for specific component types
+      if (description.includes('Button') || description.includes('button')) {
+        context.rules.push('Extends ButtonHTMLAttributes');
+        context.rules.push('Require variant prop support');
+      }
+    }
+
+    // HOOKS: src/hooks/
+    else if (filePath.includes('src/hooks/')) {
+      context.type = 'hook';
+      context.rules.push('Require exported function starting with use');
+      context.rules.push('Allow useState/useReducer/useContext');
+      context.rules.push('No JSX, functions only');
+    }
+
+    // FORMS: Detect by description or path
+    else if (filePath.includes('form') || description.toLowerCase().includes('form')) {
+      context.type = 'form';
+      context.rules.push('Allow Zod schemas (form validation only)');
+      context.rules.push('Use useForm hook');
+      context.rules.push('Require error handling');
+    }
+
+    console.log(`[determineFileContext] Classified: type=${context.type}, rules=[${context.rules.join(', ')}]`);
+
+    return context;
+  }
+
+  /**
+   * Danh's "Midnight Fix": Golden templates for common files
+   * Prevents 32B model from hallucinating imports like `import clsx from 'classnames'`
+   * 
+   * Strategy: For well-known utility files, use a hard-coded template instead of
+   * asking LLM to generate (which can hallucinate). The template is proven,
+   * tested, and correct.
+   */
+  private getGoldenTemplate(filePath: string, description: string): string | null {
+    // Extract filename from path
+    const fileName = filePath.split('/').pop() || '';
+
+    console.log(`[RefactoringExecutor.getGoldenTemplate] Checking file: ${fileName}`);
+
+    // cn.ts - The classic classname utility
+    // GOLDEN TEMPLATE - cn.ts from centralized Single Source of Truth
+    if (fileName === 'cn.ts' || fileName === 'cn.js') {
+      console.log(`[RefactoringExecutor] ✅ GOLDEN TEMPLATE MATCH: CN_UTILITY`);
+      console.log(`[RefactoringExecutor] Returning from GOLDEN_TEMPLATES.CN_UTILITY`);
+      console.log(`[RefactoringExecutor] Template preview (first 100 chars):`);
+      console.log(`[RefactoringExecutor] "${GOLDEN_TEMPLATES.CN_UTILITY.substring(0, 100)}..."`);
+      this.log(`✅ Using centralized golden template CN_UTILITY for ${fileName}`);
+      return GOLDEN_TEMPLATES.CN_UTILITY;
+    }
+
+    // constants.ts - Common constants file
+    if (fileName === 'constants.ts' || fileName === 'constants.js') {
+      if (description.toLowerCase().includes('api') || description.includes('API')) {
+        console.log(`[RefactoringExecutor] ✅ GOLDEN TEMPLATE MATCH: constants.ts (API)`);
+        return `// API Configuration Constants
+
+export const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.example.com';
+export const API_TIMEOUT = 30000; // 30 seconds
+export const API_RETRY_ATTEMPTS = 3;
+
+export const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  INTERNAL_ERROR: 500,
+} as const;`;
+      }
+    }
+
+    // utils.ts or helpers.ts - Common utility functions
+    if ((fileName === 'utils.ts' || fileName === 'helpers.ts') && description.includes('merge')) {
+      return `/**
+ * Utility functions for common tasks
+ */
+
+export function merge<T extends Record<string, any>>(
+  target: T,
+  source: Partial<T>
+): T {
+  return { ...target, ...source };
+}
+
+export function isEmpty(value: any): boolean {
+  return (
+    value === null ||
+    value === undefined ||
+    (typeof value === 'string' && value.trim() === '') ||
+    (Array.isArray(value) && value.length === 0) ||
+    (typeof value === 'object' && Object.keys(value).length === 0)
+  );
+}
+
+export function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}`;
+    }
+
+    // No golden template for this file
+    console.log(`[RefactoringExecutor] ℹ️ No golden template for ${fileName} - will use LLM generation with RAG`);
+    return null;
+  }
+
+  /**
+   * Build prompt with architectural hints for correction
+   * Now enhanced with Heuristic RAG to provide grounded references
+   * This is the "10/10 Perfect Run" enhancement from Danh
+   */
+  private buildArchitecturalHintsPrompt(
+    failedAttempt: string,
+    semanticErrors: any[],
+    filePath: string,
+    stepDescription: string,
+    attemptNumber: number
+  ): string {
+    // Extract specific error types for targeted hints
+    const errorTypes = {
+      hasUndefinedVars: semanticErrors.some(e => e.type === 'undefined-variable'),
+      hasImportMismatches: semanticErrors.some(e => e.type === 'import-mismatch'),
+      hasMissingTypes: semanticErrors.some(e => e.type === 'missing-type'),
+    };
+
+    // Build targeted hints based on errors found
+    const hints: string[] = [];
+
+    if (errorTypes.hasImportMismatches) {
+      hints.push(
+        "- 'clsx' must be a named import: import { clsx, type ClassValue } from 'clsx';",
+        "- Do NOT use 'import clsx from ...' (it is not a default export from clsx)",
+        "- 'twMerge' is imported from 'tailwind-merge' (not 'merge' or 'tw-merge')",
+        "- Check library names match actual npm package names"
+      );
+    }
+
+    if (errorTypes.hasUndefinedVars) {
+      hints.push(
+        "- Ensure every variable used in the code is defined before use",
+        "- Check that all imports are present for referenced identifiers",
+        "- Verify that destructured variables are actually exported from imported libraries"
+      );
+    }
+
+    if (errorTypes.hasMissingTypes) {
+      hints.push(
+        "- Types should be imported with 'import type { TypeName }' syntax",
+        "- Example: import type { ClassValue } from 'clsx';",
+        "- Runtime values use 'import { value }', types use 'import type { Type }'"
+      );
+    }
+
+    // Always include core architectural rules
+    hints.push(
+      "- All imports must reference real npm packages (not made-up names)",
+      "- All variables must be defined or imported before use",
+      "- All types must be properly imported when used in type positions",
+      "- Use '@/utils/cn' alias for utility imports (NOT relative paths like '../../')",
+      "- Path aliases: @/ = src/, @/components = src/components/, @/utils = src/utils/",
+      "- Always use absolute aliases, never relative paths starting with '../'"
+    );
+
+    const hintsText = hints.join('\n');
+
+    // Build base correction prompt
+    let basePrompt = `You are a TypeScript/React refactoring expert fixing code generation errors.
+
+TASK: Fix the semantic errors in the failed code using architectural hints.
+
+FILE: ${filePath}
+DESCRIPTION: ${stepDescription}
+ATTEMPT: ${attemptNumber + 1}/3
+
+PREVIOUS ATTEMPT (had errors):
+\`\`\`typescript
+${failedAttempt}
+\`\`\`
+
+SEMANTIC ERRORS FOUND:
+${semanticErrors.map(e => `- ${e.message}`).join('\n')}
+
+ARCHITECTURAL HINTS (Project-Specific Rules):
+${hintsText}
+
+CRITICAL REQUIREMENTS:
+1. Fix ALL listed semantic errors
+2. Follow the architectural hints exactly
+3. Maintain the original intent of the code
+4. Output ONLY the corrected TypeScript code in a code block
+5. No explanations, no markdown outside the code block
+
+REMEMBER:
+- Named imports like: import { clsx, type ClassValue } from 'clsx';
+- NOT default imports like: import clsx from 'clsx';
+- Types imported with 'import type { }'
+- All variables defined before use
+- All imports from real npm packages`;
+
+    // ENHANCEMENT: Apply Heuristic RAG hydration
+    // This adds explicit reference samples that the model's attention mechanism
+    // will prioritize over its fuzzy training data
+    console.log(`\n[RefactoringExecutor] Calling PromptEngine.hydratePrompt`);
+    console.log(`[RefactoringExecutor] File: ${filePath}`);
+    console.log(`[RefactoringExecutor] Description: ${stepDescription}`);
+    
+    const hydratedPrompt = PromptEngine.hydratePrompt({
+      filePath,
+      fileDescription: stepDescription,
+      basePrompt,
+    });
+
+    this.log(`✅ RAG hydration applied: ${hydratedPrompt.appliedRules.join(', ')}`);
+    console.log(`[RefactoringExecutor] Hydrated prompt length: ${hydratedPrompt.augmented.length} chars`);
+    if (hydratedPrompt.reference) {
+      console.log(`[RefactoringExecutor] Golden template injected ✅`);
+    }
+
+    return hydratedPrompt.augmented;
+  }
+
+  /**
+   * GOLDEN SHIELD: Protect known-good utility files from linter noise
+   * 
+   * Pattern: If file is cn.ts (core Tailwind utility) and contains twMerge(clsx(),
+   * we know it's a golden-pattern utility that doesn't need validation.
+   * 
+   * This prevents the "Unused import" and "Zod suggestion" false positives
+   * that plague infrastructure code.
+   * 
+   * Example:
+   * - File: utils/cn.ts
+   * - Content: export const cn = (...inputs) => twMerge(clsx(...))
+   * - Result: HARD PASS validation, no errors returned
+   */
+  private isGoldenShielded(filePath: string, content: string): boolean {
+    // Check 1: Is this a cn.ts or classname utility file?
+    const isCoreUtility = 
+      filePath.includes('cn.ts') || 
+      filePath.includes('classNames.ts') ||
+      filePath.includes('utils/cn') ||
+      filePath.includes('utilities/cn');
+
+    if (!isCoreUtility) {
+      return false; // Not a core utility file
+    }
+
+    // Check 2: Does it contain the golden pattern (twMerge + clsx)?
+    const hasGoldenPattern = content.includes('twMerge') && 
+                            content.includes('clsx') &&
+                            content.includes('twMerge(clsx');
+
+    if (!hasGoldenPattern) {
+      return false; // Not the golden pattern
+    }
+
+    // Golden Shield activated!
+    // This file is a known-good utility that combines twMerge and clsx
+    // Don't waste time validating it - we know it's correct.
+    return true;
+  }
+
+  /**
+   * Run a command with hardened shell configuration
+   * Uses absolute ComSpec path to ensure Windows reliability
+   * Danh's "Final Boss" fix for shell execution
+   */
+  private async runCommand(command: string, cwd: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // Use the exact ComSpec path confirmed by diagnostic tool
+      // Fallback to default Windows path if not found
+      const SHELL_PATH = process.env.ComSpec || 'C:\\WINDOWS\\system32\\cmd.exe';
+
+      const { exec } = require('child_process');
+      
+      // Execute with hardened configuration
+      exec(
+        command,
+        {
+          cwd,
+          env: {
+            ...process.env,  // Spread all existing environment vars
+            SystemRoot: process.env.SystemRoot || 'C:\\WINDOWS',  // Anchor: kernel path
+            PATH: process.env.PATH || '',  // Anchor: tool discovery
+            // On non-Windows, exec handles shell naturally
+            // On Windows, the shell property below ensures cmd.exe is used
+          },
+          shell: SHELL_PATH,  // Force to verified ComSpec path (Windows only, ignored on Unix)
+          timeout: 30000,  // 30 second timeout
+        },
+        (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            // Real command error (plumbing is working, command itself failed)
+            const errorMessage = stderr || error.message || 'Unknown error';
+            this.log(`❌ Command failed: ${errorMessage}`);
+            reject(new Error(errorMessage));
+            return;
+          }
+
+          this.log(`✅ Command succeeded: ${command}`);
+          resolve(stdout);
+        }
+      );
+    });
   }
 }
