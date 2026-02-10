@@ -3,11 +3,31 @@
 ## Status: READY FOR REVIEW
 ⚠️ **Requires manual approval before merge**
 
+✅ **Active Governance & Spec Compliance Framework** - Production Ready
+
 ---
 
 ## Overview
 
-This PR implements the foundational architecture for the v3.0 Relaunch 'Stateful Correction' approach, combined with a complete v2.5.0 release featuring a 6-layer validation system for multi-file code generation.
+This PR implements the foundational architecture for the v3.0 Relaunch 'Stateful Correction' approach, combined with a complete v2.5.0 release featuring **Active Governance** and **Spec Compliance** as core architectural pillars.
+
+### 🎯 Senior-Level Differentiators
+
+**Active Governance**
+- Transform `.lla-rules` and `.php-rules` from passive documentation to *active, enforceable constraints*
+- Rules actively shape LLM behavior during code generation
+- Architectural standards automatically enforced, not just documented
+- Enables reliable multi-file operations without infinite loops
+
+**Spec Compliance**
+- 6-layer validation architecture enforces semantic correctness at every level
+- Cross-file contract validation ensures multi-file operations maintain interface alignment
+- Pre-validation eliminates path guessing, validation loops, and hallucinations
+- Tiered validation distinguishes between blocking errors (integrity) and non-blocking suggestions (style)
+
+### Technical Foundation
+
+The v2.5.0 release delivers a complete 6-layer validation system for multi-file code generation with Zustand store support and Windows cross-platform execution hardening.
 
 ---
 
