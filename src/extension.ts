@@ -230,7 +230,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /git-review [staged|unstaged|all] — Review code changes with AI\n\n` +
           `🔍 **Diagnostics:**\n` +
           `- /check-model — Show configured model and available models on server\n\n` +
-          `⚠️ **Re-enabled in v3.0 (Phase 3-4 - Differential Prompting):**\n` +
+          `✨ **Advanced Features (v2.5.0):**\n` +
           `- /plan — Action plan generation with step-by-step guidance\n` +
           `- /design-system — Full system architecture design\n` +
           `- /approve — Acknowledge and approve generated content`,
