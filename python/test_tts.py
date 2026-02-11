@@ -8,8 +8,13 @@ Creates test_audio.wav in current directory if successful.
 """
 
 import sys
+import io
 import os
 from pathlib import Path
+
+# Force UTF-8 encoding for cross-platform compatibility
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Add parent directory to path so we can import tts_service
 sys.path.insert(0, str(Path(__file__).parent))

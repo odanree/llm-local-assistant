@@ -133,6 +133,11 @@ class TTSService:
 
 def main():
     """CLI interface for TTS service."""
+    # Force UTF-8 encoding for cross-platform compatibility
+    import io
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     import argparse
 
     parser = argparse.ArgumentParser(description="Cloud TTS Service (edge-tts)")

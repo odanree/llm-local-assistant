@@ -15,6 +15,7 @@ Usage:
 
 import subprocess
 import sys
+import io
 from pathlib import Path
 
 
@@ -136,6 +137,12 @@ def verify_setup() -> bool:
 
 def main():
     """Run setup process."""
+    # Force UTF-8 encoding for cross-platform compatibility
+    # This ensures emoji and Unicode characters display correctly
+    import io
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     print("=" * 60)
     print("LLM Local Assistant - Voice Narration Setup")
     print("=" * 60)
