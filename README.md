@@ -117,11 +117,20 @@ python -m vllm.entrypoints.openai.api_server --model mistral-7b
 /rate-architecture            # Score your code (0-10)
 /suggest-patterns             # Get pattern suggestions
 /refactor src/App.tsx         # Analyze and suggest improvements
+/explain src/App.tsx          # Explain code (with optional voice narration)
 ```
+
+### 5. Optional: Enable Voice Narration (v2.6+)
+```bash
+/setup-voice                  # Install and configure voice narration
+/test-voice                   # Verify voice setup
+```
+
+For detailed voice setup instructions, see [Voice Narration Guide](docs/VOICE_NARRATION.md).
 
 ## 📋 Command Reference
 
-### Multi-Step Code Generation (NEW in v2.5.0 - VALIDATED & RELIABLE)
+### Multi-Step Code Generation (v2.5.0+ - VALIDATED & RELIABLE)
 
 #### `/plan <task>`
 Create a multi-step action plan for complex code generation with built-in semantic validation.
