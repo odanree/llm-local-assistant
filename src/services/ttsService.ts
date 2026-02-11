@@ -53,7 +53,10 @@ export class TTSService {
   private _isAvailable: boolean = false;
 
   constructor(config: TTSConfig = {}) {
-    this.pythonPath = config.pythonPath || 'python3';
+    // Determine correct Python command based on platform
+    // Windows uses 'python', Unix-like systems use 'python3'
+    const defaultPythonPath = os.platform() === 'win32' ? 'python' : 'python3';
+    this.pythonPath = config.pythonPath || defaultPythonPath;
     
     // Resolve python directory - handle both dev and bundled paths
     if (config.pythonDir) {

@@ -84,46 +84,57 @@ export async function handleSetupVoice(): Promise<void> {
  */
 async function checkPython(output: vscode.OutputChannel): Promise<string | null> {
   return new Promise((resolve) => {
-    // Try python3 first (Unix/Mac)
-    const python = spawn('python3', ['--version']);
-    let output_text = '';
+    const os = require('os');
+    
+    // Determine which Python command to try first based on platform
+    const isWindows = os.platform() === 'win32';
+    const primaryCmd = isWindows ? 'python' : 'python3';
+    const secondaryCmd = isWindows ? 'python3' : 'python';
 
-    python.stdout.on('data', (data) => {
-      output_text += data.toString();
-    });
+    // Try primary command first
+    const tryPython = (cmd: string, onComplete: (success: boolean) => void) => {
+      const python = spawn(cmd, ['--version']);
+      let output_text = '';
 
-    python.stderr.on('data', (data) => {
-      output_text += data.toString();
-    });
+      python.stdout.on('data', (data) => {
+        output_text += data.toString();
+      });
 
-    python.on('close', (code) => {
-      if (code === 0 && output_text.includes('3.')) {
-        resolve('python3');
+      python.stderr.on('data', (data) => {
+        output_text += data.toString();
+      });
+
+      python.on('close', (code) => {
+        const success = code === 0 && output_text.includes('3.');
+        if (success) {
+          output.appendLine(`   Detected Python: ${cmd}`);
+        }
+        onComplete(success);
+      });
+
+      python.on('error', () => {
+        onComplete(false);
+      });
+
+      // Timeout after 2 seconds per attempt
+      setTimeout(() => onComplete(false), 2000);
+    };
+
+    // Try primary command
+    tryPython(primaryCmd, (success) => {
+      if (success) {
+        resolve(primaryCmd);
       } else {
-        // Try python (Windows)
-        const python2 = spawn('python', ['--version']);
-        let output_text2 = '';
-
-        python2.stdout.on('data', (data) => {
-          output_text2 += data.toString();
-        });
-
-        python2.stderr.on('data', (data) => {
-          output_text2 += data.toString();
-        });
-
-        python2.on('close', (code) => {
-          if (code === 0 && output_text2.includes('3.')) {
-            resolve('python');
-          } else {
-            resolve(null);
-          }
+        // Try secondary command
+        output.appendLine(`   ${primaryCmd} not found, trying ${secondaryCmd}...`);
+        tryPython(secondaryCmd, (success2) => {
+          resolve(success2 ? secondaryCmd : null);
         });
       }
     });
 
-    // Timeout after 5 seconds
-    setTimeout(() => resolve(null), 5000);
+    // Overall timeout after 10 seconds
+    setTimeout(() => resolve(null), 10000);
   });
 }
 
