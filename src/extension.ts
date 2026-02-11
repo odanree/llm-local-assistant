@@ -345,7 +345,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
   // Show help text on first open
   setTimeout(() => {
     if (!helpShown) {
-      postChatMessage({
+      chatPanel?.webview.postMessage({
         command: 'addMessage',
         text: `**LLM Local Assistant v2.6.0**\n\n` +
           `🎯 **Voice Narration Features:**\n` +
