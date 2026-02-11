@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Voice Narration for `/explain` Command** (NEW)
-  - Automatically synthesizes text-to-speech using edge-tts (Microsoft Edge cloud API)
+  - Automatically synthesizes text-to-speech using edge-tts (Microsoft Edge cloud API - **requires internet**)
   - Embeds MP3 player directly in chat messages with play/pause/volume controls
   - Displays calculated audio duration (accurate to 1-2 seconds)
   - Handles multi-chunk synthesis for long explanations

@@ -4,7 +4,11 @@
 
 ## Voice Narration Architecture (v2.6.0)
 
-### 4-Layer Audio Pipeline
+### Overview
+- **TTS Solution**: edge-tts (Microsoft Edge cloud API - **free, no API keys required**)
+- **Audio Format**: MP3 at 24kHz, 128kbps (~16KB/s)
+- **Duration**: Typically 2-5 seconds synthesis latency per chunk (network dependent)
+- **Authentication**: None needed (uses Microsoft's free public TTS API)
 
 ```
 User Input (/explain <file>)

@@ -106,6 +106,7 @@ LLM: [streaming response...]
 ### Prerequisites
 - Python 3.7+ (for edge-tts service)
 - edge-tts package installed
+- **Internet connection** (edge-tts uses Microsoft Edge cloud TTS API - free, no API keys needed)
 
 ### Enable Voice
 1. Cmd+Shift+P → "LLM Assistant: Setup Voice Narration"

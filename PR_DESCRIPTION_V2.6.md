@@ -2,11 +2,12 @@
 
 ## Summary
 
-Complete implementation of v2.6 voice narration feature. The `/explain` command in the chat window now automatically synthesizes explanations to MP3 using edge-tts (Microsoft Edge cloud API) and embeds playable audio directly in chat messages.
+Complete implementation of v2.6 voice narration feature. The `/explain` command in the chat window now automatically synthesizes explanations to MP3 using edge-tts (cloud-based, requires internet) and embeds playable audio directly in chat messages.
 
 **Key Achievement**: Full audio pipeline from file explanation → TTS synthesis → embedded player with accurate duration display.
 
-**Status**: ✅ Complete | Build: 79.4 KB | Tests: 486/489 (99.4%) | Production-ready
+**Status**: ✅ Complete | Build: 79.4 KB | Tests: 486/489 (99.4%) | Production-ready  
+**Note**: Voice narration requires internet connection (uses Microsoft Edge cloud TTS API)
 
 ---
 
@@ -22,17 +23,19 @@ Complete implementation of v2.6 voice narration feature. The `/explain` command 
 - Added debug logging for audio synthesis and metadata
 
 **TTS Service Bridge** (`src/services/ttsService.ts`)
-- Node.js wrapper for Python edge-tts service
+- Node.js wrapper for Python edge-tts service (cloud-based, requires internet)
 - Text chunking at sentence boundaries (~250 chars/chunk)
 - Multi-chunk synthesis with duration accumulation
 - Metadata parsing: sample_rate, audio_size, calculated_duration
 - Duration safety check: `duration = audio_size / 16000` if missing
 
 **Python TTS Service** (`python/tts_service.py`)
-- Edge-tts wrapper: `edge_tts.Communicate()` with MP3 output
+- Edge-tts wrapper: `edge_tts.Communicate()` with MP3 output (uses Microsoft Edge cloud TTS API)
 - Receives text via stdin, returns audio bytes to stdout
 - Returns metadata to stderr as JSON: `{sample_rate, size, duration}`
 - **CRITICAL FIX**: Duration formula corrected from `len(bytes) / sample_rate / 1000` to `len(bytes) / 16000`
+- **Note**: Requires internet connection (cloud-based, not local-only)
+- **No API keys needed**: Uses Microsoft Edge's free public TTS API (no authentication required)
 
 **Webview UI** (`src/webviewContent.ts`)
 - Embedded HTML5 audio player for `/explain` responses
@@ -100,10 +103,10 @@ TTS Service Bridge (Node.js)
   • stripMarkdown() - Remove markdown for clean narration
   • Split into chunks (sentence boundaries)
   • Call Python TTS service per chunk
-    ↓
-Python TTS Service
+Python TTS Service → Microsoft Edge Cloud API (internet required)
   • edge_tts.Communicate() with MP3 output
-  • Synthesize text chunk to MP3
+  • Synthesize text chunk to MP3 via cloud
+  • Return: audio bytes (stdout) + metadata (stderr)
   • Return: audio bytes (stdout) + metadata (stderr)
     ↓
 TTS Service Bridge
@@ -391,10 +394,14 @@ No errors or warnings
 ✅ **Linux**: Support (edge-tts cross-platform)  
 
 ---
-
 ## Configuration
 
 Voice narration works automatically once edge-tts is installed.
+
+**Prerequisites:**
+- Internet connection (edge-tts uses Microsoft Edge cloud API - free, no API keys required)
+- Python 3.7+ with edge-tts package
+- No API keys or authentication needed (uses Microsoft's free public TTS API)
 
 **Optional Settings:**
 ```json
@@ -402,6 +409,7 @@ Voice narration works automatically once edge-tts is installed.
   "llm-assistant.endpoint": "http://localhost:11434",
   "llm-assistant.model": "mistral"
 }
+```
 ```
 
 ---

@@ -4,12 +4,13 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-code/v/odanree.llm-local-assistant)](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant)
 
-A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM.
+A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM (with optional cloud TTS).
 
 **🎯 v2.6.0 Focus: Voice Narration for Code Explanations**
 
 > **Latest Release**: v2.6.0 - Voice Narration Integration ✅  
 > **Philosophy**: Beautiful AI interactions with accessibility features.  
+> **Note**: Voice requires internet (uses Microsoft Edge cloud TTS).  
 > **Status**: 486/489 tests passing. Production ready.
 
 ## ✨ What's v2.6.0 (Voice Narration)
@@ -34,6 +35,7 @@ A powerful VS Code extension that brings autonomous AI capabilities to your loca
 - ✅ Workspace-relative file paths (e.g., `/explain src/main.ts`)
 - ✅ Graceful fallback if TTS unavailable
 - ✅ Diagnostic commands for setup validation
+- ⚠️ **Requires**: Internet + edge-tts (free, no API keys needed)
 
 **New Commands**:
 - `LLM Assistant: Test LLM Connection` - Validate server connectivity
