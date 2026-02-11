@@ -374,11 +374,19 @@ Preview changes before writing.
 ```
 
 #### `/explain <path>`
-Get detailed code explanation.
+Get detailed code explanation with optional voice narration.
 
 ```
 /explain src/services/userService.ts
 ```
+
+**v2.6 NEW: Voice Narration** - Audio explanation with player controls
+- Click play in the audio player to hear explanation
+- Adjust playback speed (0.5x - 2.0x)
+- Progress seeking and volume control
+- Duration displayed in player
+
+![Explain Command with Voice Narration](./assets/explain-command-example.png)
 
 ### Git Integration
 
