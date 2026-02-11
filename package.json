@@ -160,9 +160,11 @@
     "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
     "build": "npm run esbuild",
     "watch": "npm run esbuild-watch",
-    "test": "node ./dist/test/runTest.js",
+    "test": "echo 'Tests are run manually. See LOCAL_TESTING_GUIDE.md'",
+    "test:unit": "vitest",
     "lint": "eslint src --ext ts",
-    "format": "prettier --write src/**/*.ts"
+    "format": "prettier --write src/**/*.ts",
+    "package": "vsce package"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.0",
