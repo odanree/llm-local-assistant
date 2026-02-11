@@ -1,16 +1,48 @@
 # LLM Local Assistant - VS Code Extension
 
-[![Tests](https://github.com/odanree/llm-local-assistant/workflows/Test%20Build/badge.svg)](https://github.com/odanree/llm-local-assistant/actions)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![VS Code Marketplace](https://img.shields.io/visual-studio-code/v/odanree.llm-local-assistant)](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-2.6.0-blue.svg)](CHANGELOG.md)
+[![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
+[![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
+[![Tests](https://img.shields.io/badge/tests-486%2F489%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
+[![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
-A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, and refactor with confidence using your local LLM.
+A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM.
 
-**🎯 v2.5.1 Focus: Critical Zustand Integration Validation Fixes**
+**🎯 v2.6.0 Focus: Voice Narration for Code Explanations**
 
-> **Latest Release**: v2.5.1 - Critical Zustand Integration Fixes ✅  
-> **Philosophy**: 100% integration validation. No silent failures.  
+> **Latest Release**: v2.6.0 - Voice Narration Integration ✅  
+> **Philosophy**: Beautiful AI interactions with accessibility features.  
 > **Status**: 486/489 tests passing. Production ready.
+
+## ✨ What's v2.6.0 (Voice Narration)
+
+### 🔊 NEW: Automatic Audio Narration
+
+**`/explain` command now synthesizes to speech!**
+
+```
+/explain src/components/Button.tsx
+→ Reads file from workspace
+→ Generates LLM explanation
+→ Automatically synthesizes MP3 using edge-tts
+→ Embeds playable audio in chat
+→ Shows duration: "59.3 seconds"
+```
+
+**Features**:
+- ✅ Click-to-play audio player in chat messages
+- ✅ Multi-chunk synthesis for long explanations
+- ✅ Accurate duration display (MP3 bitrate formula)
+- ✅ Workspace-relative file paths (e.g., `/explain src/main.ts`)
+- ✅ Graceful fallback if TTS unavailable
+- ✅ Diagnostic commands for setup validation
+
+**New Commands**:
+- `LLM Assistant: Test LLM Connection` - Validate server connectivity
+- `LLM Assistant: Debug Environment` - Show LLM config, voice status, workspace info
 
 ## ✨ What's v2.5.1 (Critical Patch)
 
@@ -19,10 +51,6 @@ A powerful VS Code extension that brings autonomous AI capabilities to your loca
 **Problem**: System generated 4/4 files successfully but component didn't call store hook → silent failure ❌  
 **Solution**: Integration validation now runs AFTER all files written, validates cross-file dependencies  
 **Impact**: Fails entire plan if store integration is broken (was: silently passing)
-
-**Strict Zustand Destructuring**
-- Detects wrong: `const store = useLoginStore(); const { x } = store;`
-- Enforces correct: `const { x } = useLoginStore();`
 
 ## ✨ What's v2.5.0 (6-Layer Validation System)
 
@@ -89,11 +117,20 @@ python -m vllm.entrypoints.openai.api_server --model mistral-7b
 /rate-architecture            # Score your code (0-10)
 /suggest-patterns             # Get pattern suggestions
 /refactor src/App.tsx         # Analyze and suggest improvements
+/explain src/App.tsx          # Explain code (with optional voice narration)
 ```
+
+### 5. Optional: Enable Voice Narration (v2.6+)
+```bash
+/setup-voice                  # Install and configure voice narration
+/test-voice                   # Verify voice setup
+```
+
+For detailed voice setup instructions, see [Voice Narration Guide](docs/VOICE_NARRATION.md).
 
 ## 📋 Command Reference
 
-### Multi-Step Code Generation (NEW in v2.5.0 - VALIDATED & RELIABLE)
+### Multi-Step Code Generation (v2.5.0+ - VALIDATED & RELIABLE)
 
 #### `/plan <task>`
 Create a multi-step action plan for complex code generation with built-in semantic validation.
@@ -351,11 +388,19 @@ Preview changes before writing.
 ```
 
 #### `/explain <path>`
-Get detailed code explanation.
+Get detailed code explanation with optional voice narration.
 
 ```
 /explain src/services/userService.ts
 ```
+
+**v2.6 NEW: Voice Narration** - Audio explanation with player controls
+- Click play in the audio player to hear explanation
+- Adjust playback speed (0.5x - 2.0x)
+- Progress seeking and volume control
+- Duration displayed in player
+
+![Explain Command with Voice Narration](./assets/explain-command-example.png)
 
 ### Git Integration
 
@@ -713,7 +758,7 @@ If you include the "Form Component Architecture" section in `.lla-rules`, the ex
 
 #### For More Details
 
-See [docs/FORM_COMPONENT_PATTERNS.md](docs/FORM_COMPONENT_PATTERNS.md) for detailed explanation of each pattern and why they matter.
+See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATTERNS.md) for detailed explanation of each pattern and why they matter.
 
 ## 🔒 Privacy & Security
 
@@ -899,32 +944,43 @@ npm run test:watch   # Auto-run on changes
 
 ## 📚 Documentation
 
-### Industry Standard
+### Industry Standard (Root)
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and releases
 - **[ROADMAP.md](ROADMAP.md)** - Future development plans
 - **[LICENSE](LICENSE)** - MIT License
 
-### Architecture & Design
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns (rules defined in `.lla-rules`)
+### Core Documentation (/docs/)
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System design and voice narration architecture
+- **[Installation Guide](docs/INSTALL.md)** - Setup instructions with ModelFile customization
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines and v2.6 voice development
+- **[Voice Narration](docs/VOICE_NARRATION.md)** - Voice feature user guide
+- **[Project Status](docs/PROJECT_STATUS.md)** - Current project status and roadmap
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Developer quick reference guide
+- **[Release Notes](docs/RELEASE-COMPLETE.md)** - v2.6 release notes and features
+- **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace publishing guide
 
-### Project Setup & Configuration
-- **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation
-- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & repository organization
+### Guides (/docs/guides/)
+- **[Developer Guide](docs/guides/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
+- **[Execution Guide](docs/guides/EXECUTION_GUIDE.md)** - Running code generation
+- **[Setup Guide](docs/guides/CURSORRULES_EXAMPLE.md)** - .lla-rules template for code generation
+- **[Quick Navigation](docs/guides/QUICK_NAVIGATION_GUIDE.md)** - Repository navigation guide
+
+### Patterns (/docs/patterns/)
+- **[Form Component Patterns](docs/patterns/FORM_COMPONENT_PATTERNS.md)** - 7 form component patterns (rules in `.lla-rules`)
+- **[Validation Patterns](docs/patterns/RULE_BASED_VALIDATOR_REFACTORING.md)** - Validator refactoring patterns
+- **[Architecture Patterns](docs/patterns/ARCHITECTURE_RULES_INTEGRATION.md)** - Architecture rules integration
+
+### Implementation & Troubleshooting (/docs/implementation/)
+- **[Local Testing Guide](docs/implementation/PHASE-3.4.5-LOCAL-TESTING-GUIDE.md)** - Testing setup
+- **[Bug Fix Documentation](docs/implementation/)** - Technical implementation details
 
 ### Repository Organization
-- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping root clean (reference when root gets bloated)
+- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping documentation clean
+- **[Documentation Organization](docs/DOCS_REORGANIZATION_COMPLETE.md)** - How documentation is structured
 
-### Troubleshooting & Reference
-- **[Model Comparison](docs/MODEL_COMPARISON.md)** - LLM model recommendations
-- **[Local Testing Guide](docs/LOCAL_TESTING_GUIDE.md)** - Testing setup
-- **[Release History](docs/RELEASE-COMPLETE.md)** - Detailed release notes
-
-### Development
-- **[Developer Guide](docs/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
-- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running code generation
-- **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace details
+### Development History (/docs/phase-docs/ and /docs/archive/)
+- **[Phase Documentation](docs/phase-docs/)** - Phase-specific development notes
+- **[Archives](docs/archive/)** - Session notes, analysis, and historical releases
 
 ## 🐛 Troubleshooting
 

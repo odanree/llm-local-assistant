@@ -2,6 +2,151 @@
 
 > ⚠️ **DOCUMENTATION CONSTRAINT**: The root directory contains a fixed set of documentation files: README.md, ROADMAP.md, ARCHITECTURE.md, PROJECT_STATUS.md, QUICK_REFERENCE.md, and CHANGELOG.md. No additional .md or .txt files should be created in root. Updates should be made to existing files or placed in `/docs/` if necessary.
 
+---
+
+## NEW (v2.6): Voice Narration Architecture
+
+**Release**: v2.6.0 - Voice narration for code explanations  
+**Status**: Production-ready with 3 critical cross-platform fixes
+
+### Voice Narration 4-Layer Stack
+
+```
+Layer 1: VS Code UI
+  ├─ AudioPlayer.tsx (React component with controls)
+  └─ ExplanationPanel.tsx (integration with chat)
+
+Layer 2: Extension Commands
+  ├─ /explain command (reads file + generates explanation + synthesis)
+  ├─ /setup-voice command (installation wizard)
+  └─ /test-voice command (verification)
+
+Layer 3: Node.js Bridge (ttsService.ts)
+  ├─ Spawns Python subprocess
+  ├─ Passes text for synthesis
+  ├─ Receives MP3 audio stream
+  └─ Handles errors and cleanup
+
+Layer 4: Python Service (python/)
+  ├─ tts_service.py (edge-tts or ChatTTS synthesis)
+  ├─ setup_tts.py (dependency installation)
+  └─ test_tts.py (service verification)
+```
+
+### TTS Engine Strategy (Pluggable)
+
+**Primary: edge-tts (Microsoft Edge)**
+- Provider: Free cloud API (no API keys)
+- Quality: High
+- Speed: <1 second per chunk
+- Internet: Required
+- Model size: 0 MB (cloud-based)
+
+**Fallback: ChatTTS (Local)**
+- Provider: Self-hosted model
+- Quality: Medium (conversational)
+- Speed: 2-3s first run, <1s cached
+- Internet: Not required
+- Model size: ~1 GB
+
+**Why Pluggable?**
+- Users can choose primary engine
+- Automatic fallback if primary fails
+- Easy to add new engines (edge-tts → azure-tts, etc.)
+- Graceful degradation
+
+### Cross-Platform Fixes (v2.6)
+
+**Fix #1: Cross-Platform Python Detection**
+```typescript
+// Auto-detect correct Python command
+const pythonCmd = os.platform() === 'win32' ? 'python' : 'python3';
+
+// Windows: "python" (correct default)
+// Unix/macOS: "python3" (standard command)
+```
+
+**Fix #2: Absolute Path Resolution**
+```typescript
+// Use context.extensionPath instead of __dirname
+const scriptPath = path.join(context.extensionPath, 'python', 'setup_tts.py');
+
+// Works reliably in packaged VSIX
+// Fallback to relative paths in dev mode
+```
+
+**Fix #3: UTF-8 Encoding**
+```python
+# Force UTF-8 at startup (especially Windows)
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+# Professional emoji output on all systems
+print("✅ Setup complete")
+```
+
+### Voice Data Flow
+
+```
+User selects code → /explain command
+    ↓
+LLMClient generates explanation text
+    ↓
+ttsService.synthesize(text)
+    ↓
+Spawn Python process (subprocess)
+    ↓
+Python uses edge-tts or ChatTTS
+    ↓
+Receive MP3 audio stream
+    ↓
+Cache locally (optional)
+    ↓
+Send to webview via data URL
+    ↓
+AudioPlayer renders with controls
+    ↓
+User clicks play → Browser audio API
+```
+
+### Configuration
+
+**VS Code Settings** (contributes.configuration):
+```json
+{
+  "llm-assistant.voice.enabled": {
+    "type": "boolean",
+    "default": true,
+    "description": "Enable voice narration for explanations"
+  },
+  "llm-assistant.voice.speed": {
+    "type": "number",
+    "default": 1.0,
+    "minimum": 0.5,
+    "maximum": 2.0,
+    "description": "Playback speed (0.5x - 2.0x)"
+  },
+  "llm-assistant.voice.language": {
+    "type": "string",
+    "default": "en",
+    "enum": ["en", "zh"],
+    "description": "Language for voice narration"
+  },
+  "llm-assistant.voice.cacheEnabled": {
+    "type": "boolean",
+    "default": true,
+    "description": "Cache generated audio files"
+  },
+  "llm-assistant.pythonPath": {
+    "type": "string",
+    "default": "",
+    "description": "Path to Python executable (auto-detected if empty)"
+  }
+}
+```
+
+---
+
 ## Phase 3: Architecture Alignment - `.lla-rules` Injection
 
 **NEW** (v1.3.0): The extension now supports project-specific architecture rules via `.lla-rules` files.

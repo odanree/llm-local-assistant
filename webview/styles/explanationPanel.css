@@ -1,0 +1,255 @@
+/**
+ * ExplanationPanel Styles
+ * 
+ * Styling for the explanation webview panel
+ */
+
+.explanation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--vscode-foreground);
+  background-color: var(--vscode-editor-background);
+}
+
+/* Header */
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+  border-bottom: 2px solid var(--vscode-textBlockQuote-border);
+  padding-bottom: 12px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--vscode-symbolIcon-textForeground);
+}
+
+.file-name {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  background-color: var(--vscode-textBlockQuote-background);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* Sections */
+.audio-section,
+.explanation-section,
+.code-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vscode-symbolIcon-methodForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Audio Section */
+.audio-section {
+  padding: 12px;
+  background-color: var(--vscode-textBlockQuote-background);
+  border-radius: 6px;
+  border: 1px solid var(--vscode-textBlockQuote-border);
+}
+
+/* Explanation Content */
+.explanation-content {
+  padding: 12px;
+  background-color: var(--vscode-textBlockQuote-background);
+  border-left: 3px solid var(--vscode-symbolIcon-methodForeground);
+  border-radius: 4px;
+  line-height: 1.6;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  color: var(--vscode-foreground);
+}
+
+/* Code Section */
+.code-section {
+  margin-top: 8px;
+}
+
+.toggle-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-textBlockQuote-border);
+  border-radius: 4px;
+  color: var(--vscode-symbolIcon-methodForeground);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.toggle-button:hover {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.toggle-button:active {
+  transform: scale(0.98);
+}
+
+.code-block {
+  margin: 0;
+  padding: 12px;
+  background-color: var(--vscode-terminal-background, #1e1e1e);
+  border: 1px solid var(--vscode-textBlockQuote-border);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-terminal-foreground, #cccccc);
+}
+
+.code-block code {
+  display: block;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+/* Footer */
+.panel-footer {
+  padding-top: 16px;
+  border-top: 1px solid var(--vscode-textBlockQuote-border);
+  font-size: 11px;
+}
+
+.metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.metadata-item {
+  padding: 4px 8px;
+  background-color: var(--vscode-textBlockQuote-background);
+  border-radius: 3px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .explanation-panel {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .panel-title {
+    font-size: 18px;
+  }
+
+  .panel-header {
+    margin-bottom: 6px;
+    padding-bottom: 8px;
+  }
+
+  .code-block {
+    font-size: 11px;
+    padding: 10px;
+  }
+
+  .metadata {
+    gap: 8px;
+    font-size: 10px;
+  }
+}
+
+/* Print Styles */
+@media print {
+  .panel-header {
+    page-break-after: avoid;
+  }
+
+  .code-block {
+    page-break-inside: avoid;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    color: #000;
+  }
+
+  .audio-section {
+    display: none;
+  }
+}
+
+/* Light Mode */
+@media (prefers-color-scheme: light) {
+  .explanation-panel {
+    background-color: #ffffff;
+    color: #333;
+  }
+
+  .code-block {
+    background-color: #f5f5f5;
+    color: #333;
+  }
+
+  .panel-title {
+    color: #0066cc;
+  }
+}
+
+/* Dark Mode (Default) */
+@media (prefers-color-scheme: dark) {
+  .explanation-panel {
+    background-color: var(--vscode-editor-background, #1e1e1e);
+  }
+
+  .code-block {
+    background-color: var(--vscode-terminal-background, #1e1e1e);
+  }
+}
+
+/* High Contrast Support */
+@media (prefers-contrast: more) {
+  .panel-title {
+    text-decoration: underline;
+  }
+
+  .toggle-button,
+  .section-label {
+    font-weight: 700;
+  }
+
+  .code-block {
+    border: 2px solid var(--vscode-textBlockQuote-border);
+  }
+}
+
+/* Accessibility */
+.toggle-button:focus,
+.toggle-button:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+@supports (-webkit-backdrop-filter: none) or (backdrop-filter: none) {
+  .panel-header {
+    position: sticky;
+    top: 0;
+    background-color: var(--vscode-editor-background);
+    backdrop-filter: blur(4px);
+    z-index: 10;
+  }
+}

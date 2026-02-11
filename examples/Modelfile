@@ -1,0 +1,7 @@
+FROM qwen2.5-coder:7b
+# Optimized for M4 Unified Memory
+PARAMETER num_ctx 8192
+PARAMETER num_predict 2048
+PARAMETER temperature 0.1
+# Ensure the model stays focused on the code
+SYSTEM "You are a Senior React/TypeScript Architect. Follow the .lla-rules strictly."
