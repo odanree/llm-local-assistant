@@ -1,0 +1,307 @@
+/**
+ * AudioPlayer Styles
+ * 
+ * VS Code theme-aware styling for audio player
+ */
+
+.audio-player {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background-color: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-textBlockQuote-border);
+  border-radius: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Main Controls */
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Play/Pause Button */
+.control-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: background-color 0.2s ease;
+}
+
+.control-button:hover:not(:disabled) {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.control-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.control-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control-button .icon {
+  display: block;
+}
+
+.control-button .spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Progress Bar Container */
+.progress-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 2px;
+  background: var(--vscode-progressBar-background);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* WebKit browsers (Chrome, Safari) */
+.progress-bar::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--vscode-symbolIcon-methodForeground, #569cd6);
+  cursor: pointer;
+  border: 2px solid var(--vscode-editor-background);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+}
+
+.progress-bar::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  background: var(--vscode-progressBar-background);
+  border-radius: 2px;
+}
+
+/* Firefox */
+.progress-bar::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--vscode-symbolIcon-methodForeground, #569cd6);
+  cursor: pointer;
+  border: 2px solid var(--vscode-editor-background);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+}
+
+.progress-bar::-moz-range-track {
+  background: transparent;
+  border: none;
+}
+
+.progress-bar:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Time Display */
+.time-display {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  font-size: 12px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  min-width: 56px;
+}
+
+.current-time {
+  font-weight: 500;
+  color: var(--vscode-symbolIcon-methodForeground);
+}
+
+.separator {
+  color: var(--vscode-textBlockQuote-border);
+}
+
+.total-time {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Secondary Controls */
+.secondary-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 4px;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.control-group label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
+  user-select: none;
+}
+
+.volume-label {
+  font-size: 14px;
+}
+
+/* Speed Selector */
+.speed-select {
+  padding: 4px 6px;
+  border: 1px solid var(--vscode-textBlockQuote-border);
+  border-radius: 3px;
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.speed-select:hover {
+  border-color: var(--vscode-symbolIcon-methodForeground);
+}
+
+.speed-select:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder);
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+/* Volume Slider */
+.volume-slider {
+  width: 60px;
+  height: 4px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 2px;
+  background: var(--vscode-progressBar-background);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* WebKit */
+.volume-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--vscode-symbolIcon-methodForeground, #569cd6);
+  cursor: pointer;
+  border: 1px solid var(--vscode-editor-background);
+}
+
+.volume-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  background: var(--vscode-progressBar-background);
+  border-radius: 2px;
+}
+
+/* Firefox */
+.volume-slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--vscode-symbolIcon-methodForeground, #569cd6);
+  cursor: pointer;
+  border: 1px solid var(--vscode-editor-background);
+}
+
+.volume-slider::-moz-range-track {
+  background: transparent;
+  border: none;
+}
+
+/* Responsive Design */
+@media (max-width: 600px) {
+  .audio-player {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .control-button {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+
+  .secondary-controls {
+    gap: 12px;
+  }
+
+  .volume-slider {
+    width: 50px;
+  }
+
+  .control-group {
+    gap: 4px;
+    font-size: 11px;
+  }
+}
+
+/* Accessibility */
+.control-button:focus,
+.speed-select:focus,
+.volume-slider:focus {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+/* Light/Dark Theme Support */
+@media (prefers-color-scheme: light) {
+  .audio-player {
+    background-color: var(--vscode-textBlockQuote-background, #f3f3f3);
+    border-color: var(--vscode-textBlockQuote-border, #e0e0e0);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .audio-player {
+    background-color: var(--vscode-textBlockQuote-background, #2d2d30);
+    border-color: var(--vscode-textBlockQuote-border, #444);
+  }
+}
