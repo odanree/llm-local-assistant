@@ -36,6 +36,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Initialize TTS service (lazy loading)
   const ttsService = getTTSService({
+    extensionPath: context.extensionPath,
     language: getVoiceSettings().language,
     maxChunkLength: getVoiceSettings().maxChunkLength,
   });

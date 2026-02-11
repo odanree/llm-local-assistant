@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
 
-export async function handleSetupVoice(): Promise<void> {
+export async function handleSetupVoice(extensionPath?: string): Promise<void> {
   const setupWindow = vscode.window.createOutputChannel('Voice Setup');
   setupWindow.show();
 
@@ -42,7 +42,7 @@ export async function handleSetupVoice(): Promise<void> {
     setupWindow.appendLine('This may take a few minutes...');
     setupWindow.appendLine('');
 
-    const success = await runSetupScript(pythonPath, setupWindow);
+    const success = await runSetupScript(pythonPath, setupWindow, extensionPath);
 
     if (success) {
       setupWindow.appendLine('');
@@ -143,17 +143,29 @@ async function checkPython(output: vscode.OutputChannel): Promise<string | null>
  */
 async function runSetupScript(
   pythonPath: string,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  extensionPath?: string
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    // Find setup_tts.py relative to extension
-    const setupScript = path.join(
-      __dirname,
-      '..',
-      '..',
-      'python',
-      'setup_tts.py'
-    );
+    // Find setup_tts.py script
+    let setupScript: string;
+    
+    if (extensionPath) {
+      // Production: Use absolute path from extension context
+      // Extension is installed at: %USERPROFILE%\.vscode\extensions\odanree.llm-local-assistant-X.X.X\
+      setupScript = path.join(extensionPath, 'python', 'setup_tts.py');
+      output.appendLine(`Using setup script from extension: ${setupScript}`);
+    } else {
+      // Development fallback: Use relative path from dist/
+      setupScript = path.join(
+        __dirname,
+        '..',
+        '..',
+        'python',
+        'setup_tts.py'
+      );
+      output.appendLine(`Using setup script from dev path: ${setupScript}`);
+    }
 
     const python = spawn(pythonPath, [setupScript]);
 

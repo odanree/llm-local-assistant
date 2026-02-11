@@ -37,6 +37,7 @@ export interface SynthesisResult {
 export interface TTSConfig {
   pythonPath?: string; // Path to python executable
   pythonDir?: string; // Directory containing python/ folder
+  extensionPath?: string; // VS Code extension path (from context.extensionPath)
   cacheDir?: string; // Where to cache audio files
   maxChunkLength?: number; // Max chars per synthesis call
   language?: string; // 'en' or 'zh'
@@ -58,17 +59,19 @@ export class TTSService {
     const defaultPythonPath = os.platform() === 'win32' ? 'python' : 'python3';
     this.pythonPath = config.pythonPath || defaultPythonPath;
     
-    // Resolve python directory - handle both dev and bundled paths
+    // Resolve python directory - prefer extensionPath if provided (production)
     if (config.pythonDir) {
       this.pythonDir = config.pythonDir;
+    } else if (config.extensionPath) {
+      // Production: Use absolute path from VS Code extension context
+      // When packaged, extension is at: %USERPROFILE%\.vscode\extensions\odanree.llm-local-assistant-X.X.X\
+      this.pythonDir = path.join(config.extensionPath, 'python');
     } else {
-      // In bundled extension:
-      // __dirname = /path/to/extension/dist
-      // We want /path/to/extension/python
-      // So we go up one level from dist, then down to python
+      // Development fallback: Use relative path from dist/
+      // In dev, __dirname = /project/dist, we want /project/python
       this.pythonDir = path.join(__dirname, '../python');
       
-      // If that doesn't exist, try the relative path used in dev
+      // If that doesn't exist, try the fallback
       const fallback = path.join(__dirname, '../../python');
       if (!require('fs').existsSync(this.pythonDir) && require('fs').existsSync(fallback)) {
         this.pythonDir = fallback;
@@ -84,6 +87,7 @@ export class TTSService {
     console.log('[TTS]   pythonDir:', this.pythonDir);
     console.log('[TTS]   pythonPath:', this.pythonPath);
     console.log('[TTS]   cacheDir:', this.cacheDir);
+    console.log('[TTS]   extensionPath:', config.extensionPath || '(not provided)');
   }
 
   /**

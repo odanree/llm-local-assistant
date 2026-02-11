@@ -11,10 +11,15 @@ import * as vscode from 'vscode';
 import { handleSetupVoice, handleTestVoice } from './voice';
 import { TTSSettings, DEFAULT_TTS_SETTINGS } from '../types/tts';
 
+// Store extension context for command handlers
+let extensionContext: vscode.ExtensionContext;
+
 /**
  * Register all voice-related commands
  */
 export function registerVoiceCommands(context: vscode.ExtensionContext): void {
+  extensionContext = context;
+  
   // /setup-voice command
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -58,7 +63,7 @@ async function handleSetupVoiceCommand(): Promise<void> {
 
       return new Promise<void>(async (resolve) => {
         try {
-          await handleSetupVoice();
+          await handleSetupVoice(extensionContext.extensionPath);
           resolve();
         } catch (error) {
           vscode.window.showErrorMessage(

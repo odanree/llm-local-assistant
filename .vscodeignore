@@ -25,3 +25,13 @@ ROADMAP.md
 vitest.*
 package-lock.json
 .github/**
+
+# IMPORTANT: DO NOT IGNORE python/ folder - it's needed for voice narration!
+# The python/ folder contains setup_tts.py and tts_service.py
+# but DO ignore large files like models and node_modules
+python/node_modules/**
+python/**/*.pycache/**
+python/**/__pycache__/**
+python/**/*.pyc
+python/**/.pytest_cache/**
+
