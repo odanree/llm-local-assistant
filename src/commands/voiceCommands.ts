@@ -201,7 +201,7 @@ export async function showVoiceSettingsQuickPick(): Promise<void> {
       await updateVoiceSetting('language', langPick.value);
     }
   } else {
-    await updateVoiceSetting(selected.setting, selected.value);
+    await updateVoiceSetting(selected.setting as keyof TTSSettings, selected.value);
   }
 
   vscode.window.showInformationMessage(

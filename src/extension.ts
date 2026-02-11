@@ -172,7 +172,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 - TTS Available: ${ttsAvailable}
 
 **Workspace:**
-- Root: ${vscode.workspace.workspaceFolders?.[0]?.fsPath || 'None'}
+- Root: ${vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'None'}
 `;
 
         // Show in output channel
@@ -544,6 +544,7 @@ function getLLMConfig(): LLMConfig {
     endpoint: config.get('endpoint', 'http://localhost:11434'),
     model: config.get('model', 'mistral'),
     temperature: config.get('temperature', 0.7),
+    maxTokens: config.get('maxTokens', 4096),
     timeout: config.get('timeout', 30000),
   };
 }

@@ -21,6 +21,7 @@ export interface AudioMetadata {
   sample_rate: number;
   size: number;
   duration: number; // seconds
+  backend?: string; // TTS backend name (e.g., 'edge-tts')
 }
 
 /**
