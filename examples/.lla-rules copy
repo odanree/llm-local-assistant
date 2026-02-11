@@ -1,0 +1,115 @@
+# LLM Local Assistant Architecture Rules
+
+## Frontend - React Components
+
+### Component Architecture
+- Use functional components only, NEVER use class components
+- All components must be React functional components with TypeScript
+- Each component file should be focused and single-responsibility
+- Use custom hooks for logic extraction and reusability
+
+### State Management
+- Use Zustand for all state management, NEVER use Redux
+- Keep store implementations minimal and focused
+- Avoid prop drilling by using Zustand stores
+- Define stores in `src/stores/` directory with clear naming conventions
+
+### Data Fetching & Caching
+- Use TanStack Query (React Query) for all API calls and server state
+- Configure queries with appropriate cache times and stale times
+- Use mutations for POST/PUT/PATCH/DELETE operations
+- Implement proper error handling and loading states with useQuery/useMutation
+
+### Form Validation
+- Validate all form inputs with Zod schemas
+- Define schemas in separate files: `src/schemas/`
+- Use Zod for runtime validation of API responses
+- Implement client-side validation before submission
+- Example: `const userSchema = z.object({ email: z.string().email() })`
+
+### Code Style
+- Use TypeScript strict mode
+- Implement proper error boundaries for component trees
+- Use destructuring for props
+- Follow React hooks rules (only top-level, dependency arrays)
+- Use meaningful variable and function names
+
+## Backend - Node.js/API
+
+### API Design
+- Use REST API patterns consistently
+- Return proper HTTP status codes
+- Implement error responses with descriptive messages
+- Version APIs when breaking changes occur
+
+### Validation
+- Validate all request inputs with Zod
+- Validate API responses before returning to frontend
+- Implement request/response middleware for validation
+
+### Error Handling
+- Create custom error classes for different error types
+- Log errors with appropriate context
+- Return user-friendly error messages
+
+## General Rules
+
+### File Organization
+```
+src/
+  components/      # React functional components
+  hooks/          # Custom React hooks
+  stores/         # Zustand store definitions
+  schemas/        # Zod validation schemas
+  services/       # API calls and external service integrations
+  types/          # TypeScript type definitions
+  utils/          # Utility functions
+  pages/          # Page components
+  styles/         # CSS/styling files
+```
+
+### Naming Conventions
+- Components: PascalCase (e.g., `UserForm.tsx`)
+- Hooks: camelCase starting with 'use' (e.g., `useUserData.ts`)
+- Stores: camelCase with 'Store' suffix (e.g., `authStore.ts`)
+- Schemas: camelCase with schema prefix (e.g., `loginSchema.ts`)
+- Files: kebab-case for utilities, camelCase for components
+
+### Testing
+- Write unit tests for business logic
+- Write integration tests for API interactions
+- Test Zod schemas independently
+- Test Zustand stores with specific selectors
+
+### Environment Configuration
+- Use environment variables for API endpoints
+- Never hardcode sensitive information
+- Document required environment variables in `.env.example`
+
+### Performance
+- Memoize expensive computations with useMemo
+- Use useCallback for stable function references
+- Implement code splitting for large components
+- Monitor bundle size regularly
+
+## VS Code Extension Specific
+
+### Command Handling
+- All extension commands should be async-friendly
+- Handle errors gracefully with user notifications
+- Use consistent command naming: `llm-assistant.commandName`
+
+### Settings
+- Define all settings in package.json configuration schema
+- Use configuration in-line documentation
+- Provide sensible defaults for all settings
+
+### Dependencies
+- Keep dependencies minimal and up-to-date
+- Audit dependencies regularly for security
+- Document any non-obvious dependency choices
+
+---
+
+**Last Updated:** 2026-02-06
+**Version:** 1.0.0
