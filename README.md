@@ -744,7 +744,7 @@ If you include the "Form Component Architecture" section in `.lla-rules`, the ex
 
 #### For More Details
 
-See [docs/FORM_COMPONENT_PATTERNS.md](docs/FORM_COMPONENT_PATTERNS.md) for detailed explanation of each pattern and why they matter.
+See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATTERNS.md) for detailed explanation of each pattern and why they matter.
 
 ## 🔒 Privacy & Security
 
@@ -930,32 +930,43 @@ npm run test:watch   # Auto-run on changes
 
 ## 📚 Documentation
 
-### Industry Standard
+### Industry Standard (Root)
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and releases
 - **[ROADMAP.md](ROADMAP.md)** - Future development plans
 - **[LICENSE](LICENSE)** - MIT License
 
-### Architecture & Design
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns (rules defined in `.lla-rules`)
+### Core Documentation (/docs/)
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System design and voice narration architecture
+- **[Installation Guide](docs/INSTALL.md)** - Setup instructions with ModelFile customization
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines and v2.6 voice development
+- **[Voice Narration](docs/VOICE_NARRATION.md)** - Voice feature user guide
+- **[Project Status](docs/PROJECT_STATUS.md)** - Current project status and roadmap
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Developer quick reference guide
+- **[Release Notes](docs/RELEASE-COMPLETE.md)** - v2.6 release notes and features
+- **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace publishing guide
 
-### Project Setup & Configuration
-- **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation
-- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & repository organization
+### Guides (/docs/guides/)
+- **[Developer Guide](docs/guides/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
+- **[Execution Guide](docs/guides/EXECUTION_GUIDE.md)** - Running code generation
+- **[Setup Guide](docs/guides/CURSORRULES_EXAMPLE.md)** - .lla-rules template for code generation
+- **[Quick Navigation](docs/guides/QUICK_NAVIGATION_GUIDE.md)** - Repository navigation guide
+
+### Patterns (/docs/patterns/)
+- **[Form Component Patterns](docs/patterns/FORM_COMPONENT_PATTERNS.md)** - 7 form component patterns (rules in `.lla-rules`)
+- **[Validation Patterns](docs/patterns/RULE_BASED_VALIDATOR_REFACTORING.md)** - Validator refactoring patterns
+- **[Architecture Patterns](docs/patterns/ARCHITECTURE_RULES_INTEGRATION.md)** - Architecture rules integration
+
+### Implementation & Troubleshooting (/docs/implementation/)
+- **[Local Testing Guide](docs/implementation/PHASE-3.4.5-LOCAL-TESTING-GUIDE.md)** - Testing setup
+- **[Bug Fix Documentation](docs/implementation/)** - Technical implementation details
 
 ### Repository Organization
-- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping root clean (reference when root gets bloated)
+- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping documentation clean
+- **[Documentation Organization](docs/DOCS_REORGANIZATION_COMPLETE.md)** - How documentation is structured
 
-### Troubleshooting & Reference
-- **[Model Comparison](docs/MODEL_COMPARISON.md)** - LLM model recommendations
-- **[Local Testing Guide](docs/LOCAL_TESTING_GUIDE.md)** - Testing setup
-- **[Release History](docs/RELEASE-COMPLETE.md)** - Detailed release notes
-
-### Development
-- **[Developer Guide](docs/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
-- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running code generation
-- **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace details
+### Development History (/docs/phase-docs/ and /docs/archive/)
+- **[Phase Documentation](docs/phase-docs/)** - Phase-specific development notes
+- **[Archives](docs/archive/)** - Session notes, analysis, and historical releases
 
 ## 🐛 Troubleshooting
 
