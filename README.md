@@ -924,32 +924,41 @@ npm run test:watch   # Auto-run on changes
 
 ## 📚 Documentation
 
-### Industry Standard
+**Industry Standard Files** (in root)
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and releases
 - **[ROADMAP.md](ROADMAP.md)** - Future development plans
 - **[LICENSE](LICENSE)** - MIT License
 
+**All other documentation** lives in [/docs/](docs/) organized by purpose:
+
+### Getting Started
+- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Common commands
+- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running and testing
+
 ### Architecture & Design
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns (rules defined in `.lla-rules`)
+- **[TTS Strategy Pattern](docs/TTS_STRATEGY_PATTERN.md)** - Pluggable audio backends with dependency injection
+- **[Voice Narration](docs/VOICE_NARRATION.md)** - Voice feature documentation
+- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns
 
-### Project Setup & Configuration
-- **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation
-- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & repository organization
-
-### Repository Organization
-- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping root clean (reference when root gets bloated)
-
-### Troubleshooting & Reference
+### Development & Contribution
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & workflow
 - **[Model Comparison](docs/MODEL_COMPARISON.md)** - LLM model recommendations
-- **[Local Testing Guide](docs/LOCAL_TESTING_GUIDE.md)** - Testing setup
-- **[Release History](docs/RELEASE-COMPLETE.md)** - Detailed release notes
-
-### Development
-- **[Developer Guide](docs/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
-- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running code generation
 - **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace details
+
+### Product & Roadmap
+- **[Future Roadmap](docs/FUTURE_ROADMAP.md)** - Planned features and development plans
+- **[Project Status](docs/PROJECT_STATUS.md)** - Current milestones and progress
+
+### Historical & Reference
+For historical context, phase documentation, and archived analysis, see:
+- **[/docs/archive/](docs/archive/)** - All archived documentation organized by category
+  - **phases/** - Phase 0-4 project history
+  - **bug-fixes/** - Technical deep dives on specific fixes
+  - **releases/** - PR descriptions and release notes
+  - **analysis/** - Implementation analysis and reports
+  - **sessions/** - Session summaries and work logs
 
 ## 🐛 Troubleshooting
 
