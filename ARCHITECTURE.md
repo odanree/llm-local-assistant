@@ -2,6 +2,104 @@
 
 > ⚠️ **DOCUMENTATION CONSTRAINT**: The root directory contains a fixed set of documentation files: README.md, ROADMAP.md, ARCHITECTURE.md, PROJECT_STATUS.md, QUICK_REFERENCE.md, and CHANGELOG.md. No additional .md or .txt files should be created in root. Updates should be made to existing files or placed in `/docs/` if necessary.
 
+## Voice Narration Architecture (v2.6.0)
+
+### 4-Layer Audio Pipeline
+
+```
+User Input (/explain <file>)
+    ↓
+Extension Handler (src/extension.ts)
+    • Parses /explain command with regex
+    • Resolves file path from workspace root (workspaceFolder.uri.fsPath)
+    • Reads file content
+    ↓
+LLM Client (src/llmClient.ts)
+    • Sends file content to LLM
+    • Receives markdown explanation
+    ↓
+TTS Service Bridge (src/services/ttsService.ts)
+    • Strips markdown for clean narration
+    • Splits text into sentences (~250 chars per chunk)
+    • Calls Python TTS service for each chunk
+    • Accumulates audio bytes + duration
+    ↓
+Python TTS Service (python/tts_service.py)
+    • Receives text chunks via stdin
+    • Synthesizes using edge-tts (Microsoft Edge cloud API)
+    • Saves MP3 to temp file
+    • Returns audio bytes to stdout
+    • Returns metadata (sample_rate, size, duration) to stderr as JSON
+    ↓
+Extension (src/extension.ts)
+    • Parses MP3 metadata
+    • Base64 encodes audio
+    • Constructs chat message with audio
+    ↓
+Webview (src/webviewContent.ts)
+    • Receives audio base64 + metadata
+    • Embeds HTML5 audio element
+    • Renders with duration label
+    ↓
+Browser
+    • Plays MP3 with native audio controls
+```
+
+### Duration Calculation (Critical Fix)
+
+**Formula**: `duration_seconds = audio_file_size_bytes / 16000`
+
+**Reasoning**:
+- MP3 at 128 kbps = 16 KB/second
+- 180 KB file ÷ 16 KB/s = ~11.25 seconds ✅
+- Previous formula `bytes / sample_rate / 1000` was wrong (gave 0.007s) ❌
+
+### Content Security Policy Update
+
+**Webview CSP** (allows inline audio URIs):
+```html
+<meta http-equiv="Content-Security-Policy" 
+  content="default-src 'none'; 
+           img-src data:; 
+           media-src data:; 
+           script-src 'unsafe-inline' 'unsafe-eval'; 
+           style-src 'unsafe-inline'">
+```
+
+**Key Addition**: `media-src data:` allows `data:audio/mpeg;base64,...` URIs
+
+### Message Interface (Webview → Extension)
+
+```typescript
+interface ChatMessage {
+  command: 'streamToken' | 'streamComplete' | 'addMessage';
+  text?: string;           // Chat message text or error
+  audioBase64?: string;    // Base64-encoded MP3
+  audioMetadata?: {
+    sample_rate: number;   // Always 24000 (edge-tts)
+    size: number;          // Audio file size in bytes
+    duration: number;      // Calculated duration in seconds
+  };
+  error?: string;          // Error message if failed
+  success?: boolean;       // Operation success flag
+}
+```
+
+### File Path Resolution (Corrected)
+
+**WRONG** (returns undefined):
+```typescript
+const workspaceFolder = workspaceFolders[0]?.fsPath;
+```
+
+**CORRECT** (returns actual path):
+```typescript
+const workspacePath = workspaceFolders[0].uri.fsPath;
+const filePath = path.join(workspacePath, userInputPath);
+```
+
+**Why**: VS Code API uses `.uri.fsPath`, not `.fsPath`
+
 ## Phase 3: Architecture Alignment - `.lla-rules` Injection
 
 **NEW** (v1.3.0): The extension now supports project-specific architecture rules via `.lla-rules` files.

@@ -43,6 +43,16 @@ You: "What's the best way to handle errors in TypeScript?"
 LLM: [streaming response...]
 ```
 
+### Explain Code (NEW - With Voice!)
+```
+/explain src/components/Button.tsx
+→ Reads file from workspace
+→ Generates explanation
+→ Synthesizes to MP3 using edge-tts
+→ Shows embedded audio player with duration
+→ Click play to hear the explanation
+```
+
 ### Read Files
 ```
 /read src/main.ts
@@ -64,6 +74,12 @@ LLM: [streaming response...]
 → Write only if you click "Yes"
 ```
 
+### Other Commands
+```
+/plan, /execute, /approve, /reject, /refactor, /extract-service, 
+/design-system, /rate-architecture, /suggest-patterns, /context, /check-model
+```
+
 ---
 
 ## ⚙️ Configuration
@@ -81,6 +97,65 @@ LLM: [streaming response...]
 {
   "llm-assistant.endpoint": "http://127.0.0.1:9000"
 }
+```
+
+---
+
+## 🔊 Voice Narration Setup
+
+### Prerequisites
+- Python 3.7+ (for edge-tts service)
+- edge-tts package installed
+
+### Enable Voice
+1. Cmd+Shift+P → "LLM Assistant: Setup Voice Narration"
+2. Installs edge-tts if needed
+3. Voice automatically enabled
+
+### Test Voice
+1. Cmd+Shift+P → "LLM Assistant: Test Voice Narration"
+2. Should hear: "Voice narration is working properly!"
+
+### Use in Chat
+```
+/explain src/main.ts
+→ Explanation text + embedded MP3 player
+→ Click play to hear the narration
+```
+
+### Troubleshooting
+- Cmd+Shift+P → "LLM Assistant: Debug Environment" shows:
+  - LLM endpoint and model
+  - Voice narration availability
+  - Python version
+  - TTS service status
+  - Workspace path
+
+---
+
+## 🎯 Diagnostic Commands
+
+### Test LLM Connection
+```
+Cmd+Shift+P → "LLM Assistant: Test LLM Connection"
+→ Shows endpoint, model, connection status
+```
+
+### Debug Environment
+```
+Cmd+Shift+P → "LLM Assistant: Debug Environment"
+→ Shows in Output panel:
+  - LLM Configuration (endpoint, model)
+  - Voice Settings (enabled/disabled)
+  - Workspace Folder
+  - Python Version
+  - edge-tts availability
+```
+
+### Voice Settings
+```
+Cmd+Shift+P → "LLM Assistant: Voice Settings"
+→ Opens VS Code Settings filtered to llm-assistant voice configs
 ```
 
 ---

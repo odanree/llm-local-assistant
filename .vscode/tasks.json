@@ -6,10 +6,22 @@
 		{
 			"type": "npm",
 			"script": "watch",
-			"problemMatcher": "$ts-webpack-watch",
+			"problemMatcher": {
+				"pattern": {
+					"regexp": "^.*(?:ERROR|\\s+E\\s+).*$",
+					"file": 1,
+					"location": 2,
+					"message": 3
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "^.*watch.*",
+					"endsPattern": "^.*build finished.*"
+				}
+			},
 			"isBackground": true,
 			"presentation": {
-				"reveal": "never",
+				"reveal": "silent",
 				"group": "watchers"
 			},
 			"group": {

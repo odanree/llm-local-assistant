@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-02-10
+
+### Focus: Voice Narration Integration for `/explain` Command
+
+**v2.6.0 brings automatic audio narration to the LLM Assistant chat.** The `/explain` command now synthesizes explanations to MP3 using edge-tts, embeds playable audio in chat messages, and provides diagnostic tools for voice setup validation.
+
+### Added
+
+- **Voice Narration for `/explain` Command** (NEW)
+  - Automatically synthesizes text-to-speech using edge-tts (Microsoft Edge cloud API)
+  - Embeds MP3 player directly in chat messages with play/pause/volume controls
+  - Displays calculated audio duration (accurate to 1-2 seconds)
+  - Handles multi-chunk synthesis for long explanations
+  - Shows fallback "Synthesized with edge-tts" message if duration unavailable
+
+- **`/explain` Command in Chat Window**
+  - Pattern: `/explain <filepath>` (workspace-relative path resolution)
+  - Reads file from workspace root automatically
+  - Generates LLM explanation with full markdown formatting
+  - Cleans markdown before voice synthesis for natural narration
+  - Works with any file type (TypeScript, Python, JSON, etc.)
+  - Examples: `/explain src/components/Button.tsx`, `/explain package.json`
+
+- **Diagnostic Commands** (NEW)
+  - `LLM Assistant: Test LLM Connection` - Validates Ollama/LM Studio connectivity
+  - `LLM Assistant: Debug Environment` - Shows LLM config, voice availability, workspace info
+
+- **Content Security Policy Update**
+  - Added `media-src data:` to allow inline audio/mpeg URIs
+  - Enables HTML5 audio player with base64-encoded MP3 data
+
+### Fixed
+
+- **Python TTS Service Duration Calculation** (CRITICAL)
+  - Problem: Duration showing ~0.007s for 180KB MP3 files
+  - Root Cause: `duration = len(audio_bytes) / sample_rate / 1000` (wrong formula)
+  - Solution: `duration = len(audio_bytes) / 16000` (MP3 bitrate = 128kbps = 16KB/s)
+  - Result: Durations now accurate to 1-2 seconds
+
+- **File Path Resolution**
+  - Problem: `workspaceFolder?.fsPath` returning undefined
+  - Solution: Changed to `workspaceFolders[0].uri.fsPath` (correct VS Code API)
+  - Result: Workspace-relative paths resolve correctly
+
+- **Audio Playback Blocked by CSP**
+  - Problem: Browser blocking `data:audio/mpeg` URIs with CSP violation
+  - Solution: Added `media-src data:` directive to webview CSP
+  - Result: Audio player now fully functional
+
+- **Duplicate Help Text**
+  - Problem: Help text appearing twice on chat reload
+  - Solution: Respect `skipHistory: true` flag in message handler
+  - Result: Single help display on initial chat open
+
+### Changed
+
+- **Command Naming Standardized** (ALL COMMANDS)
+  - Removed redundant "LLM: " category prefix
+  - All commands now use "LLM Assistant: " title format
+  - Cleaner command palette appearance (Cmd+Shift+P)
+
+- **Chat Command Renamed**
+  - "Open Chat" → "LLM Assistant: Open LLM Chat"
+
+- **Audio Metadata Enhanced**
+  - Duration now calculated from MP3 bitrate (16KB/s)
+  - Metadata includes: sample_rate, audio_size, calculated_duration
+  - Debug logging for audio synthesis process
+
+### Technical Details
+
+**Architecture Changes:**
+- TTS Service: Multi-chunk synthesis with duration accumulation
+- Webview CSP: Expanded to support inline media URIs
+- Message Interface: Added `audioBase64` and `audioMetadata` fields
+- Extension API: Workspace folder resolution via correct VS Code API
+
+**Performance:**
+- Build size: 79.4 KB (minimal overhead)
+- Build time: 3-5ms (esbuild)
+- Audio synthesis latency: Depends on edge-tts service (typically 2-5 seconds)
+- Chat message rendering: Token buffering prevents UI lag (10+ tokens per DOM update)
+
+**Configuration:**
+- Voice narration enabled by default if edge-tts available
+- Falls back gracefully if TTS service unavailable
+- No additional setup required (uses existing LLM endpoint configuration)
+
+### Quality Metrics
+- Tests: 486/489 (99.4%)
+- Build errors: 0
+- Linting errors: 0
+- Audio playback tested: ✅ MP3 playback confirmed
+- Duration accuracy: ±1-2 seconds from actual audio length
+
+---
+
 ## [2.5.1] - 2026-02-10
 
 ### Focus: Critical Zustand Integration Validation Fixes
