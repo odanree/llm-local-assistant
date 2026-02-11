@@ -37,26 +37,41 @@
   "contributes": {
     "commands": [
       {
+        "command": "llm-assistant.open-chat",
+        "title": "LLM Assistant: Open LLM Chat"
+      },
+      {
         "command": "llm-assistant.explain",
-        "title": "Explain Code",
-        "category": "LLM",
-        "keybinding": "cmd+shift+e",
+        "title": "LLM Assistant: Explain Code",
         "when": "editorTextFocus"
       },
       {
         "command": "llm-assistant.setup-voice",
-        "title": "Setup Voice Narration",
-        "category": "LLM"
+        "title": "LLM Assistant: Setup Voice Narration"
       },
       {
         "command": "llm-assistant.test-voice",
-        "title": "Test Voice Narration",
-        "category": "LLM"
+        "title": "LLM Assistant: Test Voice Narration"
       },
       {
         "command": "llm-assistant.voice-settings",
-        "title": "Voice Settings",
-        "category": "LLM"
+        "title": "LLM Assistant: Voice Settings"
+      },
+      {
+        "command": "llm-assistant.test-connection",
+        "title": "LLM Assistant: Test LLM Connection"
+      },
+      {
+        "command": "llm-assistant.debug-environment",
+        "title": "LLM Assistant: Debug Environment"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "llm-assistant.explain",
+        "key": "cmd+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
@@ -70,9 +85,9 @@
         },
         "llm-assistant.voice.speed": {
           "type": "number",
-          "default": 1.0,
+          "default": 1,
           "minimum": 0.5,
-          "maximum": 2.0,
+          "maximum": 2,
           "step": 0.25,
           "description": "Playback speed for voice narration (0.5x to 2.0x)",
           "scope": "resource"
@@ -150,14 +165,18 @@
     "format": "prettier --write src/**/*.ts"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
+    "@babel/parser": "^7.29.0",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
     "@types/node": "^18.0.0",
+    "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
-    "esbuild": "^0.19.0",
+    "esbuild": "^0.27.3",
     "eslint": "^8.0.0",
+    "happy-dom": "^20.6.1",
     "prettier": "^3.0.0",
-    "typescript": "^5.0.0"
-  },
-  "dependencies": {}
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.18"
+  }
 }

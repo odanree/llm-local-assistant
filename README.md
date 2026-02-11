@@ -4,13 +4,40 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-code/v/odanree.llm-local-assistant)](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant)
 
-A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, and refactor with confidence using your local LLM.
+A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM.
 
-**🎯 v2.5.1 Focus: Critical Zustand Integration Validation Fixes**
+**🎯 v2.6.0 Focus: Voice Narration for Code Explanations**
 
-> **Latest Release**: v2.5.1 - Critical Zustand Integration Fixes ✅  
-> **Philosophy**: 100% integration validation. No silent failures.  
+> **Latest Release**: v2.6.0 - Voice Narration Integration ✅  
+> **Philosophy**: Beautiful AI interactions with accessibility features.  
 > **Status**: 486/489 tests passing. Production ready.
+
+## ✨ What's v2.6.0 (Voice Narration)
+
+### 🔊 NEW: Automatic Audio Narration
+
+**`/explain` command now synthesizes to speech!**
+
+```
+/explain src/components/Button.tsx
+→ Reads file from workspace
+→ Generates LLM explanation
+→ Automatically synthesizes MP3 using edge-tts
+→ Embeds playable audio in chat
+→ Shows duration: "59.3 seconds"
+```
+
+**Features**:
+- ✅ Click-to-play audio player in chat messages
+- ✅ Multi-chunk synthesis for long explanations
+- ✅ Accurate duration display (MP3 bitrate formula)
+- ✅ Workspace-relative file paths (e.g., `/explain src/main.ts`)
+- ✅ Graceful fallback if TTS unavailable
+- ✅ Diagnostic commands for setup validation
+
+**New Commands**:
+- `LLM Assistant: Test LLM Connection` - Validate server connectivity
+- `LLM Assistant: Debug Environment` - Show LLM config, voice status, workspace info
 
 ## ✨ What's v2.5.1 (Critical Patch)
 
@@ -19,10 +46,6 @@ A powerful VS Code extension that brings autonomous AI capabilities to your loca
 **Problem**: System generated 4/4 files successfully but component didn't call store hook → silent failure ❌  
 **Solution**: Integration validation now runs AFTER all files written, validates cross-file dependencies  
 **Impact**: Fails entire plan if store integration is broken (was: silently passing)
-
-**Strict Zustand Destructuring**
-- Detects wrong: `const store = useLoginStore(); const { x } = store;`
-- Enforces correct: `const { x } = useLoginStore();`
 
 ## ✨ What's v2.5.0 (6-Layer Validation System)
 

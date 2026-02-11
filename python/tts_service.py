@@ -1,5 +1,8 @@
 """
-ChatTTS Service - Text-to-Speech synthesis for code explanations
+TTS Service - Text-to-Speech synthesis using edge-tts
+
+Uses Microsoft Edge's TTS which is reliable and works cross-platform.
+No GPU required, no complex setup.
 
 Usage:
     python tts_service.py --text "Hello world"
@@ -9,77 +12,47 @@ Usage:
 
 import sys
 import json
-import io
-import wave
+import asyncio
+import tempfile
+import os
 from typing import Tuple, Optional
-from pathlib import Path
+
+try:
+    import edge_tts
+except ImportError:
+    edge_tts = None
 
 # Type hints for clarity
 AudioBuffer = bytes
 SampleRate = int
 
 
-class ChatTTSService:
+class TTSService:
     """
-    Wrapper for ChatTTS model with synthesis API.
+    Cloud-based TTS Service using edge-tts.
     
-    Handles:
-    - Model loading (cached after first load)
-    - Text synthesis to audio
-    - Audio format conversion (numpy -> WAV)
-    - Device detection (GPU vs CPU)
-    - Error handling with JSON output
+    Reliable and works on all platforms without GPU or model downloads.
     """
 
     def __init__(self, device: Optional[str] = None):
         """
-        Initialize ChatTTS service.
+        Initialize TTS service.
         
         Args:
-            device: 'cuda', 'cpu', or None (auto-detect)
+            device: Ignored (kept for compatibility)
         """
-        self.device = device or self._get_device()
-        self.model = None
-        self.sample_rate = 24000  # ChatTTS standard
-        self._model_loaded = False
-
-    def _get_device(self) -> str:
-        """Detect available device (GPU or CPU)."""
-        try:
-            import torch
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            return "cpu"
+        self.sample_rate = 24000  # edge-tts uses 24kHz
+        self._model_loaded = edge_tts is not None
 
     def load_model(self) -> bool:
-        """
-        Load ChatTTS model from HuggingFace.
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if self._model_loaded:
-            return True
-
-        try:
-            import torch
-            from ChatTTS import ChatTTS
-
-            # Load model
-            self.model = ChatTTS.load(device=self.device)
-            self._model_loaded = True
-            return True
-
-        except Exception as e:
-            error_msg = f"Failed to load ChatTTS model: {str(e)}"
-            self._print_error(error_msg)
-            return False
+        """Check if edge-tts is available."""
+        return edge_tts is not None
 
     def synthesize(
         self, text: str, lang: str = "en"
     ) -> Tuple[SampleRate, AudioBuffer]:
         """
-        Generate audio from text.
+        Generate audio from text using edge-tts.
 
         Args:
             text: Text to synthesize
@@ -91,72 +64,61 @@ class ChatTTSService:
         Raises:
             Exception: If synthesis fails
         """
-        if not self._model_loaded:
-            if not self.load_model():
-                raise Exception("Model loading failed")
-
+        if edge_tts is None:
+            raise Exception("edge-tts not installed. Run: pip install edge-tts")
+        
         try:
-            # Generate audio (returns numpy array)
-            # Model returns shape (1, audio_length)
-            wav = self.model.infer(text, lang=lang, use_decoder=True)
-
-            # Convert to WAV bytes
-            audio_bytes = self._numpy_to_wav(wav[0], self.sample_rate)
-            return self.sample_rate, audio_bytes
-
+            # Select voice based on language
+            voice = "en-US-AriaNeural" if lang == "en" else "zh-CN-XiaoxiaoNeural"
+            
+            # Create communicate instance
+            communicate = edge_tts.Communicate(text=text, voice=voice, rate="+0%")
+            
+            # Create temporary file for audio
+            fd, temp_path = tempfile.mkstemp(suffix='.mp3')
+            os.close(fd)
+            
+            try:
+                # Run async synthesis
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(communicate.save(temp_path))
+                finally:
+                    loop.close()
+                
+                # Read the MP3 file
+                with open(temp_path, 'rb') as f:
+                    audio_bytes = f.read()
+                
+                if not audio_bytes or len(audio_bytes) == 0:
+                    raise Exception("No audio generated")
+                
+                # For MP3, we can't easily determine exact sample rate from file
+                # edge-tts outputs MP3 at 24kHz, so we'll return that
+                return self.sample_rate, audio_bytes
+                
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    try:
+                        os.unlink(temp_path)
+                    except:
+                        pass
+                        
         except Exception as e:
             raise Exception(f"TTS synthesis failed: {str(e)}")
 
-    def _numpy_to_wav(self, audio: "numpy.ndarray", sample_rate: int) -> AudioBuffer:
-        """
-        Convert numpy audio array to WAV bytes.
-
-        Args:
-            audio: Numpy array (float, range [-1, 1])
-            sample_rate: Sample rate in Hz
-
-        Returns:
-            WAV bytes (16-bit PCM)
-        """
-        import numpy as np
-
-        # Ensure audio is numpy array
-        if not isinstance(audio, np.ndarray):
-            raise ValueError("Audio must be numpy array")
-
-        # Normalize to [-1, 1]
-        audio = np.clip(audio, -1.0, 1.0)
-
-        # Convert to 16-bit PCM
-        # Range: [-32768, 32767]
-        audio_int16 = np.int16(audio * 32767)
-
-        # Create WAV file in memory
-        wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, "wb") as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_int16.tobytes())
-
-        return wav_buffer.getvalue()
-
     def get_info(self) -> dict:
-        """Get device and model information."""
+        """Get device and service information."""
         return {
-            "device": self.device,
-            "cuda_available": self._cuda_available(),
+            "device": "cloud",
+            "cuda_available": False,
             "sample_rate": self.sample_rate,
             "model_loaded": self._model_loaded,
+            "backend": "edge-tts",
+            "native_tts": False,
         }
-
-    def _cuda_available(self) -> bool:
-        """Check if CUDA is available."""
-        try:
-            import torch
-            return torch.cuda.is_available()
-        except ImportError:
-            return False
 
     @staticmethod
     def _print_error(message: str) -> None:
@@ -173,20 +135,19 @@ def main():
     """CLI interface for TTS service."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="ChatTTS Text-to-Speech Service")
+    parser = argparse.ArgumentParser(description="Cloud TTS Service (edge-tts)")
     parser.add_argument("--text", help="Text to synthesize")
     parser.add_argument("--lang", default="en", help="Language (en or zh)")
-    parser.add_argument("--device", default=None, help="Device (cuda or cpu)")
     parser.add_argument("--info", action="store_true", help="Print device info")
 
     args = parser.parse_args()
 
-    service = ChatTTSService(device=args.device)
+    service = TTSService()
 
     # Mode 1: Print info
     if args.info:
         info = service.get_info()
-        ChatTTSService._print_info(info)
+        TTSService._print_info(info)
         return
 
     # Mode 2: Synthesize speech
@@ -205,14 +166,16 @@ def main():
         metadata = {
             "sample_rate": sample_rate,
             "size": len(audio_bytes),
-            "duration": (len(audio_bytes) / 2) / sample_rate,  # 16-bit = 2 bytes per sample
+            "duration": len(audio_bytes) / 16000,  # MP3 bitrate ~128kbps = 16KB/s
         }
-        ChatTTSService._print_info(metadata)
+        TTSService._print_info(metadata)
 
     except Exception as e:
-        ChatTTSService._print_error(str(e))
+        TTSService._print_error(str(e))
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+
+

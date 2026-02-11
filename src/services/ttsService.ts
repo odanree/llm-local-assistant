@@ -50,32 +50,71 @@ export class TTSService {
   private maxChunkLength: number;
   private language: string;
   private timeout: number;
-  private isAvailable: boolean = false;
+  private _isAvailable: boolean = false;
 
   constructor(config: TTSConfig = {}) {
     this.pythonPath = config.pythonPath || 'python3';
-    this.pythonDir = config.pythonDir || path.join(__dirname, '../../python');
-    this.cacheDir = config.cacheDir || path.join(os.homedir(), '.cache', 'chat-tts');
+    
+    // Resolve python directory - handle both dev and bundled paths
+    if (config.pythonDir) {
+      this.pythonDir = config.pythonDir;
+    } else {
+      // In bundled extension:
+      // __dirname = /path/to/extension/dist
+      // We want /path/to/extension/python
+      // So we go up one level from dist, then down to python
+      this.pythonDir = path.join(__dirname, '../python');
+      
+      // If that doesn't exist, try the relative path used in dev
+      const fallback = path.join(__dirname, '../../python');
+      if (!require('fs').existsSync(this.pythonDir) && require('fs').existsSync(fallback)) {
+        this.pythonDir = fallback;
+      }
+    }
+    
+    this.cacheDir = config.cacheDir || path.join(os.homedir(), '.cache', 'llm-assistant-tts');
     this.maxChunkLength = config.maxChunkLength || 500; // chars
     this.language = config.language || 'en';
     this.timeout = config.timeout || 30000; // 30 seconds
+    
+    console.log('[TTS] Service initialized:');
+    console.log('[TTS]   pythonDir:', this.pythonDir);
+    console.log('[TTS]   pythonPath:', this.pythonPath);
+    console.log('[TTS]   cacheDir:', this.cacheDir);
   }
 
   /**
-   * Check if TTS is available (Python + model installed)
+   * Check if TTS is available (Python + edge-tts installed)
    */
   async isAvailable(): Promise<boolean> {
     try {
+      const pythonScript = path.join(this.pythonDir, 'tts_service.py');
+      
+      // Check if the Python script exists
+      try {
+        await fs.access(pythonScript);
+      } catch {
+        console.log('[TTS] Script not found at:', pythonScript);
+        return false;
+      }
+
+      // Just check --info instead of doing a full synthesis
+      // This verifies edge-tts is installed without the timeout risk
+      console.log('[TTS] Checking edge-tts availability...');
       const result = await this.runPythonService(
         '--info',
         { captureOutput: true, timeout: 5000 }
       );
 
-      // If we get metadata back, TTS is available
-      this.isAvailable = result.metadata !== null;
-      return this.isAvailable;
-    } catch (e) {
-      this.isAvailable = false;
+      // If we got metadata back with edge-tts backend, TTS is available
+      const available = result.metadata && result.metadata.backend === 'edge-tts';
+      console.log('[TTS] Check result:', available, 'metadata:', result.metadata);
+      this._isAvailable = available;
+      return available;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.warn('[TTS] Check failed:', errorMsg);
+      this._isAvailable = false;
       return false;
     }
   }
@@ -128,6 +167,14 @@ export class TTSService {
         { captureOutput: true, timeout: this.timeout }
       );
 
+      // Ensure duration is set (if missing, estimate from size)
+      if (!result.metadata.duration || result.metadata.duration === 0) {
+        // MP3 bitrate is typically 128kbps = 16KB/s
+        // So duration in seconds = size / 16000
+        result.metadata.duration = Math.max(0.1, result.audio.length / 16000);
+        console.log('[TTS] Estimated duration:', result.metadata.duration);
+      }
+
       // Cache the result
       await this.writeCache(cacheKey, result.audio, result.metadata);
 
@@ -148,11 +195,14 @@ export class TTSService {
     const audioBuffers: Buffer[] = [];
     let totalDuration = 0;
 
+    console.log('[TTS] Synthesizing', chunks.length, 'chunks');
+
     for (const chunk of chunks) {
       try {
         const result = await this.synthesizeChunk(chunk, lang, '');
         audioBuffers.push(result.audio);
         totalDuration += result.metadata.duration;
+        console.log('[TTS] Chunk duration:', result.metadata.duration, 'Total so far:', totalDuration);
       } catch (error) {
         // Log but continue with other chunks
         console.warn(`Failed to synthesize chunk: ${String(error)}`);
@@ -171,6 +221,8 @@ export class TTSService {
       duration: totalDuration,
     };
 
+    console.log('[TTS] Final concatenated duration:', totalDuration);
+
     // Cache the concatenated result
     await this.writeCache(cacheKey, audio, metadata);
 
@@ -186,35 +238,65 @@ export class TTSService {
   ): Promise<SynthesisResult> {
     return new Promise((resolve, reject) => {
       const pythonScript = path.join(this.pythonDir, 'tts_service.py');
-      const spawnArgs = `${pythonScript} ${args}`.split(' ');
+      
+      // Parse args properly - don't just split on spaces
+      // Args are passed as a string like: --text "hello world" --lang en
+      const spawnArgs = [pythonScript];
+      
+      // Simple argument parser: split on spaces but respect quoted strings
+      let currentArg = '';
+      let inQuotes = false;
+      for (let i = 0; i < args.length; i++) {
+        const char = args[i];
+        if (char === '"' && (i === 0 || args[i - 1] !== '\\')) {
+          inQuotes = !inQuotes;
+          currentArg += char;
+        } else if (char === ' ' && !inQuotes) {
+          if (currentArg) {
+            spawnArgs.push(currentArg);
+            currentArg = '';
+          }
+        } else {
+          currentArg += char;
+        }
+      }
+      if (currentArg) {
+        spawnArgs.push(currentArg);
+      }
 
+      console.log('[TTS] Spawning Python service:', this.pythonPath, spawnArgs);
+
+      let pythonProcess: any;
       const timeout = setTimeout(() => {
-        python.kill('SIGTERM');
+        if (pythonProcess) {
+          pythonProcess.kill('SIGTERM');
+        }
         reject(new Error('TTS service timeout'));
       }, options.timeout);
 
-      const python = spawn(this.pythonPath, spawnArgs);
+      pythonProcess = spawn(this.pythonPath, spawnArgs);
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
 
-      python.stdout.on('data', (data) => {
+      pythonProcess.stdout.on('data', (data: Buffer) => {
         stdout.push(data);
       });
 
-      python.stderr.on('data', (data) => {
+      pythonProcess.stderr.on('data', (data: Buffer) => {
         stderr.push(data);
       });
 
-      python.on('close', (code) => {
+      pythonProcess.on('close', (code: number) => {
         clearTimeout(timeout);
 
         if (code !== 0) {
           const errorMsg = Buffer.concat(stderr).toString('utf-8');
+          console.log('[TTS] Python stderr:', errorMsg);
           try {
             const error = JSON.parse(errorMsg);
             reject(new Error(error.error || 'Unknown error'));
           } catch {
-            reject(new Error(`Python process exited with code ${code}`));
+            reject(new Error(`Python process exited with code ${code}: ${errorMsg}`));
           }
           return;
         }
@@ -223,18 +305,23 @@ export class TTSService {
         const stderrStr = Buffer.concat(stderr).toString('utf-8').trim();
         let metadata: AudioMetadata;
 
+        console.log('[TTS] Metadata string:', stderrStr);
+
         try {
           metadata = JSON.parse(stderrStr);
-        } catch {
+          console.log('[TTS] Parsed metadata:', metadata);
+        } catch (e) {
+          console.log('[TTS] Failed to parse metadata:', e);
           reject(new Error('Failed to parse TTS metadata'));
           return;
         }
 
         const audio = Buffer.concat(stdout);
+        console.log('[TTS] Audio buffer size:', audio.length);
         resolve({ audio, metadata });
       });
 
-      python.on('error', (error) => {
+      pythonProcess.on('error', (error: Error) => {
         clearTimeout(timeout);
         reject(error);
       });
@@ -280,7 +367,7 @@ export class TTSService {
    */
   private async readCache(key: string): Promise<SynthesisResult | null> {
     try {
-      const audioPath = path.join(this.cacheDir, `${key}.wav`);
+      const audioPath = path.join(this.cacheDir, `${key}.mp3`);
       const metadataPath = path.join(this.cacheDir, `${key}.json`);
 
       const [audio, metadataStr] = await Promise.all([
@@ -306,7 +393,7 @@ export class TTSService {
     try {
       await fs.mkdir(this.cacheDir, { recursive: true });
 
-      const audioPath = path.join(this.cacheDir, `${key}.wav`);
+      const audioPath = path.join(this.cacheDir, `${key}.mp3`);
       const metadataPath = path.join(this.cacheDir, `${key}.json`);
 
       await Promise.all([

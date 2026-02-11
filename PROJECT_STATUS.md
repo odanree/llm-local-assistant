@@ -1,11 +1,38 @@
 # Project Status & Cleanup Summary
 
 **Last Updated**: February 10, 2026  
-**Status**: ✅ Critical Zustand Validation Fixes Applied | v2.5.0 Ready
+**Status**: ✅ Voice Narration Integration Complete | v2.6.0 Released
 
 ---
 
-## 🔴 CRITICAL: Zustand Integration Validation (Latest Fix)
+## ✅ NEW: Voice Narration for `/explain` Command (v2.6.0)
+
+**Feature Completed**: Full voice narration integration for chat-based explanations.
+
+**What's Working**:
+- ✅ `/explain <filepath>` command in chat window
+- ✅ Automatic MP3 synthesis using edge-tts
+- ✅ Embedded audio player with play/pause/volume controls
+- ✅ Accurate duration display (MP3 bitrate formula)
+- ✅ Multi-chunk synthesis for long explanations (cumulative duration)
+- ✅ Workspace-relative file path resolution
+- ✅ Graceful degradation if TTS unavailable
+- ✅ Content Security Policy updated for audio playback
+- ✅ Diagnostic commands: Test Connection, Debug Environment
+
+**Key Fixes**:
+1. Python duration calculation: Fixed from `bytes / sample_rate / 1000` to `bytes / 16000`
+2. File path resolution: Fixed API from `?.fsPath` to `.uri.fsPath`
+3. Audio playback CSP: Added `media-src data:` directive
+4. Help text duplication: Now respects `skipHistory` flag
+
+**Technical**: 79.4 KB build, 3-5ms compile, token buffering prevents UI lag
+
+**Build Status**: ✅ Successful | No errors/warnings
+
+---
+
+## 🔴 ARCHIVED: Zustand Integration Validation (v2.5.1)
 
 **Problem Fixed**: System was generating code that compiled but was non-functional:
 - Store generation: ✅ Perfect

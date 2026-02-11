@@ -1,11 +1,13 @@
 """
-Setup ChatTTS for LLM Local Assistant voice narration.
+Setup TTS for LLM Local Assistant voice narration using edge-tts.
 
 This script:
 1. Checks Python version
-2. Installs dependencies (ChatTTS, torch)
-3. Downloads the model (~1GB)
-4. Verifies setup is complete
+2. Installs edge-tts (cloud TTS)
+3. Verifies setup is complete
+
+No GPU required, no large model downloads.
+Uses Microsoft Edge's cloud TTS API (cloud-based, requires internet).
 
 Usage:
     python setup_tts.py
@@ -75,10 +77,7 @@ def install_dependencies() -> bool:
     print_step("Installing dependencies...")
 
     dependencies = [
-        "ChatTTS",
-        "numpy",
-        "torch",
-        "torchaudio",
+        "edge-tts",
     ]
 
     for dep in dependencies:
@@ -88,7 +87,7 @@ def install_dependencies() -> bool:
                 [sys.executable, "-m", "pip", "install", dep],
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minutes per package
+                timeout=60,  # 1 minute per package
             )
             if result.returncode == 0:
                 print_success(f"{dep} installed")
@@ -106,49 +105,30 @@ def install_dependencies() -> bool:
     return True
 
 
-def download_model() -> bool:
-    """Download ChatTTS model from HuggingFace."""
-    print_step("Downloading ChatTTS model (~1GB)...")
-    print_info("This may take a few minutes depending on your internet speed...")
-
-    try:
-        # Import and trigger model download
-        from ChatTTS import ChatTTS
-
-        print_info("Loading model...")
-        model = ChatTTS.load()
-        print_success("ChatTTS model downloaded and cached")
-        return True
-
-    except Exception as e:
-        print_error(f"Failed to download model: {e}")
-        return False
-
-
 def verify_setup() -> bool:
-    """Verify that setup is complete and working."""
+    """Verify that edge-tts is working."""
     print_step("Verifying setup...")
 
     try:
-        from ChatTTS import ChatTTS
-        import torch
+        import edge_tts
+        import asyncio
 
-        # Load model
-        print_info("Loading ChatTTS model...")
-        model = ChatTTS.load()
+        print_info("Checking edge-tts installation...")
+        print_success("edge-tts is installed and ready")
+        
+        # Note: We don't do a test synthesis here because it requires:
+        # 1. Internet connection
+        # 2. Async event loop setup
+        # These are handled in the actual tts_service.py
+        
+        print_info("Cloud TTS (edge-tts) uses Microsoft's cloud API")
+        print_info("No local model download needed - internet required only during synthesis")
+        
+        return True
 
-        # Test synthesis
-        print_info("Testing synthesis...")
-        test_text = "Voice setup successful."
-        wav = model.infer(test_text, lang="en", use_decoder=True)
-
-        if wav is not None and len(wav) > 0:
-            print_success("Voice narration is working!")
-            return True
-        else:
-            print_error("Synthesis returned empty result")
-            return False
-
+    except ImportError:
+        print_error("edge-tts import failed (may still be installing)")
+        return False
     except Exception as e:
         print_error(f"Verification failed: {e}")
         return False
@@ -164,8 +144,7 @@ def main():
         ("Python version", check_python_version),
         ("pip availability", check_pip),
         ("Dependencies", install_dependencies),
-        ("Model download", download_model),
-        ("Verification", verify_setup),
+        ("TTS backend", verify_setup),
     ]
 
     for step_name, step_func in steps:
@@ -185,14 +164,19 @@ def main():
     print_success("Setup complete!")
     print("=" * 60)
     print("\nVoice narration is now enabled!")
+    print("\nNotes:")
+    print("  - edge-tts uses Microsoft's cloud TTS API")
+    print("  - Requires internet connection during synthesis")
+    print("  - No GPU needed, no large model downloads")
+    print("  - Multiple languages supported")
     print("\nNext steps:")
     print("  1. Try /explain command in VS Code")
-    print("  2. Narration should play automatically")
-    print("  3. Enjoy your code explanations with audio!")
+    print("  2. Audio narration should play automatically")
+    print("  3. Enjoy your code explanations with voice!")
     print("\nTroubleshooting:")
-    print("  - If /explain doesn't show audio, check settings")
-    print("  - Re-run this script if issues persist")
-    print("  - Check extension output for error messages")
+    print("  - If /explain doesn't show audio, check internet connection")
+    print("  - Check VS Code settings for voice-narration enabled")
+    print("  - Check extension output (View > Output) for error messages")
 
 
 if __name__ == "__main__":
