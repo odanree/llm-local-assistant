@@ -4,13 +4,42 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-code/v/odanree.llm-local-assistant)](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant)
 
-A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, and refactor with confidence using your local LLM.
+A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM (with optional cloud TTS).
 
-**🎯 v2.5.1 Focus: Critical Zustand Integration Validation Fixes**
+**🎯 v2.6.0 Focus: Voice Narration for Code Explanations**
 
-> **Latest Release**: v2.5.1 - Critical Zustand Integration Fixes ✅  
-> **Philosophy**: 100% integration validation. No silent failures.  
+> **Latest Release**: v2.6.0 - Voice Narration Integration ✅  
+> **Philosophy**: Beautiful AI interactions with accessibility features.  
+> **Note**: Voice requires internet (uses Microsoft Edge cloud TTS).  
 > **Status**: 486/489 tests passing. Production ready.
+
+## ✨ What's v2.6.0 (Voice Narration)
+
+### 🔊 NEW: Automatic Audio Narration
+
+**`/explain` command now synthesizes to speech!**
+
+```
+/explain src/components/Button.tsx
+→ Reads file from workspace
+→ Generates LLM explanation
+→ Automatically synthesizes MP3 using edge-tts
+→ Embeds playable audio in chat
+→ Shows duration: "59.3 seconds"
+```
+
+**Features**:
+- ✅ Click-to-play audio player in chat messages
+- ✅ Multi-chunk synthesis for long explanations
+- ✅ Accurate duration display (MP3 bitrate formula)
+- ✅ Workspace-relative file paths (e.g., `/explain src/main.ts`)
+- ✅ Graceful fallback if TTS unavailable
+- ✅ Diagnostic commands for setup validation
+- ⚠️ **Requires**: Internet + edge-tts (free, no API keys needed)
+
+**New Commands**:
+- `LLM Assistant: Test LLM Connection` - Validate server connectivity
+- `LLM Assistant: Debug Environment` - Show LLM config, voice status, workspace info
 
 ## ✨ What's v2.5.1 (Critical Patch)
 
@@ -19,10 +48,6 @@ A powerful VS Code extension that brings autonomous AI capabilities to your loca
 **Problem**: System generated 4/4 files successfully but component didn't call store hook → silent failure ❌  
 **Solution**: Integration validation now runs AFTER all files written, validates cross-file dependencies  
 **Impact**: Fails entire plan if store integration is broken (was: silently passing)
-
-**Strict Zustand Destructuring**
-- Detects wrong: `const store = useLoginStore(); const { x } = store;`
-- Enforces correct: `const { x } = useLoginStore();`
 
 ## ✨ What's v2.5.0 (6-Layer Validation System)
 
@@ -899,32 +924,41 @@ npm run test:watch   # Auto-run on changes
 
 ## 📚 Documentation
 
-### Industry Standard
+**Industry Standard Files** (in root)
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and releases
 - **[ROADMAP.md](ROADMAP.md)** - Future development plans
 - **[LICENSE](LICENSE)** - MIT License
 
+**All other documentation** lives in [/docs/](docs/) organized by purpose:
+
+### Getting Started
+- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Common commands
+- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running and testing
+
 ### Architecture & Design
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns (rules defined in `.lla-rules`)
+- **[TTS Strategy Pattern](docs/TTS_STRATEGY_PATTERN.md)** - Pluggable audio backends with dependency injection
+- **[Voice Narration](docs/VOICE_NARRATION.md)** - Voice feature documentation
+- **[Form Component Patterns](docs/FORM_COMPONENT_PATTERNS.md)** - Detailed explanation of 7 form component patterns
 
-### Project Setup & Configuration
-- **[.lla-rules Reference](docs/CURSORRULES_EXAMPLE.md)** - Architecture rules template for code generation
-- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & repository organization
-
-### Repository Organization
-- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping root clean (reference when root gets bloated)
-
-### Troubleshooting & Reference
+### Development & Contribution
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines & workflow
 - **[Model Comparison](docs/MODEL_COMPARISON.md)** - LLM model recommendations
-- **[Local Testing Guide](docs/LOCAL_TESTING_GUIDE.md)** - Testing setup
-- **[Release History](docs/RELEASE-COMPLETE.md)** - Detailed release notes
-
-### Development
-- **[Developer Guide](docs/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
-- **[Execution Guide](docs/EXECUTION_GUIDE.md)** - Running code generation
 - **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace details
+
+### Product & Roadmap
+- **[Future Roadmap](docs/FUTURE_ROADMAP.md)** - Planned features and development plans
+- **[Project Status](docs/PROJECT_STATUS.md)** - Current milestones and progress
+
+### Historical & Reference
+For historical context, phase documentation, and archived analysis, see:
+- **[/docs/archive/](docs/archive/)** - All archived documentation organized by category
+  - **phases/** - Phase 0-4 project history
+  - **bug-fixes/** - Technical deep dives on specific fixes
+  - **releases/** - PR descriptions and release notes
+  - **analysis/** - Implementation analysis and reports
+  - **sessions/** - Session summaries and work logs
 
 ## 🐛 Troubleshooting
 

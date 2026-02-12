@@ -20,3 +20,12 @@ docs/LINKEDIN_POST.md
 
 # Generated packages
 llm-local-assistant-*.vsix
+
+# Model files (downloaded separately, not stored in repo)
+asset/**/*.safetensors
+asset/**/*.bin
+asset/**/*.gguf
+asset/**/*.pt
+asset/**/*.pth
+asset/gpt/
+python/models/

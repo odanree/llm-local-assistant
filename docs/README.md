@@ -1,50 +1,81 @@
-# Documentation (/docs directory)
+# Documentation
 
-All extended documentation lives here. Root directory contains only 6 core documentation files.
+Active documentation organized by topic. Historical work archived separately.
 
-## Structure
+## 📚 Active Documentation (Root Level)
 
-### Phase 1 (Current - Shipping This Week)
-- **PHASE1_POLISH_CHECKLIST.md** - Testing & shipping guide (follow this day-by-day)
-- **PORTFOLIO_ANALYSIS.md** - Portfolio strategy & talking points
+Organized by purpose - only essential, current documentation.
 
-### Phase 2+ (Future Development)
-- **FUTURE_ROADMAP.md** - Complete specs for Phases 2-7 (40+ pages)
-- **PHASE2_CONTEXT_PROMPT.md** - Ready-to-use Phase 2 specification
+### Getting Started
+- **[INSTALL.md](./INSTALL.md)** - Installation and setup instructions
+- **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Quick command reference
+- **[EXECUTION_GUIDE.md](./EXECUTION_GUIDE.md)** - Guide for executing and testing
 
-### Navigation & Context
-- **ORGANIZATION_SUMMARY.md** - How all documents fit together
-- **QUICK_NAVIGATION_GUIDE.md** - Find what you need quickly
-- **COMPLETION_SUMMARY.md** - Summary of work completed
+### Core Architecture & Design
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System architecture and design patterns
+- **[TTS_STRATEGY_PATTERN.md](./TTS_STRATEGY_PATTERN.md)** - Pluggable TTS backend architecture with dependency injection
+- **[VOICE_NARRATION.md](./VOICE_NARRATION.md)** - Voice narration feature documentation
 
-## Root Directory Constraint
+### Development & Contribution
+- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Contribution guidelines and development workflow
+- **[FORM_COMPONENT_PATTERNS.md](./FORM_COMPONENT_PATTERNS.md)** - React form component patterns and examples
+- **[MODEL_COMPARISON.md](./MODEL_COMPARISON.md)** - LLM model comparison and selection guide
 
-⚠️ **STRICTLY ENFORCED**: The 6 root documentation files are:
-- README.md
-- ROADMAP.md
-- ARCHITECTURE.md
-- PROJECT_STATUS.md
-- QUICK_REFERENCE.md
-- CHANGELOG.md
+### Product & Roadmap
+- **[FUTURE_ROADMAP.md](./FUTURE_ROADMAP.md)** - Future features and development plans
+- **[MARKETPLACE.md](./MARKETPLACE.md)** - VS Code Marketplace listing and distribution
+- **[PROJECT_STATUS.md](./PROJECT_STATUS.md)** - Current project status and milestones
 
-**Rule**: NO new .md or .txt files in root. Everything goes here in `/docs/`.
+---
 
-## How to Use
+## 📦 Archive Documentation
 
-### I want to ship Phase 1 this week
-→ Start with `PHASE1_POLISH_CHECKLIST.md`
+Organized by category for reference without cluttering active workspace.
 
-### I want to understand the project
-→ Read `QUICK_NAVIGATION_GUIDE.md`
+### [archive/phases/](./archive/phases/)
+Complete project history organized by phase (Phase 0 → Phase 4).
+- **PHASES_OVERVIEW.md** - Consolidated summary of all phases
+- All detailed phase documentation in subdirectory
 
-### I want to build Phase 2
-→ Use `PHASE2_CONTEXT_PROMPT.md` as your spec
+### [archive/bug-fixes/](./archive/bug-fixes/)
+Technical deep dives into specific bug fixes, refactoring work, and validation improvements.
 
-### I want to see all future plans
-→ Read `FUTURE_ROADMAP.md`
+### [archive/sessions/](./archive/sessions/)
+Session summaries, completion reports, and historical work logs.
 
-### I'm confused about organization
-→ Check `ORGANIZATION_SUMMARY.md`
+### [archive/releases/](./archive/releases/)
+Historical PR descriptions and release notes.
+
+### [archive/analysis/](./archive/analysis/)
+Analysis reports, portfolio information, and miscellaneous documentation.
+
+---
+
+## 🎯 Quick Navigation
+
+### I want to contribute code
+→ Read **[CONTRIBUTING.md](./CONTRIBUTING.md)** and **[ARCHITECTURE.md](./ARCHITECTURE.md)**
+
+### I want to understand the design
+→ Read **[ARCHITECTURE.md](./ARCHITECTURE.md)** → **[TTS_STRATEGY_PATTERN.md](./TTS_STRATEGY_PATTERN.md)**
+
+### I want to add a new TTS backend
+→ See **[TTS_STRATEGY_PATTERN.md](./TTS_STRATEGY_PATTERN.md)** (Adding a New TTS Strategy section)
+
+### I want to see the roadmap
+→ Read **[FUTURE_ROADMAP.md](./FUTURE_ROADMAP.md)**
+
+### I need to understand the voice feature
+→ Read **[VOICE_NARRATION.md](./VOICE_NARRATION.md)**
+
+### I want historical context
+→ Browse **[archive/phases/PHASES_OVERVIEW.md](./archive/phases/PHASES_OVERVIEW.md)**
+
+---
+
+## 📋 Root Directory Rule
+
+⚠️ **ENFORCED**: Root directory contains only essential, actively maintained documentation. All other files archived in `/docs/archive/`.
 
 ---
 

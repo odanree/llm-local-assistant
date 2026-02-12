@@ -1,112 +1,184 @@
 {
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
-  "description": "Intelligent code refactoring & architecture analysis. Analyze code, suggest improvements, extract services, generate features. All locally, all safely.",
+  "description": "Local LLM code generation, refactoring, and explanation with voice narration",
   "version": "2.6.1",
   "publisher": "odanree",
+  "license": "MIT",
   "icon": "assets/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/odanree/llm-local-assistant"
   },
   "engines": {
-    "vscode": "^1.106.1"
+    "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Formatters",
+    "Refactoring",
+    "AI"
+  ],
+  "keywords": [
+    "llm",
+    "local",
+    "code-generation",
+    "refactoring",
+    "voice",
+    "narration",
+    "chatgpt",
+    "claude",
+    "offline"
   ],
   "activationEvents": [
-    "onCommand:llm-local-assistant.openChat",
-    "onCommand:llm-local-assistant.testConnection"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "llm-local-assistant.openChat",
-        "title": "Open LLM Chat",
-        "category": "LLM Assistant"
+        "command": "llm-assistant.open-chat",
+        "title": "LLM Assistant: Open LLM Chat"
       },
       {
-        "command": "llm-local-assistant.testConnection",
-        "title": "Test LLM Connection",
-        "category": "LLM Assistant"
+        "command": "llm-assistant.explain",
+        "title": "LLM Assistant: Explain Code",
+        "when": "editorTextFocus"
       },
       {
-        "command": "llm-assistant.debugEnv",
-        "title": "Debug Environment",
-        "category": "LLM Assistant"
+        "command": "llm-assistant.setup-voice",
+        "title": "LLM Assistant: Setup Voice Narration"
+      },
+      {
+        "command": "llm-assistant.test-voice",
+        "title": "LLM Assistant: Test Voice Narration"
+      },
+      {
+        "command": "llm-assistant.voice-settings",
+        "title": "LLM Assistant: Voice Settings"
+      },
+      {
+        "command": "llm-assistant.test-connection",
+        "title": "LLM Assistant: Test LLM Connection"
+      },
+      {
+        "command": "llm-assistant.debug-environment",
+        "title": "LLM Assistant: Debug Environment"
       }
     ],
-    "configuration": [
+    "keybindings": [
       {
-        "title": "LLM Assistant",
-        "properties": {
-          "llm-assistant.endpoint": {
-            "type": "string",
-            "default": "http://localhost:11434",
-            "description": "LLM server endpoint (e.g., Ollama, LM Studio)"
-          },
-          "llm-assistant.model": {
-            "type": "string",
-            "default": "mistral",
-            "description": "Model name to use (e.g., 'mistral', 'neural-chat', 'orca-2')"
-          },
-          "llm-assistant.temperature": {
-            "type": "number",
-            "default": 0.7,
-            "minimum": 0,
-            "maximum": 2,
-            "description": "Sampling temperature (lower = more deterministic, higher = more creative)"
-          },
-          "llm-assistant.maxTokens": {
-            "type": "number",
-            "default": 2048,
-            "minimum": 256,
-            "description": "Maximum tokens in response"
-          },
-          "llm-assistant.timeout": {
-            "type": "number",
-            "default": 30000,
-            "description": "Request timeout in milliseconds"
-          }
+        "command": "llm-assistant.explain",
+        "key": "cmd+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "LLM Local Assistant",
+      "properties": {
+        "llm-assistant.voice.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable voice narration for code explanations",
+          "scope": "resource"
+        },
+        "llm-assistant.voice.speed": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.5,
+          "maximum": 2,
+          "step": 0.25,
+          "description": "Playback speed for voice narration (0.5x to 2.0x)",
+          "scope": "resource"
+        },
+        "llm-assistant.voice.language": {
+          "type": "string",
+          "default": "en",
+          "enum": [
+            "en",
+            "zh"
+          ],
+          "enumDescriptions": [
+            "English",
+            "Chinese (中文)"
+          ],
+          "description": "Language for voice narration",
+          "scope": "resource"
+        },
+        "llm-assistant.voice.maxChunkLength": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 2000,
+          "description": "Maximum characters per voice synthesis call (longer text is chunked)",
+          "scope": "resource"
+        },
+        "llm-assistant.voice.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Cache synthesized audio files for reuse",
+          "scope": "resource"
+        },
+        "llm-assistant.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Path to Python executable (for voice narration)",
+          "scope": "resource"
         }
       }
-    ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "llm-assistant.explain",
+          "group": "1_modification",
+          "when": "editorTextFocus && editorHasSelection"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "llm-assistant.explain",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "llm-assistant.setup-voice"
+        },
+        {
+          "command": "llm-assistant.test-voice"
+        },
+        {
+          "command": "llm-assistant.voice-settings"
+        }
+      ]
+    }
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
-    "compile": "webpack",
-    "watch": "webpack --watch",
-    "package": "webpack --mode production --devtool hidden-source-map",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vitest",
-    "test:coverage": "vitest --coverage",
-    "test:ui": "vitest --ui"
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --target=node18 --format=cjs",
+    "esbuild": "npm run esbuild-base -- --sourcemap",
+    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
+    "build": "npm run esbuild",
+    "watch": "npm run esbuild-watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "compile": "npm run esbuild",
+    "lint": "eslint src --ext ts",
+    "format": "prettier --write src/**/*.ts"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
-    "@types/vscode": "^1.106.1",
-    "@vitest/ui": "^4.0.10",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2",
-    "eslint": "^9.39.1",
-    "happy-dom": "^20.0.10",
-    "ts-loader": "^9.5.4",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.3",
-    "vitest": "^4.0.10",
-    "vsce": "^2.15.0",
-    "webpack": "^5.102.1",
-    "webpack-cli": "^6.0.1"
-  },
-  "dependencies": {
     "@babel/parser": "^7.29.0",
     "@babel/traverse": "^7.29.0",
-    "@babel/types": "^7.29.0"
+    "@babel/types": "^7.29.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "esbuild": "^0.27.3",
+    "eslint": "^8.0.0",
+    "happy-dom": "^20.6.1",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.18"
   }
 }
