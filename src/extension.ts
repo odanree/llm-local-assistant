@@ -1,4 +1,4 @@
-﻿// The module 'vscode' contains the VS Code extensibility API
+// The module 'vscode' contains the VS Code extensibility API
 import * as vscode from 'vscode';
 import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
@@ -92,7 +92,7 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
 
 /**
  * Load architecture rules from workspace root
- * Checks in priority order: .lla-rules (primary) ΓåÆ .cursorrules (migration/fallback)
+ * Checks in priority order: .lla-rules (primary) → .cursorrules (migration/fallback)
  * @returns Rules content if file exists, undefined otherwise
  */
 async function loadArchitectureRules(): Promise<string | undefined> {
@@ -121,7 +121,7 @@ async function loadArchitectureRules(): Promise<string | undefined> {
       const text = new TextDecoder().decode(content);
       const lines = text.split('\n').length;
 
-      console.log(`Γ£ô [.lla-rules] Successfully loaded ${filename} (${lines} lines, ${content.byteLength} bytes)`);
+      console.log(`✅ [.lla-rules] Successfully loaded ${filename} (${lines} lines, ${content.byteLength} bytes)`);
       console.log(`[.lla-rules] First line: ${text.split('\n')[0].substring(0, 80)}`);
       return text;
     } catch (error) {
@@ -195,7 +195,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     }
   );
 
-  console.log('[openChat] Γ£ô Webview panel created successfully');
+  console.log('[openChat] ✅ Webview panel created successfully');
 
   // Set the webview's initial html content ONLY on first creation
   chatPanel.webview.html = getWebviewContent();
@@ -206,32 +206,32 @@ function openLLMChat(context: vscode.ExtensionContext): void {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
         text: `**Agent Mode Commands (v2.5.0)**\n\n` +
-          `≡ƒñû **Planning & Execution (UPDATED v2.5.0) Γ£¿:**\n` +
-          `- /plan <task> ΓÇö Create a multi-step action plan (NOW: No infinite loops)\n` +
-          `- /execute ΓÇö Execute the current plan step-by-step\n` +
-          `- /approve ΓÇö Acknowledge and approve the plan (NOW: Re-enabled)\n` +
-          `- /reject ΓÇö Discard the current plan\n\n` +
-          `≡ƒôÜ **Codebase Context:**\n` +
-          `- /context show structure ΓÇö Show project file organization\n` +
-          `- /context show patterns ΓÇö Show detected code patterns\n` +
-          `- /context show dependencies ΓÇö Show file dependencies\n` +
-          `- /context find similar <file> ΓÇö Find similar files\n\n` +
-          `≡ƒöº **Refactoring & Architecture:**\n` +
-          `- /refactor <file> ΓÇö Analyze and suggest improvements\n` +
-          `- /extract-service <hook> <name> ΓÇö Extract business logic to service\n` +
-          `- /design-system <feature> ΓÇö Generate full feature architecture (NOW: No infinite loops)\n` +
-          `- /rate-architecture ΓÇö Score codebase quality (0-10)\n` +
-          `- /suggest-patterns ΓÇö Show pattern improvements\n\n` +
-          `≡ƒôä **File Operations:**\n` +
-          `- /read <path> ΓÇö Read a file from workspace\n` +
-          `- /write <path> <prompt> ΓÇö Generate and write file content\n` +
-          `- /suggestwrite <path> <prompt> ΓÇö Preview before writing\n` +
-          `- /explain <path> ΓÇö Generate detailed code explanation\n\n` +
-          `≡ƒô¥ **Git Integration:**\n` +
-          `- /git-commit-msg ΓÇö Generate commit message from staged changes\n` +
-          `- /git-review [staged|unstaged|all] ΓÇö Review code changes with AI\n\n` +
-          `≡ƒöì **Diagnostics:**\n` +
-          `- /check-model ΓÇö Show configured model and available models on server`,
+          `📋 **Planning & Execution (UPDATED v2.5.0):**\n` +
+          `- /plan <task> → Create a multi-step action plan (NOW: No infinite loops)\n` +
+          `- /execute → Execute the current plan step-by-step\n` +
+          `- /approve → Acknowledge and approve the plan (NOW: Re-enabled)\n` +
+          `- /reject → Discard the current plan\n\n` +
+          `🔍 **Codebase Context:**\n` +
+          `- /context show structure → Show project file organization\n` +
+          `- /context show patterns → Show detected code patterns\n` +
+          `- /context show dependencies → Show file dependencies\n` +
+          `- /context find similar <file> → Find similar files\n\n` +
+          `🔧 **Refactoring & Architecture:**\n` +
+          `- /refactor <file> → Analyze and suggest improvements\n` +
+          `- /extract-service <hook> <name> → Extract business logic to service\n` +
+          `- /design-system <feature> → Generate full feature architecture (NOW: No infinite loops)\n` +
+          `- /rate-architecture → Score codebase quality (0-10)\n` +
+          `- /suggest-patterns → Show pattern improvements\n\n` +
+          `📝 **File Operations:**\n` +
+          `- /read <path> → Read a file from workspace\n` +
+          `- /write <path> <prompt> → Generate and write file content\n` +
+          `- /suggestwrite <path> <prompt> → Preview before writing\n` +
+          `- /explain <path> → Generate detailed code explanation\n\n` +
+          ` **Git Integration:**\n` +
+          `- /git-commit-msg → Generate commit message from staged changes\n` +
+          `- /git-review [staged|unstaged|all] → Review code changes with AI\n\n` +
+          ` **Diagnostics:**\n` +
+          `- /check-model → Show configured model and available models on server`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
@@ -264,7 +264,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /plan command
             const planMatch = text.match(/^\/plan\s+(.+)$/);
 
-            // PHASE 6: /plan command ΓÇö With multi-folder workspace detection
+            // PHASE 6: /plan command → With multi-folder workspace detection
             if (planMatch) {
               const userRequest = planMatch[1];
               
@@ -280,7 +280,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   console.log('[/plan] Multiple folders detected. Showing selection prompt.');
                   postChatMessage({
                     command: 'question',
-                    question: `≡ƒôü **Multiple folders detected.** Which project should I create the plan for?`,
+                    question: `❓ **Multiple folders detected.** Which project should I create the plan for?`,
                     options: folders.map(f => f.name),
                   });
                   
@@ -306,7 +306,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                 // Generate plan in selected folder
                 postChatMessage({
                   command: 'addMessage',
-                  text: `≡ƒôï Generating plan for: "${userRequest}"`,
+                  text: `📊 Generating plan for: "${userRequest}"`,
                   type: 'info',
                 });
 
@@ -325,7 +325,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     onProgress: (stage: string, details: string) => {
                       chatPanel?.webview.postMessage({
                         command: 'addMessage',
-                        text: `Γƒ│ ${stage}: ${details}`,
+                        text: `→ ${stage}: ${details}`,
                         type: 'info',
                       });
                     },
@@ -350,14 +350,14 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                       (s) =>
                         `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
                         `${s.description}\n` +
-                        (s.targetFile ? `≡ƒôä Target: \`${s.targetFile}\`\n` : '') +
-                        `Γ£ô Expected: ${s.expectedOutcome}`
+                        (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
+                        `✅ Expected: ${s.expectedOutcome}`
                     )
                     .join('\n\n');
 
                   postChatMessage({
                     command: 'addMessage',
-                    text: `Γ£à Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
+                    text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
                     success: true,
                     options: ['Execute', 'Reject'],
                   });
@@ -392,7 +392,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               try {
                 const modelInfo = await llmClient.getModelInfo();
                 
-                let response = `≡ƒöì **Model Configuration**\n\n`;
+                let response = ` **Model Configuration**\n\n`;
                 response += `**Endpoint:** \`${modelInfo.endpoint}\`\n\n`;
                 response += `**Configured Model:** \`${modelInfo.configuredModel}\`\n\n`;
                 
@@ -400,7 +400,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   response += `**Available Models on Server:**\n`;
                   modelInfo.availableModels.forEach(model => {
                     const isCurrent = model === modelInfo.configuredModel;
-                    response += `- \`${model}\`${isCurrent ? ' Γ£à (configured)' : ''}\n`;
+                    response += `- \`${model}\`${isCurrent ? ' ✨ (configured)' : ''}\n`;
                   });
                 } else if (modelInfo.error) {
                   response += `**Error:** ${modelInfo.error}\n\n`;
@@ -431,11 +431,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /approve command
             const approveMatch = text.match(/^\/approve/);
 
-            // PHASE 4: /approve command ΓÇö Acknowledge approved plans
+            // PHASE 4: /approve command → Acknowledge approved plans
             if (approveMatch) {
               postChatMessage({
                 command: 'addMessage',
-                text: `Γ£à Plan approved! Use \`/execute\` to run the steps, or \`/reject\` to discard it.`,
+                text: `✨ Plan approved! Use \`/execute\` to run the steps, or \`/reject\` to discard it.`,
                 success: true,
               });
               return;
@@ -444,7 +444,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
             // Check for /execute command
             const executeMatch = text.match(/^\/execute/);
 
-            // PHASE 4: /execute command ΓÇö Execute the current plan step-by-step
+            // PHASE 4: /execute command → Execute the current plan step-by-step
             if (executeMatch) {
               const currentPlan = (chatPanel as any)._currentPlan;
               if (!currentPlan) {
@@ -458,7 +458,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
 
               postChatMessage({
                 command: 'addMessage',
-                text: `ΓÜÖ∩╕Å Executing plan: "${currentPlan.userRequest || 'Unnamed Task'}"\n\nRunning ${currentPlan.steps.length} steps...`,
+                text: `▶️ Executing plan: "${currentPlan.userRequest || 'Unnamed Task'}"\n\nRunning ${currentPlan.steps.length} steps...`,
                 type: 'info',
               });
 
@@ -467,7 +467,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   if (result.success) {
                     postChatMessage({
                       command: 'addMessage',
-                      text: `Γ£à Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
+                      text: `✨ Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
                       success: true,
                     });
                     delete (chatPanel as any)._currentPlan;
@@ -515,7 +515,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
               
               chatPanel?.webview.postMessage({
                 command: 'addMessage',
-                text: '≡ƒùæ∩╕Å Plan discarded.',
+                text: '🗑️ Plan discarded.',
                 success: true,
               });
               return;
@@ -642,23 +642,23 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   
                   // Check 1: Markdown wrapped code
                   if (generatedContent.includes('```') || generatedContent.match(/^```/m)) {
-                    validationErrors.push(`Γ¥î Code wrapped in markdown backticks - not valid ${fileExtension}`);
+                    validationErrors.push(`❌ Code wrapped in markdown backticks - not valid ${fileExtension}`);
                   }
                   
                   // Check 2: Documentation instead of code
                   if (generatedContent.includes('# Setup') || generatedContent.includes('## Installation') || generatedContent.includes('### Step')) {
-                    validationErrors.push(`Γ¥î Content is documentation/tutorial instead of executable code`);
+                    validationErrors.push(`❌ Content is documentation/tutorial instead of executable code`);
                   }
                   
                   // Check 3: Multiple file references
                   const fileRefs = (generatedContent.match(/\/\/(.*\.(ts|tsx|js|json|yaml))/gi) || []).length;
                   if (fileRefs > 1) {
-                    validationErrors.push(`Γ¥î Multiple file references - should only generate ${relPath}`);
+                    validationErrors.push(`❌ Multiple file references - should only generate ${relPath}`);
                   }
                   
                   // Check 4: any type
                   if (generatedContent.includes(': any') || generatedContent.includes('as any')) {
-                    validationErrors.push(`Γ¥î Found 'any' type - use specific types or 'unknown'`);
+                    validationErrors.push(`❌ Found 'any' type - use specific types or 'unknown'`);
                   }
                   
                   // Check 5: Missing imports (generic namespace detection)
@@ -699,7 +699,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   Array.from(namespaceUsages).forEach((namespace) => {
                     if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
                       validationErrors.push(
-                        `Γ¥î Missing import: '${namespace}' is used but never imported. ` +
+                        `❌ Missing import: '${namespace}' is used but never imported. ` +
                         `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
                       );
                     }
@@ -719,7 +719,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   if (unusedImports.length > 0) {
                     unusedImports.forEach((unused) => {
                       validationErrors.push(
-                        `ΓÜá∩╕Å Unused import: '${unused}' is imported but never used. Remove it.`
+                        `✅ Unused import: '${unused}' is imported but never used. Remove it.`
                       );
                     });
                   }
@@ -727,14 +727,14 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Check for return type issues
                   if (generatedContent.includes('JSON.stringify') && generatedContent.includes(': string | null')) {
                     validationErrors.push(
-                      `ΓÜá∩╕Å Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
+                      `✅ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
                       `Fix: Change return type to just 'string'`
                     );
                   }
                   
                   if (generatedContent.includes('JSON.parse') && generatedContent.includes(': any')) {
                     validationErrors.push(
-                      `ΓÜá∩╕Å Type issue: JSON.parse() result should not be 'any'. Use a specific type.`
+                      `✅ Type issue: JSON.parse() result should not be 'any'. Use a specific type.`
                     );
                   }
                   
@@ -742,7 +742,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   if ((generatedContent.includes('useState') || generatedContent.includes('useEffect')) && !importedItems.has('useState')) {
                     if (!generatedContent.includes("import { useState")) {
                       validationErrors.push(
-                        `Γ¥î Missing React import: useState is used but not imported. ` +
+                        `❌ Missing React import: useState is used but not imported. ` +
                         `Add: import { useState } from 'react'`
                       );
                     }
@@ -751,7 +751,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   if (generatedContent.includes('useQuery') || generatedContent.includes('useMutation')) {
                     if (!generatedContent.includes('@tanstack/react-query')) {
                       validationErrors.push(
-                        `Γ¥î TanStack Query used but not imported correctly. ` +
+                        `❌ TanStack Query used but not imported correctly. ` +
                         `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
                       );
                     }
@@ -770,7 +770,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       const hasFetch = /fetch\s*\(|await\s+fetch|fetch\s*\{/.test(generatedContent);
                       if (hasFetch) {
                         validationErrors.push(
-                          `Γ¥î Architecture rule violation: Using direct fetch() instead of TanStack Query. ` +
+                          `❌ Architecture rule violation: Using direct fetch() instead of TanStack Query. ` +
                           `Use: const { data } = useQuery(...) or useMutation(...)`
                         );
                         console.log(`[LLM Assistant] Fetch usage detected - rule violation`);
@@ -780,7 +780,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     // Rule: No Redux when Zustand is rule
                     if (architectureRules.includes('Zustand') && generatedContent.includes('useSelector')) {
                       validationErrors.push(
-                        `Γ¥î Architecture rule violation: Using Redux (useSelector) instead of Zustand. ` +
+                        `❌ Architecture rule violation: Using Redux (useSelector) instead of Zustand. ` +
                         `Use: const store = useStore() from your Zustand store`
                       );
                       console.log(`[LLM Assistant] Redux usage detected - rule violation`);
@@ -789,7 +789,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     // Rule: No class components
                     if (architectureRules.includes('functional components') && generatedContent.includes('extends React.Component')) {
                       validationErrors.push(
-                        `Γ¥î Architecture rule violation: Using class component instead of functional component. ` +
+                        `❌ Architecture rule violation: Using class component instead of functional component. ` +
                         `Convert to: export function ComponentName() { ... }`
                       );
                       console.log(`[LLM Assistant] Class component detected - rule violation`);
@@ -801,7 +801,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       const arrowFunctionsWithoutReturnType = generatedContent.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
                       if (arrowFunctionsWithoutReturnType) {
                         validationErrors.push(
-                          `ΓÜá∩╕Å Architecture rule: TypeScript strict mode requires return type annotations. ` +
+                          `✅ Architecture rule: TypeScript strict mode requires return type annotations. ` +
                           `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
                         );
                         console.log(`[LLM Assistant] Arrow functions missing return types`);
@@ -811,7 +811,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       const functionsWithoutReturnType = generatedContent.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
                       if (functionsWithoutReturnType) {
                         validationErrors.push(
-                          `ΓÜá∩╕Å Architecture rule: Function declarations need return type annotations. ` +
+                          `✅ Architecture rule: Function declarations need return type annotations. ` +
                           `Use: function funcName(...): ReturnType { ... }`
                         );
                         console.log(`[LLM Assistant] Functions missing return types`);
@@ -826,7 +826,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       
                       if (hasObjectParams && !hasZodValidation && !generatedContent.includes('z.object')) {
                         validationErrors.push(
-                          `ΓÜá∩╕Å Architecture rule: Functions accepting objects should validate input with Zod. ` +
+                          `✅ Architecture rule: Functions accepting objects should validate input with Zod. ` +
                           `Define schema: const schema = z.object({ ... }); ` +
                           `Then validate: const validated = schema.parse(input);`
                         );
@@ -837,7 +837,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     // Rule: Zod validation
                     if (architectureRules.includes('Zod') && generatedContent.includes('type ') && !generatedContent.includes('z.')) {
                       validationErrors.push(
-                        `ΓÜá∩╕Å Architecture rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
+                        `✅ Architecture rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
                         `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
                       );
                       console.log(`[LLM Assistant] Zod rule suggestion`);
@@ -847,20 +847,20 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Check 7: React Hook Form resolver pattern
                   if ((generatedContent.includes('useForm') || generatedContent.includes('react-hook-form')) && generatedContent.includes('z.')) {
                     if (generatedContent.includes('async') && generatedContent.includes('validate')) {
-                      validationErrors.push(`Γ¥î Incorrect resolver: using manual async instead of zodResolver`);
+                      validationErrors.push(`❌ Incorrect resolver: using manual async instead of zodResolver`);
                     }
                   }
                   
                   // Check 8: Typo @hookform/resolve
                   if (generatedContent.includes('@hookform/resolve') && !generatedContent.includes('@hookform/resolvers')) {
-                    validationErrors.push(`Γ¥î Typo: '@hookform/resolve' should be '@hookform/resolvers'`);
+                    validationErrors.push(`❌ Typo: '@hookform/resolve' should be '@hookform/resolvers'`);
                   }
                   
                   // Check 9: Unmatched braces
                   const openBraces = (generatedContent.match(/{/g) || []).length;
                   const closeBraces = (generatedContent.match(/}/g) || []).length;
                   if (openBraces > closeBraces) {
-                    validationErrors.push(`Γ¥î Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+                    validationErrors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
                   }
                   
                   console.log(`[LLM Assistant] Validation complete - errors found: ${validationErrors.length}`);
@@ -880,17 +880,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       
                       chatPanel?.webview.postMessage({
                         command: 'addMessage',
-                        error: `Γ¥î VALIDATION FAILED (attempt ${correctionAttempt}/${MAX_VALIDATION_ATTEMPTS}) - Code cannot be written:\n${currentValidationErrors.join('\n')}\n\nAttempting auto-correction...`,
+                        error: `❌ VALIDATION FAILED (attempt ${correctionAttempt}/${MAX_VALIDATION_ATTEMPTS}) - Code cannot be written:\n${currentValidationErrors.join('\n')}\n\nAttempting auto-correction...`,
                         success: false,
                       });
                       
                       // LOOP DETECTION: Check if same errors are repeating
                       const errorKey = JSON.stringify(currentValidationErrors.sort());
                       if (previousErrorSets.includes(errorKey)) {
-                        console.log(`[LLM Assistant] ΓÜá∩╕Å LOOP DETECTED: Same validation errors appearing again - stopping to prevent infinite loop`);
+                        console.log(`[LLM Assistant] ✅ LOOP DETECTED: Same validation errors appearing again - stopping to prevent infinite loop`);
                         chatPanel?.webview.postMessage({
                           command: 'addMessage',
-                          error: `≡ƒöä LOOP DETECTED: Same validation errors repeating - cannot auto-correct further.\n\nPlease fix manually in the editor:\n${currentValidationErrors.join('\n')}`,
+                          error: `🚨 LOOP DETECTED: Same validation errors repeating - cannot auto-correct further.\n\nPlease fix manually in the editor:\n${currentValidationErrors.join('\n')}`,
                           success: false,
                         });
                         return;
@@ -931,26 +931,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                       
                       // Check 1: Markdown wrapped code
                       if (correctedContent.includes('```') || correctedContent.match(/^```/m)) {
-                        revalidationErrors.push(`Γ¥î Code wrapped in markdown backticks - not valid ${fileExtension}`);
+                        revalidationErrors.push(`❌ Code wrapped in markdown backticks - not valid ${fileExtension}`);
                       }
                       
                       // Check 2: Documentation instead of code
                       if (correctedContent.includes('# Setup') || correctedContent.includes('## Installation') || correctedContent.includes('### Step')) {
-                        revalidationErrors.push(`Γ¥î Content is documentation/tutorial instead of executable code`);
+                        revalidationErrors.push(`❌ Content is documentation/tutorial instead of executable code`);
                       }
                       
                       // Check 3: Unmatched braces
                       const openBraces = (correctedContent.match(/{/g) || []).length;
                       const closeBraces = (correctedContent.match(/}/g) || []).length;
                       if (openBraces > closeBraces) {
-                        revalidationErrors.push(`Γ¥î Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
+                        revalidationErrors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
                       }
                       
                       // Check 4: Missing imports (basic check)
                       const hasReact = correctedContent.includes('export');
                       const hasImportReact = correctedContent.includes('import');
                       if (hasReact && !hasImportReact) {
-                        revalidationErrors.push(`ΓÜá∩╕Å Code exports something but has no imports - check imports`);
+                        revalidationErrors.push(`✅ Code exports something but has no imports - check imports`);
                       }
                       
                       if (revalidationErrors.length > 0) {
@@ -962,19 +962,19 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                           console.log(`[LLM Assistant] Max auto-correction attempts (${MAX_VALIDATION_ATTEMPTS}) reached`);
                           chatPanel?.webview.postMessage({
                             command: 'addMessage',
-                            error: `Γ¥î Max auto-correction attempts (${MAX_VALIDATION_ATTEMPTS}) reached. Remaining issues:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
+                            error: `❌ Max auto-correction attempts (${MAX_VALIDATION_ATTEMPTS}) reached. Remaining issues:\n${revalidationErrors.join('\n')}\n\nPlease fix manually.`,
                             success: false,
                           });
                           return;
                         }
                         // Otherwise loop continues with next correction attempt
                       } else {
-                        // Γ£à Auto-correction succeeded
+                        // ✨ Auto-correction succeeded
                         console.log(`[LLM Assistant] Auto-correction succeeded on attempt ${correctionAttempt}`);
                         
                         chatPanel?.webview.postMessage({
                           command: 'addMessage',
-                          text: `Γ£à Auto-correction successful! Code now passes validation.`,
+                          text: `✨ Auto-correction successful! Code now passes validation.`,
                           success: true,
                         });
                         
@@ -1010,7 +1010,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(finalContent));
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
-                  text: `Γ£à Successfully generated and wrote file: ${relPath}`,
+                  text: `✨ Successfully generated and wrote file: ${relPath}`,
                   success: true,
                 });
               } catch (err) {
@@ -1044,7 +1044,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   
                   chatPanel?.webview.postMessage({
                     command: 'status',
-                    text: `≡ƒôÜ Scanning codebase...`,
+                    text: `🔍 Scanning codebase...`,
                     type: 'info',
                   });
 
@@ -1052,7 +1052,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
                   chatPanel?.webview.postMessage({
                     command: 'status',
-                    text: `Γ£à Codebase indexed`,
+                    text: `✨ Codebase indexed`,
                     type: 'info',
                   });
                 }
@@ -1111,7 +1111,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     if (deps.length > 0) {
                       response += `**${f.path}**\n`;
                       deps.forEach(dep => {
-                        response += `ΓåÆ ${dep}\n`;
+                        response += ` ${dep}\n`;
                       });
                       response += '\n';
                     }
@@ -1184,7 +1184,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               try {
                 chatPanel?.webview.postMessage({
                   command: 'status',
-                  text: `≡ƒöì Analyzing ${filepath}...`,
+                  text: `🔧 Analyzing ${filepath}...`,
                   type: 'info',
                 });
 
@@ -1217,15 +1217,15 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 }
                 
                 // Build detailed report
-                let report = `≡ƒôè **Refactoring Analysis: ${filepath}**\n`;
-                report += `≡ƒôü **Workspace:** ${workspaceFolder.name}\n\n`;
+                let report = `📋 **Refactoring Analysis: ${filepath}**\n`;
+                report += `❓ **Workspace:** ${workspaceFolder.name}\n\n`;
                 report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
                 
                 // Show pattern if detected (always prioritize pattern recommendations)
                 if (shouldShowPattern) {
                   report += `**Architectural Pattern:** ${patternResult.pattern} (${Math.round(patternResult.confidence * 100)}% confidence)\n`;
                   report += `> ${patternResult.reasoning}\n`;
-                  report += `Γä╣∩╕Å This file could benefit from the **${patternResult.pattern}** pattern\n\n`;
+                  report += ` This file could benefit from the **${patternResult.pattern}** pattern\n\n`;
                 }
                 
                 if (semanticAnalysis.issues.length > 0) {
@@ -1234,7 +1234,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 
                 // Only show "no issues" if we didn't detect a pattern requiring improvement
                 if (!semanticAnalysis.issues.length && !shouldShowPattern) {
-                  report += `**Issues Found:**\n- Γ£à No major semantic issues detected\n\n`;
+                  report += `**Issues Found:**\n- ✨ No major semantic issues detected\n\n`;
                 } else if (!semanticAnalysis.issues.length && shouldShowPattern) {
                   // Pattern detected but no specific issues - that's fine, pattern is the recommendation
                 }
@@ -1303,7 +1303,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   report += `\n`;
                 } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
                   // File is a service - show architectural guidance instead of extraction suggestions
-                  report += `**Γä╣∩╕Å Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
+                  report += `** Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
                 }
                 
                 postChatMessage({
@@ -1318,7 +1318,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
                   postChatMessage({
                     command: 'addMessage',
-                    text: `≡ƒÆí **Recommended Extractions:**\n${
+                    text: ` **Recommended Extractions:**\n${
                       semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
                     }\n\n**Note:** Code extraction requires understanding component context and business logic that automated tools can't reliably handle. Please apply these extractions manually using your IDE's refactoring tools or Cursor/Windsurf.`,
                     success: true,
@@ -1333,7 +1333,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Instead of offering refactoring, just inform the user about the detected pattern
                   postChatMessage({
                     command: 'addMessage',
-                    text: `Γ£à **Pattern Detected: ${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)
+                    text: `✨ **Pattern Detected: ${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)
 
 The analysis suggests this file implements or could benefit from the **${patternResult.pattern}** pattern.
 
@@ -1363,7 +1363,7 @@ ${patternResult.reasoning}
 
               postChatMessage({
                 command: 'addMessage',
-                text: `≡ƒÅù∩╕Å Generating system design for: "${featureRequest}"\n\nΓƒ│ Calling language model...`,
+                text: `🏗️ Generating system design for: "${featureRequest}"\n\n→ Calling language model...`,
                 type: 'info',
               });
 
@@ -1374,7 +1374,7 @@ ${patternResult.reasoning}
 
 CRITICAL: Use this EXACT format using layer structure:
 
-≡ƒÅù∩╕Å **Architecture: [Feature Name]**
+🏗️ **Architecture: [Feature Name]**
 
 [Schema Layer]
 - File.ts (brief description of what it defines)
@@ -1393,10 +1393,10 @@ CRITICAL: Use this EXACT format using layer structure:
 - Component2.tsx (purpose)
 
 [Validation]
-Γ£à All layers defined
-Γ£à File contracts validated
-Γ£à Import paths calculated
-Γ£à Ready for generation
+✨ All layers defined
+✨ File contracts validated
+✨ Import paths calculated
+✨ Ready for generation
 
 Next: Use /write to create files
 
@@ -1407,7 +1407,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                 if (response.success && response.message) {
                   postChatMessage({
                     command: 'addMessage',
-                    text: `Γ£à System design generated successfully!\n\n${response.message}`,
+                    text: `✨ System design generated successfully!\n\n${response.message}`,
                     success: true,
                   });
                 } else {
@@ -1437,7 +1437,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                 if (folders && folders.length > 1) {
                   postChatMessage({
                     command: 'question',
-                    question: `≡ƒôü **Multiple workspaces detected.** Which project would you like to analyze?`,
+                    question: ` **Multiple workspaces detected.** Which project would you like to analyze?`,
                     options: folders.map(f => f.name),
                   });
                   
@@ -1448,7 +1448,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
 
                 chatPanel?.webview.postMessage({
                   command: 'status',
-                  text: `≡ƒôè Scanning codebase...`,
+                  text: `📋 Scanning codebase...`,
                   type: 'info',
                 });
 
@@ -1521,23 +1521,23 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                 const score = Math.min(10, Math.max(0, totalScore));
 
                 // Build detailed report
-                let report = `≡ƒÅå **Architecture Rating: ${Math.round(score)}/10**\n\n`;
+                let report = `⭐ **Architecture Rating: ${Math.round(score)}/10**\n\n`;
                 report += `${summary}\n\n`;
                 report += `**Layer Breakdown:**\n`;
-                report += `${filesByPurpose['schema'] > 0 ? 'Γ£à' : 'Γ¥î'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
-                report += `${filesByPurpose['service'] > 0 ? 'Γ£à' : 'Γ¥î'} Services: ${filesByPurpose['service']} file(s)\n`;
-                report += `${filesByPurpose['hook'] > 0 ? 'Γ£à' : 'Γ¥î'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
-                report += `${filesByPurpose['component'] > 0 ? 'Γ£à' : 'Γ¥î'} Components: ${filesByPurpose['component']} file(s)\n\n`;
+                report += `${filesByPurpose['schema'] > 0 ? '✨' : '❌'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
+                report += `${filesByPurpose['service'] > 0 ? '✨' : '❌'} Services: ${filesByPurpose['service']} file(s)\n`;
+                report += `${filesByPurpose['hook'] > 0 ? '✨' : '❌'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
+                report += `${filesByPurpose['component'] > 0 ? '✨' : '❌'} Components: ${filesByPurpose['component']} file(s)\n\n`;
 
                 if (score >= 8) {
-                  report += `Γ£à **Excellent architecture!** Clear separation of concerns, proper layering.`;
+                  report += `✨ **Excellent architecture!** Clear separation of concerns, proper layering.`;
                 } else if (score >= 6) {
-                  report += `ΓÜá∩╕Å **Good structure** with room for improvement. Consider:`;
+                  report += `✅ **Good structure** with room for improvement. Consider:`;
                   if (filesByPurpose['schema'] === 0) report += `\n- Add schemas for type safety`;
                   if (filesByPurpose['service'] < 2) report += `\n- Extract more business logic to services`;
                   if (filesByPurpose['component'] === 0) report += `\n- Create UI components`;
                 } else {
-                  report += `Γ¥î **Needs refactoring.** Consider:`;
+                  report += `❌ **Needs refactoring.** Consider:`;
                   report += `\n- Create proper layer separation`;
                   report += `\n- Extract business logic from components`;
                   report += `\n- Add schema validation`;
@@ -1567,7 +1567,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                 if (folders && folders.length > 1) {
                   postChatMessage({
                     command: 'question',
-                    question: `≡ƒôü **Multiple workspaces detected.** Which project would you like to analyze?`,
+                    question: ` **Multiple workspaces detected.** Which project would you like to analyze?`,
                     options: folders.map(f => f.name),
                   });
                   
@@ -1610,7 +1610,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                 let fileContent = new TextDecoder('utf-8').decode(data);
                 let sizeWarning = '';
                 if (data.byteLength > MAX_FILE_SIZE) {
-                  sizeWarning = `\nΓÜá∩╕Å File is ${(data.byteLength / (1024 * 1024)).toFixed(2)}MB. Showing first 5MB.\n`;
+                  sizeWarning = `\n✅ File is ${(data.byteLength / (1024 * 1024)).toFixed(2)}MB. Showing first 5MB.\n`;
                   fileContent = fileContent.substring(0, MAX_FILE_SIZE);
                 }
                 chatPanel?.webview.postMessage({
@@ -1698,7 +1698,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                   await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(generatedContent));
                   chatPanel?.webview.postMessage({
                     command: 'addMessage',
-                    text: `Γ£à Successfully wrote file: ${relPath}`,
+                    text: `✨ Successfully wrote file: ${relPath}`,
                     success: true,
                   });
                 } else {
@@ -1755,7 +1755,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                   if (response.success) {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      text: `≡ƒô¥ Suggested commit message:\n\n\`\`\`\n${response.message}\n\`\`\`\n\nCopy this message and run: git commit -m "your message here"`,
+                      text: `💬 Suggested commit message:\n\n\`\`\`\n${response.message}\n\`\`\`\n\nCopy this message and run: git commit -m "your message here"`,
                       success: true,
                     });
                   } else {
@@ -1774,7 +1774,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                   if (response.success) {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      text: `≡ƒô¥ Suggested commit message:\n\n\`\`\`\n${commitMsg}\n\`\`\`\n\nCopy this message and run: git commit -m "your message here"`,
+                      text: `💬 Suggested commit message:\n\n\`\`\`\n${commitMsg}\n\`\`\`\n\nCopy this message and run: git commit -m "your message here"`,
                       success: true,
                     });
                   } else {
@@ -1836,7 +1836,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                   if (response.success) {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      text: `≡ƒöì Code Review:\n\n${response.message}`,
+                      text: `🔧 Code Review:\n\n${response.message}`,
                       success: true,
                     });
                   } else {
@@ -1884,7 +1884,7 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
 
               chatPanel?.webview.postMessage({
                 command: 'status',
-                text: `≡ƒôû Analyzing ${relPath}...`,
+                text: `🔍 Analyzing ${relPath}...`,
                 type: 'info',
               });
 
@@ -1928,7 +1928,7 @@ ${fileContent}
                   if (response.success) {
                     postChatMessage({
                       command: 'addMessage',
-                      text: `≡ƒôû **Code Explanation: ${relPath}**\n\n${response.message}`,
+                      text: ` **Code Explanation: ${relPath}**\n\n${response.message}`,
                       success: true,
                     });
                   } else {
@@ -1948,7 +1948,7 @@ ${fileContent}
                   if (response.success) {
                     postChatMessage({
                       command: 'addMessage',
-                      text: `≡ƒôû **Code Explanation: ${relPath}**\n\n${explanation}`,
+                      text: ` **Code Explanation: ${relPath}**\n\n${explanation}`,
                       success: true,
                     });
                   } else {
@@ -2031,7 +2031,7 @@ ${fileContent}
                 
                 chatPanel?.webview.postMessage({
                   command: 'status',
-                  text: `≡ƒôè Scanning ${answer} codebase...`,
+                  text: ` Scanning ${answer} codebase...`,
                   type: 'info',
                 });
 
@@ -2097,23 +2097,23 @@ ${fileContent}
                 const score = Math.min(10, Math.max(0, totalScore));
 
                 // Build detailed report
-                let report = `≡ƒÅå **Architecture Rating: ${Math.round(score)}/10** (${answer})\n\n`;
+                let report = ` **Architecture Rating: ${Math.round(score)}/10** (${answer})\n\n`;
                 report += `${summary}\n\n`;
                 report += `**Layer Breakdown:**\n`;
-                report += `${filesByPurpose['schema'] > 0 ? 'Γ£à' : 'Γ¥î'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
-                report += `${filesByPurpose['service'] > 0 ? 'Γ£à' : 'Γ¥î'} Services: ${filesByPurpose['service']} file(s)\n`;
-                report += `${filesByPurpose['hook'] > 0 ? 'Γ£à' : 'Γ¥î'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
-                report += `${filesByPurpose['component'] > 0 ? 'Γ£à' : 'Γ¥î'} Components: ${filesByPurpose['component']} file(s)\n\n`;
+                report += `${filesByPurpose['schema'] > 0 ? '✨' : '❌'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
+                report += `${filesByPurpose['service'] > 0 ? '✨' : '❌'} Services: ${filesByPurpose['service']} file(s)\n`;
+                report += `${filesByPurpose['hook'] > 0 ? '✨' : '❌'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
+                report += `${filesByPurpose['component'] > 0 ? '✨' : '❌'} Components: ${filesByPurpose['component']} file(s)\n\n`;
 
                 if (score >= 8) {
-                  report += `Γ£à **Excellent architecture!** Clear separation of concerns, proper layering.`;
+                  report += `✨ **Excellent architecture!** Clear separation of concerns, proper layering.`;
                 } else if (score >= 6) {
-                  report += `ΓÜá∩╕Å **Good structure** with room for improvement. Consider:`;
+                  report += `✅ **Good structure** with room for improvement. Consider:`;
                   if (filesByPurpose['schema'] === 0) report += `\n- Add schemas for type safety`;
                   if (filesByPurpose['service'] < 2) report += `\n- Extract more business logic to services`;
                   if (filesByPurpose['component'] === 0) report += `\n- Create UI components`;
                 } else {
-                  report += `Γ¥î **Needs refactoring.** Consider:`;
+                  report += `❌ **Needs refactoring.** Consider:`;
                   report += `\n- Create proper layer separation`;
                   report += `\n- Extract business logic from components`;
                   report += `\n- Add schema validation`;
@@ -2151,7 +2151,7 @@ ${fileContent}
                 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `Γ£à Using folder: **${selectedFolder.name}**\n\n≡ƒôï Generating plan for: "${pendingPlanRequest}"`,
+                  text: `✨ Using folder: **${selectedFolder.name}**\n\n Generating plan for: "${pendingPlanRequest}"`,
                   type: 'info',
                 });
 
@@ -2170,7 +2170,7 @@ ${fileContent}
                   onProgress: (stage: string, details: string) => {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      text: `Γƒ│ ${stage}: ${details}`,
+                      text: ` ${stage}: ${details}`,
                       type: 'info',
                     });
                   },
@@ -2188,7 +2188,7 @@ ${fileContent}
                   onProgress: (stage: string, details: string) => {
                     chatPanel?.webview.postMessage({
                       command: 'addMessage',
-                      text: `Γƒ│ ${stage}: ${details}`,
+                      text: ` ${stage}: ${details}`,
                       type: 'info',
                     });
                   },
@@ -2212,14 +2212,14 @@ ${fileContent}
                     (s) =>
                       `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
                       `${s.description}\n` +
-                      (s.targetFile ? `≡ƒôä Target: \`${s.targetFile}\`\n` : '') +
-                      `Γ£ô Expected: ${s.expectedOutcome}`
+                      (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
+                      `✅ Expected: ${s.expectedOutcome}`
                   )
                   .join('\n\n');
 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `Γ£à Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
+                  text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
                   success: true,
                 });
                 
@@ -2263,13 +2263,13 @@ ${fileContent}
             
             // Handle pattern refactoring answers
             const refactorContext = (chatPanel as any)._currentRefactorContext;
-            if (refactorContext && answer === '≡ƒöº Refactor Now') {
+            if (refactorContext && answer === ' Refactor Now') {
               const { filepath, code, pattern, workspace } = refactorContext;
               
               try {
                 chatPanel?.webview.postMessage({
                   command: 'status',
-                  text: `≡ƒöä Generating refactored code for ${pattern} pattern...`,
+                  text: ` Generating refactored code for ${pattern} pattern...`,
                   type: 'info',
                 });
 
@@ -2297,15 +2297,15 @@ ${fileContent}
 
                 // Create preview message
                 const summary = patternRefactoringGenerator.summarizeChanges(refactoringResult);
-                const previewMsg = `≡ƒôï **Preview: Refactored Code**\n\n${summary}\n\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 500)}...\n\`\`\``;
+                const previewMsg = ` **Preview: Refactored Code**\n\n${summary}\n\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 500)}...\n\`\`\``;
 
                 postChatMessage({
                   command: 'question',
                   question: previewMsg,
                   options: [
-                    '≡ƒÆ╛ Write Refactored File',
-                    '≡ƒæü∩╕Å Show Full Preview',
-                    'Γ¥î Cancel',
+                    ' Write Refactored File',
+                    ' Show Full Preview',
+                    '❌ Cancel',
                   ],
                 });
 
@@ -2323,7 +2323,7 @@ ${fileContent}
             }
 
             // Handle "Show Preview" for refactoring
-            if (refactorContext && answer === '≡ƒôï Show Preview') {
+            if (refactorContext && answer === ' Show Preview') {
               const { code, pattern } = refactorContext;
               
               try {
@@ -2341,7 +2341,7 @@ ${fileContent}
                     workspace: refactorContext.workspace,
                   };
 
-                  const fullPreview = `### Original Code:\n\`\`\`typescript\n${code.substring(0, 300)}...\n\`\`\`\n\n### Refactored Code:\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 300)}...\n\`\`\`\n\n### Changes:\n${refactoringResult.changes.map(c => `ΓÇó ${c}`).join('\n')}`;
+                  const fullPreview = `### Original Code:\n\`\`\`typescript\n${code.substring(0, 300)}...\n\`\`\`\n\n### Refactored Code:\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 300)}...\n\`\`\`\n\n### Changes:\n${refactoringResult.changes.map(c => ` ${c}`).join('\n')}`;
 
                   postChatMessage({
                     command: 'addMessage',
@@ -2351,7 +2351,7 @@ ${fileContent}
                   postChatMessage({
                     command: 'question',
                     question: `Apply these changes?`,
-                    options: ['≡ƒÆ╛ Write Refactored File', 'Γ¥î Cancel'],
+                    options: [' Write Refactored File', '❌ Cancel'],
                   });
                 }
               } catch (err) {
@@ -2364,33 +2364,33 @@ ${fileContent}
             }
 
             // Handle "Skip" for pattern refactoring
-            if (refactorContext && answer === 'Γ¥î Skip') {
+            if (refactorContext && answer === '❌ Skip') {
               postChatMessage({
                 command: 'addMessage',
-                text: 'Γ£à Skipped pattern refactoring.',
+                text: '✨ Skipped pattern refactoring.',
               });
               (chatPanel as any)._currentRefactorContext = null;
               break;
             }
 
             // Handle "Cancel" for refactoring preview
-            if ((chatPanel as any)._currentRefactoringResult && answer === 'Γ¥î Cancel') {
+            if ((chatPanel as any)._currentRefactoringResult && answer === '❌ Cancel') {
               postChatMessage({
                 command: 'addMessage',
-                text: 'Γ£à Cancelled refactoring.',
+                text: '✨ Cancelled refactoring.',
               });
               (chatPanel as any)._currentRefactoringResult = null;
               break;
             }
 
             // Handle "Write Refactored File"
-            if ((chatPanel as any)._currentRefactoringResult && answer === '≡ƒÆ╛ Write Refactored File') {
+            if ((chatPanel as any)._currentRefactoringResult && answer === ' Write Refactored File') {
               const { refactoringResult, filepath, workspace } = (chatPanel as any)._currentRefactoringResult;
               
               try {
                 chatPanel?.webview.postMessage({
                   command: 'status',
-                  text: `≡ƒÆ╛ Writing refactored file...`,
+                  text: ` Writing refactored file...`,
                   type: 'info',
                 });
 
@@ -2420,7 +2420,7 @@ ${fileContent}
                 
                 postChatMessage({
                   command: 'addMessage',
-                  text: `Γ£à **Refactored file written!**\n\n≡ƒôü File: ${filepath}\n≡ƒÆ╛ Backup: .refactor-backups/${backupFileName}\n\n**Changes Applied:**\n${refactoringResult.changes.map(c => `ΓÇó ${c}`).join('\n')}`,
+                  text: `✨ **Refactored file written!**\n\n File: ${filepath}\n Backup: .refactor-backups/${backupFileName}\n\n**Changes Applied:**\n${refactoringResult.changes.map(c => ` ${c}`).join('\n')}`,
                   success: true,
                 });
 
@@ -2463,7 +2463,7 @@ ${fileContent}
               };
               chatPanel?.webview.postMessage({
                 command: 'status',
-                text: 'Γû╢∩╕Å Executing plan from button click...',
+                text: ' Executing plan from button click...',
                 type: 'info',
               });
               // Recursively process this as a sendMessage
@@ -2482,7 +2482,7 @@ ${fileContent}
 
                   postChatMessage({
                     command: 'addMessage',
-                    text: `ΓÜÖ∩╕Å Executing plan: "${currentPlan.userRequest || 'Unnamed Task'}"\n\nRunning ${currentPlan.steps.length} steps...`,
+                    text: `▶️ Executing plan: "${currentPlan.userRequest || 'Unnamed Task'}"\n\nRunning ${currentPlan.steps.length} steps...`,
                     type: 'info',
                   });
 
@@ -2491,7 +2491,7 @@ ${fileContent}
                       if (result.success) {
                         postChatMessage({
                           command: 'addMessage',
-                          text: `Γ£à Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
+                          text: `✨ Plan execution complete! ${result.completedSteps}/${currentPlan.steps.length} steps succeeded.`,
                           success: true,
                         });
                         delete (chatPanel as any)._currentPlan;
@@ -2530,7 +2530,7 @@ ${fileContent}
               delete (chatPanel as any)._currentPlan;
               postChatMessage({
                 command: 'addMessage',
-                text: 'Γ¥î Plan rejected. Use `/plan <task>` to generate a new one.',
+                text: '❌ Plan rejected. Use `/plan <task>` to generate a new one.',
                 type: 'info',
               });
             }
@@ -2581,7 +2581,7 @@ ${fileContent}
 async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): Promise<void> {
   chatPanel?.webview.postMessage({
     command: 'status',
-    text: `≡ƒöì Analyzing ${selectedFolder.name} patterns...`,
+    text: ` Analyzing ${selectedFolder.name} patterns...`,
     type: 'info',
   });
 
@@ -2625,7 +2625,7 @@ async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): P
   // Format suggestions with button options for quick refactoring
   const suggestionText = suggestions.length > 0 
     ? suggestions.slice(0, 5).map(s => 
-        `≡ƒôä ${s.file} ΓÇö Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n   Γä╣∩╕Å ${s.reason}`
+        ` ${s.file}  Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n    ${s.reason}`
       ).join('\n\n')
     : 'All files already follow good patterns!';
 
@@ -2636,7 +2636,7 @@ async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): P
 
   postChatMessage({
     command: 'addMessage',
-    text: `≡ƒÆí **Pattern Suggestions** (${selectedFolder.name})\n\n` +
+    text: ` **Pattern Suggestions** (${selectedFolder.name})\n\n` +
       `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
       `**Recommendations:**\n${suggestionText}`,
     options: refactorButtons.length > 0 ? refactorButtons : undefined,
@@ -2666,9 +2666,9 @@ function getActiveWorkspace(): vscode.Uri | undefined {
  * Extension activation
  */
 export async function activate(context: vscode.ExtensionContext) {
-  console.log('ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù');
-  console.log('Γòæ  LLM Local Assistant Activating...     Γòæ');
-  console.log('ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥');
+  console.log('');
+  console.log('  LLM Local Assistant Activating...     ');
+  console.log('');
 
   // Initialize LLM client with config
   const config = getLLMConfig();
@@ -2678,17 +2678,17 @@ export async function activate(context: vscode.ExtensionContext) {
   const rules = await loadArchitectureRules();
   if (rules) {
     config.architectureRules = rules;
-    console.log('[Extension] Γ£ô Architecture rules loaded and injected into LLMConfig');
+    console.log('[Extension] ✅ Architecture rules loaded and injected into LLMConfig');
   } else {
-    console.log('[Extension] Γä╣ No .lla-rules or .cursorrules file found (optional)');
+    console.log('[Extension]  No .lla-rules or .cursorrules file found (optional)');
   }
 
   llmClient = new LLMClient(config);
-  console.log('[Extension] Γ£ô LLM Client initialized');
+  console.log('[Extension] ✅ LLM Client initialized');
 
   // Register voice narration commands and initialize TTS service (v2.6.0 feature)
   registerVoiceCommands(context);
-  console.log('[Extension] Γ£ô Voice commands registered');
+  console.log('[Extension] ✅ Voice commands registered');
 
   // Initialize TTS service (lazy loading)
   getTTSService({
@@ -2696,7 +2696,7 @@ export async function activate(context: vscode.ExtensionContext) {
     language: getVoiceSettings().language,
     maxChunkLength: getVoiceSettings().maxChunkLength,
   });
-  console.log('[Extension] Γ£ô TTS service initialized');
+  console.log('[Extension] ✅ TTS service initialized');
 
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();
@@ -2805,17 +2805,17 @@ export async function activate(context: vscode.ExtensionContext) {
   refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
 
   // Register commands
-  const openChatCommand = vscode.commands.registerCommand('llm-local-assistant.openChat', () => {
+  const openChatCommand = vscode.commands.registerCommand('llm-assistant.open-chat', () => {
     openLLMChat(context);
   });
 
-  const testConnectionCommand = vscode.commands.registerCommand('llm-local-assistant.testConnection', async () => {
+  const testConnectionCommand = vscode.commands.registerCommand('llm-assistant.test-connection', async () => {
     const isHealthy = await llmClient.isServerHealthy();
     if (isHealthy) {
-      vscode.window.showInformationMessage('Γ£à Successfully connected to LLM server!');
+      vscode.window.showInformationMessage('✨ Successfully connected to LLM server!');
     } else {
       const config = getLLMConfig();
-      const errorMsg = `Γ¥î Could not connect to LLM server at ${config.endpoint}.\n\nSuggestions:\n` +
+      const errorMsg = `❌ Could not connect to LLM server at ${config.endpoint}.\n\nSuggestions:\n` +
         `1. Verify the server is running (e.g., 'ollama run ${config.model}')\n` +
         `2. Check endpoint in settings: llm-assistant.endpoint\n` +
         `3. Ensure model '${config.model}' is installed\n` +
@@ -2831,7 +2831,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Create status bar item to open chat
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.command = 'llm-local-assistant.openChat';
+  statusBarItem.command = 'llm-assistant.open-chat';
   statusBarItem.text = '$(sparkle) LLM Assistant';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
@@ -2845,3 +2845,4 @@ export function deactivate() {
     chatPanel.dispose();
   }
 }
+

@@ -8,7 +8,7 @@ import { execSync } from 'child_process';
  */
 
 export function registerDiagnostics(context: vscode.ExtensionContext) {
-  const disposable = vscode.commands.registerCommand('llm-assistant.debugEnv', () => {
+  const disposable = vscode.commands.registerCommand('llm-assistant.debug-environment', () => {
     const outputChannel = vscode.window.createOutputChannel('LLA Diagnostics');
     outputChannel.clear();
     outputChannel.appendLine('=== LLM Local Assistant Environment Diagnostics ===');
