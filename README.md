@@ -1,7 +1,7 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.6.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.6.1-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
@@ -11,9 +11,9 @@
 
 A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM.
 
-**🎯 v2.6.0 Focus: Voice Narration for Code Explanations**
+**🎯 v2.6.1 Focus: Voice Narration + Bug Fixes**
 
-> **Latest Release**: v2.6.0 - Voice Narration Integration ✅  
+> **Latest Release**: v2.6.1 - Bug fixes and improvements ✅  
 > **Philosophy**: Beautiful AI interactions with accessibility features.  
 > **Status**: 486/489 tests passing. Production ready.
 

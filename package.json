@@ -2,7 +2,7 @@
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
   "description": "Local LLM code generation, refactoring, and explanation with voice narration",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "publisher": "odanree",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -77,6 +77,42 @@
     "configuration": {
       "title": "LLM Local Assistant",
       "properties": {
+        "llm-assistant.endpoint": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "LLM server endpoint (Ollama, LM Studio, vLLM)",
+          "scope": "resource"
+        },
+        "llm-assistant.model": {
+          "type": "string",
+          "default": "mistral",
+          "description": "LLM model name to use",
+          "scope": "resource"
+        },
+        "llm-assistant.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.1,
+          "description": "Response randomness (0=deterministic, 1=creative)",
+          "scope": "resource"
+        },
+        "llm-assistant.maxTokens": {
+          "type": "integer",
+          "default": 4096,
+          "minimum": 256,
+          "maximum": 32000,
+          "description": "Maximum tokens in LLM response",
+          "scope": "resource"
+        },
+        "llm-assistant.timeout": {
+          "type": "integer",
+          "default": 60000,
+          "minimum": 5000,
+          "description": "Request timeout in milliseconds",
+          "scope": "resource"
+        },
         "llm-assistant.voice.enabled": {
           "type": "boolean",
           "default": true,

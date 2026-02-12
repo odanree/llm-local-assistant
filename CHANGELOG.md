@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-02-12
+
+### Focus: Bug Fix - Response Serialization
+
+**v2.6.1 is a critical hotfix for v2.6.0** fixing an issue where chat responses were displaying as `[object Object]` instead of actual message text.
+
+### Fixed
+
+- **Response Object Serialization Bug**
+  - Fixed chat responses displaying as `[object Object]` instead of message text
+  - Added proper validation of `response.success` and `response.message` before displaying
+  - Improved error handling for malformed response structures
+  - Graceful fallback with proper error messages when response fails
+
 ## [2.6.0] - 2026-02-10
 
 ### Focus: Voice Narration Integration for `/explain` Command
