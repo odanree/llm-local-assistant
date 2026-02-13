@@ -2060,7 +2060,6 @@ ${fileContent}
                 postChatMessage({
                   command: 'addMessage',
                   text: `## Code Explanation: ${relPath}\n\n${explanation}`,
-                  isMarkdown: true,
                   audioBase64: audioBase64,
                   audioMetadata: audioMetadata,
                   success: true,

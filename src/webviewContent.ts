@@ -2,57 +2,6 @@ export function getWebviewContent(): string {
   // Use a permissive CSP for the webview
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">`;
   const script = `
-    // Simple markdown to HTML converter
-    function markdownToHtml(markdown) {
-      let html = markdown;
-      
-      // Code blocks (must be before inline code)
-      html = html.replace(/\`\`\`([^]+?)\`\`\`/g, '<pre><code>$1</code></pre>');
-      
-      // Headers
-      html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
-      html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
-      html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
-      html = html.replace(/^#### (.*?)$/gm, '<h4>$1</h4>');
-      html = html.replace(/^##### (.*?)$/gm, '<h5>$1</h5>');
-      html = html.replace(/^###### (.*?)$/gm, '<h6>$1</h6>');
-      
-      // Blockquotes
-      html = html.replace(/^&gt; (.*?)$/gm, '<blockquote>$1</blockquote>');
-      
-      // Links
-      html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>');
-      
-      // Inline code (must be after code blocks)
-      html = html.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
-      
-      // Bold (must be before italic)
-      html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-      html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-      
-      // Italic
-      html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
-      html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
-      
-      // Lists
-      html = html.replace(/^\\* (.+)$/gm, '<li>$1</li>');
-      html = html.replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>');
-      
-      // Paragraphs (wrap in <p> tags)
-      html = html.split('\\n\\n').map(para => {
-        para = para.trim();
-        if (para && !para.match(/^<[hpulob]/)) {
-          return '<p>' + para + '</p>';
-        }
-        return para;
-      }).join('');
-      
-      // Replace newlines with <br> in paragraphs
-      html = html.replace(/\\n(?!<)/g, '<br>');
-      
-      return html;
-    }
-    
     const vscode = acquireVsCodeApi();
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
@@ -208,18 +157,8 @@ export function getWebviewContent(): string {
           div.appendChild(strong);
           div.appendChild(span);
         } else if (msg.text) {
-          // Render as markdown HTML if marked as markdown
-          if (msg.isMarkdown) {
-            try {
-              const htmlContent = markdownToHtml(msg.text);
-              div.innerHTML = htmlContent;
-            } catch (e) {
-              console.warn('[Webview] Failed to parse markdown:', e);
-              div.textContent = msg.text;
-            }
-          } else {
-            div.textContent = msg.text;
-          }
+          // Display markdown as plain text (not converted to HTML)
+          div.textContent = msg.text;
           
           // Add embedded audio player if audio data is provided (from /explain with voice)
           if (msg.audioBase64 && msg.audioMetadata) {
@@ -505,76 +444,6 @@ export function getWebviewContent(): string {
             font-size: 12px;
             margin: 6px 0;
             word-break: break-word;
-          }
-          /* Markdown rendering styles */
-          .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 {
-            margin: 14px 0 8px 0;
-            font-weight: 600;
-            line-height: 1.3;
-          }
-          .msg h1 {
-            font-size: 20px;
-            border-bottom: 1px solid var(--vscode-textSeparator-foreground);
-            padding-bottom: 6px;
-          }
-          .msg h2 {
-            font-size: 18px;
-          }
-          .msg h3 {
-            font-size: 16px;
-          }
-          .msg h4, .msg h5, .msg h6 {
-            font-size: 14px;
-          }
-          .msg p {
-            margin: 8px 0;
-            line-height: 1.6;
-          }
-          .msg ul, .msg ol {
-            margin: 8px 0;
-            padding-left: 24px;
-            line-height: 1.6;
-          }
-          .msg li {
-            margin: 4px 0;
-          }
-          .msg blockquote {
-            margin: 8px 0;
-            padding: 8px 12px;
-            border-left: 3px solid var(--vscode-textSeparator-foreground);
-            color: var(--vscode-descriptionForeground);
-            font-style: italic;
-            background: rgba(128, 128, 128, 0.1);
-            border-radius: 2px;
-          }
-          .msg strong {
-            font-weight: 600;
-            color: #e0e0e0;
-          }
-          .msg em {
-            font-style: italic;
-            color: #e0e0e0;
-          }
-          .msg table {
-            border-collapse: collapse;
-            margin: 8px 0;
-            width: 100%;
-          }
-          .msg table th, .msg table td {
-            border: 1px solid var(--vscode-textSeparator-foreground);
-            padding: 8px;
-            text-align: left;
-          }
-          .msg table th {
-            background: rgba(128, 128, 128, 0.1);
-            font-weight: 600;
-          }
-          .msg a {
-            color: var(--vscode-textLink-foreground);
-            text-decoration: none;
-          }
-          .msg a:hover {
-            text-decoration: underline;
           }
           .user {
             align-self: flex-end;
