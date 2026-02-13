@@ -36,6 +36,14 @@ export function registerVoiceCommands(context: vscode.ExtensionContext): void {
     )
   );
 
+  // Voice settings command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'llm-assistant.voice-settings',
+      showVoiceSettingsQuickPick
+    )
+  );
+
   // Listen for settings changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -169,7 +177,7 @@ export async function showVoiceSettingsQuickPick(): Promise<void> {
     placeHolder: 'Select a voice setting to modify',
   });
 
-  if (!selected) return;
+  if (!selected) {return;}
 
   if (selected.setting === 'speed') {
     const speedInput = await vscode.window.showInputBox({

@@ -101,7 +101,7 @@ export class SemanticValidator {
         if (declareMatch[1]) {
           declareMatch[1].split(',').forEach(name => {
             const trimmed = name.trim().split(' ')[0];
-            if (trimmed) declaredNames.add(trimmed);
+            if (trimmed) {declaredNames.add(trimmed);}
           });
         }
       }

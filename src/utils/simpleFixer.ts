@@ -132,9 +132,9 @@ export class SimpleFixer {
     const lines = code.split('\n');
     const shouldHaveSemicolon = (line: string) => {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*')) return false;
-      if (/^(if|else|for|while|switch|try|catch|do|function|class|interface|export|import)/.test(trimmed)) return false;
-      if (/[{}\[\]]$/.test(trimmed)) return false;
+      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*')) {return false;}
+      if (/^(if|else|for|while|switch|try|catch|do|function|class|interface|export|import)/.test(trimmed)) {return false;}
+      if (/[{}\[\]]$/.test(trimmed)) {return false;}
       return /[a-zA-Z0-9_\)\]\}]$/.test(trimmed);
     };
 
@@ -311,12 +311,12 @@ export class SimpleFixer {
     let parenCount = 0;
 
     for (const char of code) {
-      if (char === '{') braceCount++;
-      if (char === '}') braceCount--;
-      if (char === '[') bracketCount++;
-      if (char === ']') bracketCount--;
-      if (char === '(') parenCount++;
-      if (char === ')') parenCount--;
+      if (char === '{') {braceCount++;}
+      if (char === '}') {braceCount--;}
+      if (char === '[') {bracketCount++;}
+      if (char === ']') {bracketCount--;}
+      if (char === '(') {parenCount++;}
+      if (char === ')') {parenCount--;}
     }
 
     // Add missing closing braces

@@ -1,7 +1,41 @@
 export function getWebviewContent(): string {
-  // Use a permissive CSP for the webview
-  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">`;
+  // Use a permissive CSP for the webview - allow CDN scripts for marked.js
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'unsafe-inline';">`;
+  const markedScript = `<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>`;
   const script = `
+    // Configure marked to NOT parse/convert HTML tags (keep them as-is)
+    if (typeof marked !== 'undefined') {
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+        pedantic: false,
+        smartLists: true,
+        smartypants: false,
+      });
+      console.log('[Webview] marked.js loaded and configured');
+    } else {
+      console.warn('[Webview] marked.js not available on init, will check later');
+      // Try to wait for marked to load from CDN
+      let checkCount = 0;
+      const waitForMarked = setInterval(() => {
+        checkCount++;
+        if (typeof marked !== 'undefined') {
+          console.log('[Webview] marked.js loaded after', checkCount, 'checks');
+          marked.setOptions({
+            breaks: true,
+            gfm: true,
+            pedantic: false,
+            smartLists: true,
+            smartypants: false,
+          });
+          clearInterval(waitForMarked);
+        } else if (checkCount > 50) {
+          console.warn('[Webview] marked.js failed to load from CDN');
+          clearInterval(waitForMarked);
+        }
+      }, 100);
+    }
+    
     const vscode = acquireVsCodeApi();
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
@@ -148,6 +182,12 @@ export function getWebviewContent(): string {
       } else if (msg.command === 'addMessage') {
         const div = document.createElement('div');
         div.className = 'msg assistant';
+        
+        // Add explanation class if this is an explanation message
+        if (msg.isExplanation) {
+          div.classList.add('explanation');
+        }
+        
         if (msg.error) {
           div.className = 'msg assistant error';
           const strong = document.createElement('strong');
@@ -157,7 +197,49 @@ export function getWebviewContent(): string {
           div.appendChild(strong);
           div.appendChild(span);
         } else if (msg.text) {
-          div.textContent = msg.text;
+          // Render markdown as styled HTML if flag is set
+          if (msg.isMarkdown) {
+            // Check if marked is available
+            if (typeof marked === 'undefined') {
+              console.warn('[Webview] marked.js not loaded, cannot convert markdown');
+              // Show user-visible warning
+              const warning = document.createElement('div');
+              warning.style.cssText = 'color:#ff6b6b; padding:4px; margin:4px; font-size:11px; font-style:italic;';
+              warning.textContent = '⚠️ Markdown library not loaded - showing as plain text';
+              div.appendChild(warning);
+              div.appendChild(document.createElement('br'));
+              div.textContent += msg.text;
+            } else {
+              try {
+                // Show original markdown in debug
+                const debugToggle = document.createElement('details');
+                debugToggle.style.cssText = 'font-size:10px; margin-bottom:8px; color:#888; cursor:pointer;';
+                const summary = document.createElement('summary');
+                summary.textContent = '📋 Show Original Markdown';
+                debugToggle.appendChild(summary);
+                
+                const debugContent = document.createElement('pre');
+                debugContent.style.cssText = 'background:#1a1a1a; color:#888; padding:6px; margin:4px; font-size:10px; border-radius:3px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow-y:auto;';
+                debugContent.textContent = msg.text;
+                debugToggle.appendChild(debugContent);
+                div.appendChild(debugToggle);
+                
+                // Escape angle brackets like <TypeName> so they display as text, not HTML
+                let processedText = msg.text.replace(/<([A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?(?:,\s*[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?)*\s*(?:extends [^>]*)?)>/g, '&lt;$1&gt;');
+                
+                const htmlContent = marked.parse(processedText);
+                console.log('[Webview] Markdown converted, output length:', htmlContent.length, 'starts with:', htmlContent.substring(0, 50));
+                const renderedContent = document.createElement('div');
+                renderedContent.innerHTML = htmlContent;
+                div.appendChild(renderedContent);
+              } catch (e) {
+                console.warn('[Webview] marked.parse() failed:', e);
+                div.textContent = msg.text;
+              }
+            }
+          } else {
+            div.textContent = msg.text;
+          }
           
           // Add embedded audio player if audio data is provided (from /explain with voice)
           if (msg.audioBase64 && msg.audioMetadata) {
@@ -350,6 +432,20 @@ export function getWebviewContent(): string {
         chat.scrollTop = chat.scrollHeight;
       }
     });
+    
+    // Simple markdown to HTML converter that safely handles VS Code theme variables
+    function renderMarkdownAsHtml(markdown) {
+      if (typeof marked !== 'undefined') {
+        try {
+          return marked.parse(markdown);
+        } catch (e) {
+          console.warn('[Webview] marked parsing failed:', e);
+          return '<p>' + markdown.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';
+        }
+      }
+      return markdown;
+    }
+    
     input.focus();
   `;
   const html = `<!DOCTYPE html>
@@ -358,6 +454,7 @@ export function getWebviewContent(): string {
         <meta charset="UTF-8">
         <title>LLM Assistant</title>
         ${csp}
+        ${markedScript}
         <style>
           * {
             box-sizing: border-box;
@@ -420,15 +517,103 @@ export function getWebviewContent(): string {
           .msg pre {
             background: var(--vscode-textCodeBlock-background);
             color: var(--vscode-textPreformat-foreground);
-            padding: 10px;
+            padding: 8px;
             border-radius: 4px;
             overflow-x: auto;
             overflow-y: auto;
             max-width: 100%;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 12px;
-            margin: 6px 0;
+            margin: 2px 0;
             word-break: break-word;
+          }
+          /* Markdown heading styles */
+          .msg h1 {
+            margin: 4px 0 2px 0;
+            font-size: 24px;
+            font-weight: 700;
+            border-bottom: 1px solid var(--vscode-textSeparator-foreground);
+            padding-bottom: 2px;
+            line-height: 1.3;
+          }
+          .msg h2 {
+            margin: 3px 0 1px 0;
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg h3 {
+            margin: 2px 0 1px 0;
+            font-size: 16px;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg h4, .msg h5, .msg h6 {
+            margin: 2px 0 1px 0;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg p {
+            margin: 0.5px 0;
+            line-height: 1.4;
+          }
+          .msg ul, .msg ol {
+            margin: 2px 0;
+            padding-left: 20px;
+            line-height: 1.4;
+          }
+          .msg li {
+            margin: 0px 0;
+          }
+          .msg strong {
+            font-weight: 600;
+            color: #e0e0e0;
+          }
+          .msg em {
+            font-style: italic;
+            color: #e0e0e0;
+          }
+          .msg blockquote {
+            margin: 2px 0;
+            padding: 4px 8px;
+            border-left: 3px solid var(--vscode-textSeparator-foreground);
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            background: rgba(128, 128, 128, 0.1);
+            border-radius: 2px;
+          }
+          .msg table {
+            border-collapse: collapse;
+            margin: 2px 0;
+            width: 100%;
+          }
+          .msg table th, .msg table td {
+            border: 1px solid var(--vscode-textSeparator-foreground);
+            padding: 6px;
+            text-align: left;
+          }
+          .msg table th {
+            background: rgba(128, 128, 128, 0.1);
+            font-weight: 600;
+          }
+            width: 100%;
+          }
+          .msg table th, .msg table td {
+            border: 1px solid var(--vscode-textSeparator-foreground);
+            padding: 8px;
+            text-align: left;
+          }
+          .msg table th {
+            background: rgba(128, 128, 128, 0.1);
+            font-weight: 600;
+          }
+          .msg a {
+            color: var(--vscode-textLink-foreground);
+            text-decoration: none;
+          }
+          .msg a:hover {
+            text-decoration: underline;
           }
           .user {
             align-self: flex-end;
@@ -445,6 +630,12 @@ export function getWebviewContent(): string {
             background: transparent;
             color: #e0e0e0;
             border-left: 3px solid var(--vscode-textSeparator-foreground);
+            padding-left: 12px;
+          }
+          .assistant.explanation {
+            background: rgba(60, 60, 60, 0.4);
+            border-radius: 4px;
+            padding: 10px 12px;
             padding-left: 12px;
           }
           .assistant.error {

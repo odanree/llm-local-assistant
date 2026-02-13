@@ -210,7 +210,7 @@ ${avoidances.join('\n')}
     const patterns: Set<string> = new Set();
 
     for (const attempt of this.attempts) {
-      if (!attempt.error) continue;
+      if (!attempt.error) {continue;}
 
       const error = attempt.error.toLowerCase();
 
@@ -238,7 +238,7 @@ ${avoidances.join('\n')}
    * Check if we're in an infinite loop (same error repeated)
    */
   isInfiniteLoop(): boolean {
-    if (this.attempts.length < 2) return false;
+    if (this.attempts.length < 2) {return false;}
 
     const recentErrors = this.attempts
       .slice(-2)
@@ -254,9 +254,9 @@ ${avoidances.join('\n')}
    * 0 = give up, 1 = confident we can fix
    */
   getRetryConfidence(): number {
-    if (this.attempts.length === 0) return 1.0;
-    if (this.isInfiniteLoop()) return 0.1; // Low confidence if looping
-    if (this.isExhausted()) return 0.0; // No confidence if exhausted
+    if (this.attempts.length === 0) {return 1.0;}
+    if (this.isInfiniteLoop()) {return 0.1;} // Low confidence if looping
+    if (this.isExhausted()) {return 0.0;} // No confidence if exhausted
 
     // Confidence based on progress
     const errorCounts = this.attempts.filter(a => a.error).length;

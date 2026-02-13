@@ -1,11 +1,25 @@
 # Project Status & Cleanup Summary
 
-**Last Updated**: February 10, 2026  
-**Status**: ✅ Critical Zustand Validation Fixes Applied | v2.5.0 Ready
+**Last Updated**: February 12, 2026  
+**Status**: ✅ v2.6.1 Production Ready - Markdown Rendering Complete
 
 ---
 
-## 🔴 CRITICAL: Zustand Integration Validation (Latest Fix)
+## ✨ v2.6.1: Markdown Rendering for Explanations (Latest)
+
+**Release Highlights**:
+- ✅ Markdown-to-HTML rendering for `/explain` command (marked.js)
+- ✅ Type annotation escaping for safe TypeScript display
+- ✅ Visual distinction for explanation messages (dark background)
+- ✅ Debug markdown view for inspection
+- ✅ 521 tests passing (up from 486)
+- ✅ All linting warnings resolved
+
+**Production Status**: Ready for marketplace release
+
+---
+
+## 🔴 CRITICAL: Zustand Integration Validation (Previous Fix)
 
 **Problem Fixed**: System was generating code that compiled but was non-functional:
 - Store generation: ✅ Perfect

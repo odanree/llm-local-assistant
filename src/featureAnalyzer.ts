@@ -376,9 +376,9 @@ export class FeatureAnalyzer {
 
     // File size score (prefer smaller files)
     let fileSizeScore = 10;
-    if (analysis.averageFileSize > 300) fileSizeScore = 3;
-    else if (analysis.averageFileSize > 200) fileSizeScore = 5;
-    else if (analysis.averageFileSize > 150) fileSizeScore = 7;
+    if (analysis.averageFileSize > 300) {fileSizeScore = 3;}
+    else if (analysis.averageFileSize > 200) {fileSizeScore = 5;}
+    else if (analysis.averageFileSize > 150) {fileSizeScore = 7;}
 
     const finalScore =
       (totalScore / layerScores.length +

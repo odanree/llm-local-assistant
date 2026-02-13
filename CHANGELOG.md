@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-02-12
+
+### Focus: Markdown Rendering + Bug Fixes
+
+**v2.6.1 brings beautifully formatted explanations and fixes key issues from v2.6.0.**
+
+### Added
+
+- **Markdown-to-HTML Rendering for `/explain` Command** (NEW)
+  - Explanations now render as styled HTML with proper markdown formatting
+  - Full support for h1-h6 headers, bold/italic emphasis, code blocks, and lists
+  - Configured marked.js library via CDN for reliable parsing
+  - Type annotations (`<ButtonProps>`, `<React.FC>`) properly escaped to prevent HTML interpretation
+  - Compact professional spacing for readable explanations
+  - Audio player can now coexist with beautiful formatted text
+
+- **Visual Distinction for Explanation Messages** (NEW)
+  - Explanation messages have subtle dark background to stand out from chat
+  - Special `.explanation` styling (rgba background, rounded corners, extra padding)
+  - Debug collapsible section shows original markdown for inspection
+  - Regular chat messages remain transparent for clean appearance
+
+### Fixed
+
+- **Response Object Serialization Bug**
+  - Fixed chat responses displaying as `[object Object]` instead of message text
+  - Added proper validation of `response.success` and `response.message` before displaying
+  - Improved error handling for malformed response structures
+  - Graceful fallback with proper error messages when response fails
+
+- **Voice Narration Improvements**
+  - Improved timeout handling for edge-tts synthesis
+  - Enhanced MP3 audio player compatibility
+  - Better error messages for TTS unavailability
+
+- **UTF-8 Encoding**
+  - Fixed corrupted character display in command naming
+
 ## [2.6.0] - 2026-02-10
 
 ### Focus: Voice Narration Integration for `/explain` Command
