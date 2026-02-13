@@ -1946,18 +1946,14 @@ ${fileContent}
                   }
                 }
 
-                // Post explanation message
-                postChatMessage({
-                  command: 'addMessage',
-                  text: ` **Code Explanation: ${relPath}**\n\n${explanation}`,
-                  success: true,
-                });
-
                 // Generate voice narration if enabled (v2.6.0 feature)
                 const voiceConfig = vscode.workspace.getConfiguration('llm-assistant.voice');
                 const voiceEnabled = voiceConfig.get<boolean>('enabled', false);
                 const voiceLanguage = voiceConfig.get<string>('language', 'en');
                 
+                let audioBase64: string | undefined;
+                let audioMetadata: any;
+
                 if (voiceEnabled && explanation) {
                   try {
                     chatPanel?.webview.postMessage({
@@ -1994,23 +1990,10 @@ ${fileContent}
                     
                     if (audioResult && audioResult.audio) {
                       // Convert buffer to base64 for webview
-                      const base64Audio = audioResult.audio.toString('base64');
-                      const audioMetadata = audioResult.metadata || {};
+                      audioBase64 = audioResult.audio.toString('base64');
+                      audioMetadata = audioResult.metadata || {};
                       
-                      console.log(`[Extension] Voice narration ready (${base64Audio.length} chars, ${audioMetadata.duration || '?'}s)`);
-                      
-                      chatPanel?.webview.postMessage({
-                        command: 'audioNarration',
-                        audioBase64: base64Audio,
-                        audioMetadata: audioMetadata,
-                        source: 'explain',
-                      });
-                      
-                      chatPanel?.webview.postMessage({
-                        command: 'status',
-                        text: `✅ Voice narration ready (${audioMetadata.duration?.toFixed(1) || '?'}s)`,
-                        type: 'info',
-                      });
+                      console.log(`[Extension] Voice narration ready (${audioBase64.length} chars, ${audioMetadata.duration || '?'}s)`);
                     }
                   } catch (voiceErr) {
                     // Voice narration is optional - don't fail the entire explain command
@@ -2018,6 +2001,15 @@ ${fileContent}
                     console.warn(`[Extension] Voice narration error: ${errorMsg}`);
                   }
                 }
+
+                // Post explanation message WITH audio if available
+                postChatMessage({
+                  command: 'addMessage',
+                  text: ` **Code Explanation: ${relPath}**\n\n${explanation}`,
+                  audioBase64: audioBase64,
+                  audioMetadata: audioMetadata,
+                  success: true,
+                });
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
