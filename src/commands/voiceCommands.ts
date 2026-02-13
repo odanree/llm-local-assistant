@@ -36,6 +36,14 @@ export function registerVoiceCommands(context: vscode.ExtensionContext): void {
     )
   );
 
+  // Voice settings command
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'llm-assistant.voice-settings',
+      showVoiceSettingsQuickPick
+    )
+  );
+
   // Listen for settings changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
