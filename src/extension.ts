@@ -1922,21 +1922,17 @@ ${fileContent}
                 const endpoint: string = llmClient["config"].endpoint;
                 const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
 
+                let explanation = '';
                 if (isOllamaNonDefaultPort) {
                   // Use non-streaming response
                   const response = await llmClient.sendMessage(prompt);
                   if (response.success) {
-                    postChatMessage({
-                      command: 'addMessage',
-                      text: ` **Code Explanation: ${relPath}**\n\n${response.message}`,
-                      success: true,
-                    });
+                    explanation = response.message;
                   } else {
                     throw new Error(response.error);
                   }
                 } else {
                   // Use streaming response
-                  let explanation = '';
                   const response = await llmClient.sendMessageStream(
                     prompt,
                     async (token: string, complete: boolean) => {
@@ -1945,14 +1941,54 @@ ${fileContent}
                       }
                     }
                   );
-                  if (response.success) {
-                    postChatMessage({
-                      command: 'addMessage',
-                      text: ` **Code Explanation: ${relPath}**\n\n${explanation}`,
-                      success: true,
-                    });
-                  } else {
+                  if (!response.success) {
                     throw new Error(response.error);
+                  }
+                }
+
+                // Post explanation message
+                postChatMessage({
+                  command: 'addMessage',
+                  text: ` **Code Explanation: ${relPath}**\n\n${explanation}`,
+                  success: true,
+                });
+
+                // Generate voice narration if enabled (v2.6.0 feature)
+                const voiceConfig = vscode.workspace.getConfiguration('llm-assistant.voice');
+                const voiceEnabled = voiceConfig.get<boolean>('enabled', false);
+                const voiceLanguage = voiceConfig.get<string>('language', 'en');
+                
+                if (voiceEnabled && explanation) {
+                  try {
+                    chatPanel?.webview.postMessage({
+                      command: 'status',
+                      text: '🎧 Synthesizing voice narration...',
+                      type: 'info',
+                    });
+
+                    const ttsService = getTTSService({
+                      extensionPath: context.extensionPath,
+                      language: voiceLanguage,
+                    });
+                    
+                    // Synthesize explanation to audio
+                    const audioResult = await ttsService.synthesize(explanation, voiceLanguage);
+                    
+                    if (audioResult && audioResult.audio) {
+                      // Convert buffer to base64 for webview
+                      const base64Audio = audioResult.audio.toString('base64');
+                      const audioMetadata = audioResult.metadata || {};
+                      
+                      chatPanel?.webview.postMessage({
+                        command: 'audioNarration',
+                        audioBase64: base64Audio,
+                        audioMetadata: audioMetadata,
+                        source: 'explain',
+                      });
+                    }
+                  } catch (voiceErr) {
+                    // Voice narration is optional - don't fail if it errors
+                    console.warn(`[Extension] Voice narration failed: ${voiceErr instanceof Error ? voiceErr.message : String(voiceErr)}`);
                   }
                 }
               } catch (err) {
