@@ -1,8 +1,58 @@
 export function getWebviewContent(): string {
   // Use a permissive CSP for the webview
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">`;
-  const markedScript = `<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>`;
   const script = `
+    // Simple markdown to HTML converter
+    function markdownToHtml(markdown) {
+      let html = markdown;
+      
+      // Code blocks (must be before inline code)
+      html = html.replace(/\`\`\`([^]+?)\`\`\`/g, '<pre><code>$1</code></pre>');
+      
+      // Headers
+      html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
+      html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
+      html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
+      html = html.replace(/^#### (.*?)$/gm, '<h4>$1</h4>');
+      html = html.replace(/^##### (.*?)$/gm, '<h5>$1</h5>');
+      html = html.replace(/^###### (.*?)$/gm, '<h6>$1</h6>');
+      
+      // Blockquotes
+      html = html.replace(/^&gt; (.*?)$/gm, '<blockquote>$1</blockquote>');
+      
+      // Links
+      html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>');
+      
+      // Inline code (must be after code blocks)
+      html = html.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+      
+      // Bold (must be before italic)
+      html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+      html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+      
+      // Italic
+      html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+      html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+      
+      // Lists
+      html = html.replace(/^\\* (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>');
+      
+      // Paragraphs (wrap in <p> tags)
+      html = html.split('\\n\\n').map(para => {
+        para = para.trim();
+        if (para && !para.match(/^<[hpulob]/)) {
+          return '<p>' + para + '</p>';
+        }
+        return para;
+      }).join('');
+      
+      // Replace newlines with <br> in paragraphs
+      html = html.replace(/\\n(?!<)/g, '<br>');
+      
+      return html;
+    }
+    
     const vscode = acquireVsCodeApi();
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
@@ -158,10 +208,10 @@ export function getWebviewContent(): string {
           div.appendChild(strong);
           div.appendChild(span);
         } else if (msg.text) {
-          // Render as markdown HTML if marked as markdown, otherwise as plain text
-          if (msg.isMarkdown && typeof marked !== 'undefined') {
+          // Render as markdown HTML if marked as markdown
+          if (msg.isMarkdown) {
             try {
-              const htmlContent = marked.parse(msg.text);
+              const htmlContent = markdownToHtml(msg.text);
               div.innerHTML = htmlContent;
             } catch (e) {
               console.warn('[Webview] Failed to parse markdown:', e);
@@ -384,7 +434,6 @@ export function getWebviewContent(): string {
         <meta charset="UTF-8">
         <title>LLM Assistant</title>
         ${csp}
-        ${markedScript}
         <style>
           * {
             box-sizing: border-box;
