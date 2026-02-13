@@ -1962,7 +1962,7 @@ ${fileContent}
                   try {
                     chatPanel?.webview.postMessage({
                       command: 'status',
-                      text: '🎧 Synthesizing voice narration...',
+                      text: '🎧 Synthesizing voice narration... (may take a moment)',
                       type: 'info',
                     });
 
@@ -1971,13 +1971,33 @@ ${fileContent}
                       language: voiceLanguage,
                     });
                     
-                    // Synthesize explanation to audio
-                    const audioResult = await ttsService.synthesize(explanation, voiceLanguage);
+                    // Synthesize explanation to audio with timeout
+                    let audioResult: any = null;
+                    try {
+                      const synthesizePromise = ttsService.synthesize(explanation, voiceLanguage);
+                      
+                      // Wrap in timeout (60 seconds max for TTS processing)
+                      const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Voice synthesis timeout (60s exceeded)')), 60000)
+                      );
+                      
+                      audioResult = await Promise.race([synthesizePromise, timeoutPromise]);
+                    } catch (synthesisErr) {
+                      console.warn(`[Extension] Voice synthesis error: ${synthesisErr instanceof Error ? synthesisErr.message : String(synthesisErr)}`);
+                      chatPanel?.webview.postMessage({
+                        command: 'status',
+                        text: `⚠️ Voice narration skipped: ${synthesisErr instanceof Error ? synthesisErr.message : 'Unknown error'}`,
+                        type: 'info',
+                      });
+                      audioResult = null;
+                    }
                     
                     if (audioResult && audioResult.audio) {
                       // Convert buffer to base64 for webview
                       const base64Audio = audioResult.audio.toString('base64');
                       const audioMetadata = audioResult.metadata || {};
+                      
+                      console.log(`[Extension] Voice narration ready (${base64Audio.length} chars, ${audioMetadata.duration || '?'}s)`);
                       
                       chatPanel?.webview.postMessage({
                         command: 'audioNarration',
@@ -1985,10 +2005,17 @@ ${fileContent}
                         audioMetadata: audioMetadata,
                         source: 'explain',
                       });
+                      
+                      chatPanel?.webview.postMessage({
+                        command: 'status',
+                        text: `✅ Voice narration ready (${audioMetadata.duration?.toFixed(1) || '?'}s)`,
+                        type: 'info',
+                      });
                     }
                   } catch (voiceErr) {
-                    // Voice narration is optional - don't fail if it errors
-                    console.warn(`[Extension] Voice narration failed: ${voiceErr instanceof Error ? voiceErr.message : String(voiceErr)}`);
+                    // Voice narration is optional - don't fail the entire explain command
+                    const errorMsg = voiceErr instanceof Error ? voiceErr.message : String(voiceErr);
+                    console.warn(`[Extension] Voice narration error: ${errorMsg}`);
                   }
                 }
               } catch (err) {
