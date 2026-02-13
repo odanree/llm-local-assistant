@@ -2,42 +2,49 @@ export function getWebviewContent(): string {
   // Use a permissive CSP for the webview
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">`;
   const script = `
-    // Format markdown with visual styling while preserving syntax
-    function formatMarkdownDisplay(markdown) {
-      let result = markdown;
+    // Convert markdown to styled HTML elements
+    function markdownToStyledHtml(markdown) {
+      let html = markdown;
       
-      // Add decorative borders and spacing around main headers (#)
-      result = result.replace(/^# (.*?)$/gm, (match, title) => {
-        const line = '═'.repeat(title.length + 4);
-        return '\\n' + line + '\\n# ' + title + '\\n' + line + '\\n';
-      });
+      // Escape special HTML characters first
+      html = html.replace(/&/g, '&amp;')
+                 .replace(/</g, '&lt;')
+                 .replace(/>/g, '&gt;');
       
-      // Add spacing for secondary headers (##)
-      result = result.replace(/^## (.*?)$/gm, (match, title) => {
-        const line = '─'.repeat(Math.min(title.length + 4, 40));
-        return '\\n' + line + '\\n## ' + title + '\\n' + line + '\\n';
-      });
+      // Headers (must be before other replacements)
+      html = html.replace(/^###### (.*?)$/gm, '<h6>$1</h6>');
+      html = html.replace(/^##### (.*?)$/gm, '<h5>$1</h5>');
+      html = html.replace(/^#### (.*?)$/gm, '<h4>$1</h4>');
+      html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
+      html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
+      html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
       
-      // Indent tertiary headers and below for visual hierarchy
-      result = result.replace(/^### (.*?)$/gm, '  ### $1');
-      result = result.replace(/^#### (.*?)$/gm, '    #### $1');
-      result = result.replace(/^##### (.*?)$/gm, '      ##### $1');
-      result = result.replace(/^###### (.*?)$/gm, '        ###### $1');
+      // Code blocks
+      html = html.replace(/\`\`\`(.*?)\`\`\`/gs, '<pre><code>$1</code></pre>');
       
-      // Convert list bullets to unicode bullets for visual appeal
-      result = result.replace(/^- (.+)$/gm, '  • $1');
-      result = result.replace(/^\\* (.+)$/gm, '  ◦ $1');
-      result = result.replace(/^\\d+\\. (.+)$/gm, (match, item) => {
-        const num = match.match(/^\\d+/)[0];
-        return '  ' + num + '. ' + item;
-      });
+      // Inline code
+      html = html.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
       
-      // Add spacing around code blocks for readability
-      result = result.replace(/^\`\`\`([\\s\\S]*?)\`\`\`$/gm, (match) => {
-        return '\\n' + match + '\\n';
-      });
+      // Bold
+      html = html.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
       
-      return result;
+      // Italic
+      html = html.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
+      html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+      
+      // Lists - convert bullet points
+      html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/(<li>.*<\\/li>)/s, '<ul>$1</ul>');
+      
+      // Numbered lists
+      html = html.replace(/^\\d+\\. (.+)$/gm, '<li>$1</li>');
+      
+      // Line breaks and paragraphs
+      html = html.replace(/\\n\\n+/g, '</p><p>');
+      html = '<p>' + html + '</p>';
+      
+      return html;
     }
     
     const vscode = acquireVsCodeApi();
@@ -195,9 +202,18 @@ export function getWebviewContent(): string {
           div.appendChild(strong);
           div.appendChild(span);
         } else if (msg.text) {
-          // Format markdown with visual styling while keeping markdown syntax
-          const formattedText = msg.isMarkdown ? formatMarkdownDisplay(msg.text) : msg.text;
-          div.textContent = formattedText;
+          // Render markdown as styled HTML if flag is set
+          if (msg.isMarkdown) {
+            try {
+              const htmlContent = markdownToStyledHtml(msg.text);
+              div.innerHTML = htmlContent;
+            } catch (e) {
+              console.warn('[Webview] Failed to convert markdown:', e);
+              div.textContent = msg.text;
+            }
+          } else {
+            div.textContent = msg.text;
+          }
           
           // Add embedded audio player if audio data is provided (from /explain with voice)
           if (msg.audioBase64 && msg.audioMetadata) {
@@ -483,6 +499,83 @@ export function getWebviewContent(): string {
             font-size: 12px;
             margin: 6px 0;
             word-break: break-word;
+          }
+          /* Markdown heading styles */
+          .msg h1 {
+            margin: 16px 0 8px 0;
+            font-size: 24px;
+            font-weight: 700;
+            border-bottom: 1px solid var(--vscode-textSeparator-foreground);
+            padding-bottom: 8px;
+            line-height: 1.3;
+          }
+          .msg h2 {
+            margin: 14px 0 8px 0;
+            font-size: 20px;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg h3 {
+            margin: 12px 0 6px 0;
+            font-size: 16px;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg h4, .msg h5, .msg h6 {
+            margin: 10px 0 6px 0;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg p {
+            margin: 8px 0;
+            line-height: 1.6;
+          }
+          .msg ul, .msg ol {
+            margin: 8px 0;
+            padding-left: 24px;
+            line-height: 1.6;
+          }
+          .msg li {
+            margin: 4px 0;
+          }
+          .msg strong {
+            font-weight: 600;
+            color: #e0e0e0;
+          }
+          .msg em {
+            font-style: italic;
+            color: #e0e0e0;
+          }
+          .msg blockquote {
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-left: 3px solid var(--vscode-textSeparator-foreground);
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            background: rgba(128, 128, 128, 0.1);
+            border-radius: 2px;
+          }
+          .msg table {
+            border-collapse: collapse;
+            margin: 8px 0;
+            width: 100%;
+          }
+          .msg table th, .msg table td {
+            border: 1px solid var(--vscode-textSeparator-foreground);
+            padding: 8px;
+            text-align: left;
+          }
+          .msg table th {
+            background: rgba(128, 128, 128, 0.1);
+            font-weight: 600;
+          }
+          .msg a {
+            color: var(--vscode-textLink-foreground);
+            text-decoration: none;
+          }
+          .msg a:hover {
+            text-decoration: underline;
           }
           .user {
             align-self: flex-end;
