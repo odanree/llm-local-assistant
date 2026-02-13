@@ -2,6 +2,44 @@ export function getWebviewContent(): string {
   // Use a permissive CSP for the webview
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">`;
   const script = `
+    // Format markdown with visual styling while preserving syntax
+    function formatMarkdownDisplay(markdown) {
+      let result = markdown;
+      
+      // Add decorative borders and spacing around main headers (#)
+      result = result.replace(/^# (.*?)$/gm, (match, title) => {
+        const line = '═'.repeat(title.length + 4);
+        return '\\n' + line + '\\n# ' + title + '\\n' + line + '\\n';
+      });
+      
+      // Add spacing for secondary headers (##)
+      result = result.replace(/^## (.*?)$/gm, (match, title) => {
+        const line = '─'.repeat(Math.min(title.length + 4, 40));
+        return '\\n' + line + '\\n## ' + title + '\\n' + line + '\\n';
+      });
+      
+      // Indent tertiary headers and below for visual hierarchy
+      result = result.replace(/^### (.*?)$/gm, '  ### $1');
+      result = result.replace(/^#### (.*?)$/gm, '    #### $1');
+      result = result.replace(/^##### (.*?)$/gm, '      ##### $1');
+      result = result.replace(/^###### (.*?)$/gm, '        ###### $1');
+      
+      // Convert list bullets to unicode bullets for visual appeal
+      result = result.replace(/^- (.+)$/gm, '  • $1');
+      result = result.replace(/^\\* (.+)$/gm, '  ◦ $1');
+      result = result.replace(/^\\d+\\. (.+)$/gm, (match, item) => {
+        const num = match.match(/^\\d+/)[0];
+        return '  ' + num + '. ' + item;
+      });
+      
+      // Add spacing around code blocks for readability
+      result = result.replace(/^\`\`\`([\\s\\S]*?)\`\`\`$/gm, (match) => {
+        return '\\n' + match + '\\n';
+      });
+      
+      return result;
+    }
+    
     const vscode = acquireVsCodeApi();
     const chat = document.getElementById('chat');
     const input = document.getElementById('input');
@@ -157,8 +195,9 @@ export function getWebviewContent(): string {
           div.appendChild(strong);
           div.appendChild(span);
         } else if (msg.text) {
-          // Display markdown as plain text (not converted to HTML)
-          div.textContent = msg.text;
+          // Format markdown with visual styling while keeping markdown syntax
+          const formattedText = msg.isMarkdown ? formatMarkdownDisplay(msg.text) : msg.text;
+          div.textContent = formattedText;
           
           // Add embedded audio player if audio data is provided (from /explain with voice)
           if (msg.audioBase64 && msg.audioMetadata) {
