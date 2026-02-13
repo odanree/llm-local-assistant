@@ -10,6 +10,7 @@ node_modules
 examples/**/*.test.ts
 examples/**/*.spec.ts
 examples/**/test/
+examples/**
 
 # AI Coding Agent Instructions (internal development context)
 .github/copilot-instructions.md
