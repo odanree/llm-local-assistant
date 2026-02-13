@@ -2059,7 +2059,8 @@ ${fileContent}
                 // Post explanation message WITH audio if available
                 postChatMessage({
                   command: 'addMessage',
-                  text: ` **Code Explanation: ${relPath}**\n\n${explanation}`,
+                  text: `## Code Explanation: ${relPath}\n\n${explanation}`,
+                  isMarkdown: true,
                   audioBase64: audioBase64,
                   audioMetadata: audioMetadata,
                   success: true,

@@ -1,6 +1,7 @@
 export function getWebviewContent(): string {
   // Use a permissive CSP for the webview
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline';">`;
+  const markedScript = `<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>`;
   const script = `
     const vscode = acquireVsCodeApi();
     const chat = document.getElementById('chat');
@@ -157,7 +158,18 @@ export function getWebviewContent(): string {
           div.appendChild(strong);
           div.appendChild(span);
         } else if (msg.text) {
-          div.textContent = msg.text;
+          // Render as markdown HTML if marked as markdown, otherwise as plain text
+          if (msg.isMarkdown && typeof marked !== 'undefined') {
+            try {
+              const htmlContent = marked.parse(msg.text);
+              div.innerHTML = htmlContent;
+            } catch (e) {
+              console.warn('[Webview] Failed to parse markdown:', e);
+              div.textContent = msg.text;
+            }
+          } else {
+            div.textContent = msg.text;
+          }
           
           // Add embedded audio player if audio data is provided (from /explain with voice)
           if (msg.audioBase64 && msg.audioMetadata) {
@@ -350,6 +362,20 @@ export function getWebviewContent(): string {
         chat.scrollTop = chat.scrollHeight;
       }
     });
+    
+    // Simple markdown to HTML converter that safely handles VS Code theme variables
+    function renderMarkdownAsHtml(markdown) {
+      if (typeof marked !== 'undefined') {
+        try {
+          return marked.parse(markdown);
+        } catch (e) {
+          console.warn('[Webview] marked parsing failed:', e);
+          return '<p>' + markdown.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';
+        }
+      }
+      return markdown;
+    }
+    
     input.focus();
   `;
   const html = `<!DOCTYPE html>
@@ -358,6 +384,7 @@ export function getWebviewContent(): string {
         <meta charset="UTF-8">
         <title>LLM Assistant</title>
         ${csp}
+        ${markedScript}
         <style>
           * {
             box-sizing: border-box;
@@ -429,6 +456,76 @@ export function getWebviewContent(): string {
             font-size: 12px;
             margin: 6px 0;
             word-break: break-word;
+          }
+          /* Markdown rendering styles */
+          .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 {
+            margin: 14px 0 8px 0;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .msg h1 {
+            font-size: 20px;
+            border-bottom: 1px solid var(--vscode-textSeparator-foreground);
+            padding-bottom: 6px;
+          }
+          .msg h2 {
+            font-size: 18px;
+          }
+          .msg h3 {
+            font-size: 16px;
+          }
+          .msg h4, .msg h5, .msg h6 {
+            font-size: 14px;
+          }
+          .msg p {
+            margin: 8px 0;
+            line-height: 1.6;
+          }
+          .msg ul, .msg ol {
+            margin: 8px 0;
+            padding-left: 24px;
+            line-height: 1.6;
+          }
+          .msg li {
+            margin: 4px 0;
+          }
+          .msg blockquote {
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-left: 3px solid var(--vscode-textSeparator-foreground);
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            background: rgba(128, 128, 128, 0.1);
+            border-radius: 2px;
+          }
+          .msg strong {
+            font-weight: 600;
+            color: #e0e0e0;
+          }
+          .msg em {
+            font-style: italic;
+            color: #e0e0e0;
+          }
+          .msg table {
+            border-collapse: collapse;
+            margin: 8px 0;
+            width: 100%;
+          }
+          .msg table th, .msg table td {
+            border: 1px solid var(--vscode-textSeparator-foreground);
+            padding: 8px;
+            text-align: left;
+          }
+          .msg table th {
+            background: rgba(128, 128, 128, 0.1);
+            font-weight: 600;
+          }
+          .msg a {
+            color: var(--vscode-textLink-foreground);
+            text-decoration: none;
+          }
+          .msg a:hover {
+            text-decoration: underline;
           }
           .user {
             align-self: flex-end;
