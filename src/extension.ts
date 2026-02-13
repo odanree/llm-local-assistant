@@ -154,6 +154,56 @@ function getLLMConfig(): LLMConfig {
 }
 
 /**
+ * Strip markdown formatting from text for voice narration
+ * Removes: bold (**), italic (*_), code (`), links ([]), headers (#), etc.
+ */
+function stripMarkdownForTTS(text: string): string {
+  let clean = text;
+  
+  // Remove bold: **text** → text
+  clean = clean.replace(/\*\*([^*]+)\*\*/g, '$1');
+  clean = clean.replace(/__([^_]+)__/g, '$1');
+  
+  // Remove italic: *text* → text, _text_ → text
+  clean = clean.replace(/\*([^*]+)\*/g, '$1');
+  clean = clean.replace(/_([^_]+)_/g, '$1');
+  
+  // Remove strikethrough: ~~text~~ → text
+  clean = clean.replace(/~~([^~]+)~~/g, '$1');
+  
+  // Remove code blocks (multiline)
+  clean = clean.replace(/```[\s\S]*?```/g, '');
+  
+  // Remove inline code: `code` → code
+  clean = clean.replace(/`([^`]+)`/g, '$1');
+  
+  // Remove links: [text](url) → text
+  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  
+  // Remove headers: ### Header → Header
+  clean = clean.replace(/^#+\s+/gm, '');
+  
+  // Remove horizontal rules
+  clean = clean.replace(/^---+$/gm, '');
+  clean = clean.replace(/^\*\*\*+$/gm, '');
+  clean = clean.replace(/^___+$/gm, '');
+  
+  // Remove list markers
+  clean = clean.replace(/^\s*[-*+]\s+/gm, '');
+  clean = clean.replace(/^\s*\d+\.\s+/gm, '');
+  
+  // Remove blockquotes
+  clean = clean.replace(/^\s*>\s+/gm, '');
+  
+  // Clean up extra whitespace
+  clean = clean.replace(/\n\n+/g, '\n');
+  clean = clean.replace(/\s+/g, ' ');
+  clean = clean.trim();
+  
+  return clean;
+}
+
+/**
  * Helper to post message to chat and store in history
  */
 function postChatMessage(message: any): void {
@@ -1970,7 +2020,11 @@ ${fileContent}
                     // Synthesize explanation to audio with timeout
                     let audioResult: any = null;
                     try {
-                      const synthesizePromise = ttsService.synthesize(explanation, voiceLanguage);
+                      // Strip markdown from explanation for cleaner narration
+                      const cleanExplanation = stripMarkdownForTTS(explanation);
+                      console.log(`[Extension] TTS input: ${cleanExplanation.length} chars (was ${explanation.length})`);
+                      
+                      const synthesizePromise = ttsService.synthesize(cleanExplanation, voiceLanguage);
                       
                       // Wrap in timeout (60 seconds max for TTS processing)
                       const timeoutPromise = new Promise((_, reject) => 
