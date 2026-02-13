@@ -271,7 +271,7 @@ export class SmartValidator {
         for (const name of names) {
           if (name && !content.includes(name)) {
             // Special case: React is often used implicitly with JSX
-            if (name === 'React' && content.includes('jsx')) continue;
+            if (name === 'React' && content.includes('jsx')) {continue;}
 
             errors.push({
               type: 'unused-import',

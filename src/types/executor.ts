@@ -35,7 +35,7 @@ export type ActionTypeString = 'read' | 'write' | 'run' | 'delete' | 'manual';
  * Validate that an action string is a valid ActionType
  */
 export function isValidActionType(action: unknown): action is ActionTypeString {
-  if (typeof action !== 'string') return false;
+  if (typeof action !== 'string') {return false;}
   return ['read', 'write', 'run', 'delete'].includes(action);
 }
 

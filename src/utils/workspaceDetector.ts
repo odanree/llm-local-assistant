@@ -195,7 +195,7 @@ export class WorkspaceDetector {
     // Walk up to find a folder with multiple projects
     for (let i = 0; i < 3; i++) {
       const parent = path.dirname(current);
-      if (parent === current) break; // Reached filesystem root
+      if (parent === current) {break;} // Reached filesystem root
 
       // Count child workspaces in parent
       const children = this.countProjectChildren(parent);
@@ -219,7 +219,7 @@ export class WorkspaceDetector {
       let count = 0;
 
       for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        if (!entry.isDirectory() || entry.name.startsWith('.')) {continue;}
 
         const fullPath = path.join(folderPath, entry.name);
         const workspace = this.analyzeFolder(fullPath, entry.name);

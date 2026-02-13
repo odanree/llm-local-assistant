@@ -227,20 +227,20 @@ export class CodebaseIndex {
     const dirName = path.dirname(filePath).toLowerCase();
 
     // Priority 1: Classify by directory (most reliable)
-    if (dirName.includes('schema')) return 'schema';
-    if (dirName.includes('service') || dirName.includes('api')) return 'service';
-    if (dirName.includes('component')) return 'component';
-    if (dirName.includes('hook')) return 'hook';
-    if (dirName.includes('util') || dirName.includes('helper')) return 'utility';
-    if (dirName.includes('type') || fileName === 'index.ts') return 'types';
-    if (dirName.includes('constant')) return 'constant';
+    if (dirName.includes('schema')) {return 'schema';}
+    if (dirName.includes('service') || dirName.includes('api')) {return 'service';}
+    if (dirName.includes('component')) {return 'component';}
+    if (dirName.includes('hook')) {return 'hook';}
+    if (dirName.includes('util') || dirName.includes('helper')) {return 'utility';}
+    if (dirName.includes('type') || fileName === 'index.ts') {return 'types';}
+    if (dirName.includes('constant')) {return 'constant';}
 
     // Priority 2: Classify by file extension (if not in a classified directory)
-    if (fileName.endsWith('.tsx')) return 'component';
+    if (fileName.endsWith('.tsx')) {return 'component';}
 
     // Priority 3: Classify by naming pattern (only if directory didn't classify it)
     // Files named useXxx in root/unknown locations are hooks
-    if (fileName.startsWith('use')) return 'hook';
+    if (fileName.startsWith('use')) {return 'hook';}
 
     return 'unknown';
   }
@@ -401,7 +401,7 @@ export class CodebaseIndex {
     const visited = new Set<string>();
 
     const visit = (filePath: string) => {
-      if (visited.has(filePath)) return;
+      if (visited.has(filePath)) {return;}
       visited.add(filePath);
 
       const deps = this.dependencies[filePath] || [];
@@ -431,7 +431,7 @@ export class CodebaseIndex {
     // TODO: Phase 3.3.2 - implement embedding-based similarity search
     // For now, return files with similar purpose
     const file = this.files.get(filePath);
-    if (!file) return [];
+    if (!file) {return [];}
 
     return Array.from(this.files.values())
       .filter(f => f.purpose === file.purpose && f.path !== filePath)

@@ -208,7 +208,7 @@ export class Planner {
    * Throws: Error if circular dependency or missing dependency detected
    */
   private topologicalSort(steps: ExecutionStep[]): ExecutionStep[] {
-    if (steps.length === 0) return steps;
+    if (steps.length === 0) {return steps;}
 
     // Build map of step ID to step
     const stepMap = new Map<string, ExecutionStep>();
@@ -226,7 +226,7 @@ export class Planner {
 
     // Build graph
     for (const step of steps) {
-      if (!step.id) continue;
+      if (!step.id) {continue;}
       
       if (step.dependsOn && step.dependsOn.length > 0) {
         for (const depId of step.dependsOn) {
@@ -586,7 +586,7 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
         if (Array.isArray(raw.dependsOn)) {
           dependsOn = raw.dependsOn
             .map((dep: any) => {
-              if (typeof dep === 'number') return `step_${dep}`;
+              if (typeof dep === 'number') {return `step_${dep}`;}
               return String(dep).toLowerCase();
             });
         } else if (typeof raw.dependsOn === 'string') {
@@ -638,17 +638,17 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
    */
   private parseStepBlock(block: string, stepNumber: number): ExecutionStep | null {
     const lines = block.split('\n').filter(l => l.trim());
-    if (lines.length === 0) return null;
+    if (lines.length === 0) {return null;}
 
     // Extract action from first line (case-insensitive!)
     const firstLine = lines[0].toLowerCase();  // Convert to lowercase for comparison
     let action = 'read'; // Default to read
     
-    if (firstLine.includes('manual')) action = 'manual';   // CONTEXT-AWARE: Check MANUAL first (highest priority)
-    else if (firstLine.includes('write')) action = 'write';
-    else if (firstLine.includes('run')) action = 'run';
-    else if (firstLine.includes('delete')) action = 'delete';
-    else if (firstLine.includes('read')) action = 'read';
+    if (firstLine.includes('manual')) {action = 'manual';}   // CONTEXT-AWARE: Check MANUAL first (highest priority)
+    else if (firstLine.includes('write')) {action = 'write';}
+    else if (firstLine.includes('run')) {action = 'run';}
+    else if (firstLine.includes('delete')) {action = 'delete';}
+    else if (firstLine.includes('read')) {action = 'read';}
     // Note: If it says 'analyze' or 'review', we default to 'read' 
     // (schema enforcement: these should not appear in step output)
 

@@ -126,9 +126,9 @@ export class ServiceExtractor {
 
     // Estimate complexity
     let complexity: 'simple' | 'moderate' | 'high' | 'critical' = 'simple';
-    if (totalLines > 80) complexity = 'moderate';
-    if (totalLines > 150) complexity = 'high';
-    if (totalLines > 250) complexity = 'critical';
+    if (totalLines > 80) {complexity = 'moderate';}
+    if (totalLines > 150) {complexity = 'high';}
+    if (totalLines > 250) {complexity = 'critical';}
 
     return {
       filename,

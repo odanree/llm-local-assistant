@@ -758,7 +758,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Check for unused imports
                   const unusedImports: string[] = [];
                   importedItems.forEach((item) => {
-                    if (['React', 'Component'].includes(item)) return;
+                    if (['React', 'Component'].includes(item)) {return;}
                     const usagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
                     const usageMatches = generatedContent.match(usagePattern) || [];
                     if (usageMatches.length === 0) {
@@ -1299,7 +1299,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   report += `**Dependency Issues:**\n${
                     semanticAnalysis.dependencyIssues.map(d => {
                       let msg = `- Line ${d.effect}: ${d.description}`;
-                      if (d.missing.length > 0) msg += ` [Missing: ${d.missing.join(', ')}]`;
+                      if (d.missing.length > 0) {msg += ` [Missing: ${d.missing.join(', ')}]`;}
                       return msg;
                     }).join('\n')
                   }\n\n`;
@@ -1583,9 +1583,9 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
                   report += `✨ **Excellent architecture!** Clear separation of concerns, proper layering.`;
                 } else if (score >= 6) {
                   report += `✅ **Good structure** with room for improvement. Consider:`;
-                  if (filesByPurpose['schema'] === 0) report += `\n- Add schemas for type safety`;
-                  if (filesByPurpose['service'] < 2) report += `\n- Extract more business logic to services`;
-                  if (filesByPurpose['component'] === 0) report += `\n- Create UI components`;
+                  if (filesByPurpose['schema'] === 0) {report += `\n- Add schemas for type safety`;}
+                  if (filesByPurpose['service'] < 2) {report += `\n- Extract more business logic to services`;}
+                  if (filesByPurpose['component'] === 0) {report += `\n- Create UI components`;}
                 } else {
                   report += `❌ **Needs refactoring.** Consider:`;
                   report += `\n- Create proper layer separation`;
@@ -2219,9 +2219,9 @@ ${fileContent}
                   report += `✨ **Excellent architecture!** Clear separation of concerns, proper layering.`;
                 } else if (score >= 6) {
                   report += `✅ **Good structure** with room for improvement. Consider:`;
-                  if (filesByPurpose['schema'] === 0) report += `\n- Add schemas for type safety`;
-                  if (filesByPurpose['service'] < 2) report += `\n- Extract more business logic to services`;
-                  if (filesByPurpose['component'] === 0) report += `\n- Create UI components`;
+                  if (filesByPurpose['schema'] === 0) {report += `\n- Add schemas for type safety`;}
+                  if (filesByPurpose['service'] < 2) {report += `\n- Extract more business logic to services`;}
+                  if (filesByPurpose['component'] === 0) {report += `\n- Create UI components`;}
                 } else {
                   report += `❌ **Needs refactoring.** Consider:`;
                   report += `\n- Create proper layer separation`;

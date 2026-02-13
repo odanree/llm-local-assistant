@@ -369,8 +369,8 @@ export class ArchitecturePatterns {
 
     const avg = complexities.reduce((a, b) => a + b, 0) / complexities.length;
 
-    if (avg <= 1.3) return 'simple';
-    if (avg <= 2.3) return 'medium';
+    if (avg <= 1.3) {return 'simple';}
+    if (avg <= 2.3) {return 'medium';}
     return 'complex';
   }
 

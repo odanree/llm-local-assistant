@@ -445,8 +445,8 @@ export class SmartAutoCorrection {
       const isUnfixable = unfixablePatterns.some(p => error.includes(p));
       const isFixable = fixablePatterns.some(p => error.includes(p));
 
-      if (isUnfixable) hasUnfixable = true;
-      if (isFixable) hasFixable = true;
+      if (isUnfixable) {hasUnfixable = true;}
+      if (isFixable) {hasFixable = true;}
     });
 
     // Fixable if has fixable errors and no unfixable ones

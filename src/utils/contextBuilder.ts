@@ -168,7 +168,7 @@ export class ContextBuilder {
 
     for (const dir of sourceDirs) {
       const dirPath = path.join(projectPath, dir);
-      if (!fs.existsSync(dirPath)) continue;
+      if (!fs.existsSync(dirPath)) {continue;}
 
       try {
         const files = this.walkDir(dirPath, sourceExtensions);

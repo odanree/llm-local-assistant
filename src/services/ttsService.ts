@@ -347,14 +347,14 @@ export class TTSService {
 
     for (const sentence of sentences) {
       if ((currentChunk + ' ' + sentence).length > this.maxChunkLength) {
-        if (currentChunk) chunks.push(currentChunk.trim());
+        if (currentChunk) {chunks.push(currentChunk.trim());}
         currentChunk = sentence;
       } else {
         currentChunk += (currentChunk ? ' ' : '') + sentence;
       }
     }
 
-    if (currentChunk) chunks.push(currentChunk.trim());
+    if (currentChunk) {chunks.push(currentChunk.trim());}
     return chunks.filter((c) => c.length > 0);
   }
 

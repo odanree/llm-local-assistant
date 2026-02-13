@@ -177,7 +177,7 @@ export async function showVoiceSettingsQuickPick(): Promise<void> {
     placeHolder: 'Select a voice setting to modify',
   });
 
-  if (!selected) return;
+  if (!selected) {return;}
 
   if (selected.setting === 'speed') {
     const speedInput = await vscode.window.showInputBox({

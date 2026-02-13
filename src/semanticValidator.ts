@@ -153,7 +153,7 @@ export class SemanticValidator {
     const normalizedRule = rulePattern.toLowerCase();
     
     // Direct substring match
-    if (normalizedMsg.includes(normalizedRule)) return true;
+    if (normalizedMsg.includes(normalizedRule)) {return true;}
     
     // Extract key terms from the rule pattern (e.g., 'unused-import-classvalue' → ['unused', 'import', 'classvalue'])
     const ruleTerms = normalizedRule.split(/[-_]/).filter(t => t.length > 0);
@@ -163,7 +163,7 @@ export class SemanticValidator {
     // 'unused-import-ClassValue' matches "Unused import: 'type ClassValue' is imported but never used"
     if (ruleTerms.length > 0) {
       const allTermsPresent = ruleTerms.every(term => normalizedMsg.includes(term));
-      if (allTermsPresent) return true;
+      if (allTermsPresent) {return true;}
     }
     
     // Match against specific known patterns
@@ -482,7 +482,7 @@ export class SemanticValidator {
     traverse(ast, {
       VariableDeclarator(path) {
         const name = t.isIdentifier(path.node.id) ? path.node.id.name : null;
-        if (!name) return;
+        if (!name) {return;}
 
         // Check if assigning a hook to a variable (bad pattern)
         const init = path.node.init;

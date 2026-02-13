@@ -440,9 +440,9 @@ export class Executor {
     
     for (const [filePath, content] of generatedFileContents) {
       // Check if this file imports from stores but doesn't use the hook correctly
-      const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/)
+      const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
       if (storeImportMatch) {
-        const storeHookMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}/g)
+        const storeHookMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}/g);
         for (const match of storeHookMatches) {
           const hookNames = match[1].split(',').map((h: string) => h.trim());
           for (const hookName of hookNames) {
@@ -1021,7 +1021,7 @@ export class Executor {
     content.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
       params.split(',').forEach((param: string) => {
         const cleaned = param.trim().split(/[:\s=]/)[0].trim();
-        if (cleaned) localVariables.add(cleaned);
+        if (cleaned) {localVariables.add(cleaned);}
       });
       return '';
     });
@@ -1036,7 +1036,7 @@ export class Executor {
     content.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
       vars.split(',').forEach((v: string) => {
         const cleaned = v.trim().split(/[:=]/)[0].trim();
-        if (cleaned) localVariables.add(cleaned);
+        if (cleaned) {localVariables.add(cleaned);}
       });
       return '';
     });
@@ -1129,7 +1129,7 @@ export class Executor {
     const unusedImports: string[] = [];
     importedItems.forEach((item) => {
       // Skip common React hooks that might be used indirectly
-      if (['React', 'Component'].includes(item)) return;
+      if (['React', 'Component'].includes(item)) {return;}
 
       // Check if this import is actually used in the code
       // Pattern 1: Used as value/identifier: Item.x or Item(...) or Item[...]
@@ -1684,7 +1684,7 @@ export class Executor {
       const fullText = `${pathLower} ${descLower}`;
 
       writeSteps.forEach((otherStep, otherIdx) => {
-        if (currentIdx === otherIdx) return;
+        if (currentIdx === otherIdx) {return;}
 
         const otherPath = (otherStep.path || '').toLowerCase();
         const otherDesc = (otherStep.description || '').toLowerCase();
@@ -1723,7 +1723,7 @@ export class Executor {
 
     const queue: number[] = [];
     inDegree.forEach((degree, idx) => {
-      if (degree === 0) queue.push(idx);
+      if (degree === 0) {queue.push(idx);}
     });
 
     const sorted: number[] = [];
@@ -1772,7 +1772,7 @@ export class Executor {
 
   /** Helper: Check if step order changed (for logging) */
   private stepsAreEqual(steps1: PlanStep[], steps2: PlanStep[]): boolean {
-    if (steps1.length !== steps2.length) return false;
+    if (steps1.length !== steps2.length) {return false;}
     return steps1.every((s, i) => s.stepId === steps2[i].stepId && s.path === steps2[i].path);
   }
 
@@ -1979,7 +1979,7 @@ export class Executor {
    * - Placeholder paths (/path/to/ → src/)
    */
   private sanitizePath(path: string): string {
-    if (!path || typeof path !== 'string') return path;
+    if (!path || typeof path !== 'string') {return path;}
 
     // Remove trailing ellipses
     let cleaned = path.replace(/\.{2,}$/, '');
@@ -2266,8 +2266,8 @@ export class Executor {
         };
 
         // Store in plan results metadata
-        if (!this.plan) return;
-        if (!this.plan.results) this.plan.results = new Map();
+        if (!this.plan) {return;}
+        if (!this.plan.results) {this.plan.results = new Map();}
         
         const stepResult = this.plan.results.get(stepId);
         if (stepResult) {
@@ -2291,8 +2291,8 @@ export class Executor {
         };
 
         // Store in plan results metadata
-        if (!this.plan) return;
-        if (!this.plan.results) this.plan.results = new Map();
+        if (!this.plan) {return;}
+        if (!this.plan.results) {this.plan.results = new Map();}
         
         const stepResult = this.plan.results.get(stepId);
         if (stepResult) {
@@ -2725,7 +2725,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 );
                 
                 // Try to find and read the store file
-                const storeImportMatch = smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/)
+                const storeImportMatch = smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/);
                 if (storeImportMatch) {
                   const storeImportPath = storeImportMatch[1];
                   const storeFilePath = vscode.Uri.joinPath(workspaceUri, storeImportPath.replace(/^\.\//, 'src/').replace(/^\.\.\//, ''));

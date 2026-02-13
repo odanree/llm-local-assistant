@@ -467,7 +467,7 @@ export class ArchitectureValidator {
           resolvedPath = resolvedPath
             .split('/')
             .reduce((acc, part) => {
-              if (part === '.' || part === '') return acc;
+              if (part === '.' || part === '') {return acc;}
               if (part === '..') {
                 const parts = acc.split('/');
                 parts.pop();
@@ -703,7 +703,7 @@ export class ArchitectureValidator {
   ): Promise<LayerViolation[]> {
     const violations: LayerViolation[] = [];
     const workspace = vscode.workspace.workspaceFolders?.[0];
-    if (!workspace) return violations;
+    if (!workspace) {return violations;}
 
     // Step 0: Validate all React imports (useState, etc.)
     // Check if code uses useState but doesn't import it
@@ -899,7 +899,7 @@ export class ArchitectureValidator {
               resolvedPath = resolvedPath
                 .split('/')
                 .reduce((acc, part) => {
-                  if (part === '.' || part === '') return acc;
+                  if (part === '.' || part === '') {return acc;}
                   if (part === '..') {
                     const parts = acc.split('/');
                     parts.pop();
@@ -1269,7 +1269,7 @@ export class ArchitectureValidator {
           const trimmed = n.trim();
           const parts = trimmed.split(/\s+as\s+/);
           const usedName = parts[1]?.trim() || parts[0].trim();
-          if (usedName) importedNames.set(usedName, importMatch[5]);
+          if (usedName) {importedNames.set(usedName, importMatch[5]);}
         });
       } else if (importMatch[2]) {
         // Default imports
