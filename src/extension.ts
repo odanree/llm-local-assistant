@@ -2061,6 +2061,7 @@ ${fileContent}
                   command: 'addMessage',
                   text: `## Code Explanation: ${relPath}\n\n${explanation}`,
                   isMarkdown: true,
+                  isExplanation: true,
                   audioBase64: audioBase64,
                   audioMetadata: audioMetadata,
                   success: true,
