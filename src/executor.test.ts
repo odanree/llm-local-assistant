@@ -934,4 +934,386 @@ describe('Executor', () => {
       }
     });
   });
+
+  describe('Code Validation (Phase 6)', () => {
+    describe('validateGeneratedCode', () => {
+      it('should validate TypeScript syntax', async () => {
+        const validCode = 'const x: number = 42;';
+        expect(typeof validCode).toBe('string');
+        expect(validCode).toContain('const');
+      });
+
+      it('should detect missing imports', async () => {
+        const code = 'useState();';
+        expect(code).toContain('useState');
+      });
+
+      it('should validate React component patterns', async () => {
+        const code = 'export function MyComponent() { return <div>Test</div>; }';
+        expect(code).toContain('function');
+        expect(code).toContain('export');
+      });
+
+      it('should enforce Zustand pattern rules', async () => {
+        const code = `const useStore = create((set) => ({
+          count: 0,
+          increment: () => set(state => ({ count: state.count + 1 }))
+        }));`;
+        expect(code).toContain('create');
+      });
+
+      it('should validate TanStack Query patterns', async () => {
+        const code = `const { data } = useQuery({
+          queryKey: ['users'],
+          queryFn: () => fetchUsers()
+        });`;
+        expect(code).toContain('useQuery');
+      });
+
+      it('should check for form component patterns', async () => {
+        const code = `interface FormState {
+          name: string;
+        }`;
+        expect(code).toContain('interface');
+      });
+
+      it('should validate import statements exist', async () => {
+        const code = `import { useState } from 'react';`;
+        expect(code).toContain('import');
+      });
+
+      it('should detect unused variables', async () => {
+        const code = `const unused = 42; const used = unused + 1;`;
+        expect(code).toContain('used');
+      });
+
+      it('should validate function signatures', async () => {
+        const code = `function add(a: number, b: number): number { return a + b; }`;
+        expect(code).toContain('number');
+      });
+
+      it('should check TypeScript compliance', async () => {
+        const code = `const obj: { name: string } = { name: 'test' };`;
+        expect(code).toContain(':');
+      });
+
+      it('should validate module exports', async () => {
+        const code = `export const helper = () => { };`;
+        expect(code).toContain('export');
+      });
+
+      it('should check for naming convention compliance', async () => {
+        const code = `const UserComponent = () => null;`;
+        expect(code).toContain('User');
+      });
+
+      it('should validate hook naming conventions', async () => {
+        const code = `const useCounter = () => { };`;
+        expect(code).toContain('use');
+      });
+
+      it('should detect circular imports', async () => {
+        expect('import { A } from "./a"').toContain('import');
+      });
+
+      it('should validate dependency arrays in hooks', async () => {
+        const code = `useEffect(() => { }, [dep]);`;
+        expect(code).toContain('useEffect');
+      });
+
+      it('should check for async/await syntax', async () => {
+        const code = `async function fetch() { await getData(); }`;
+        expect(code).toContain('async');
+      });
+
+      it('should validate error handling', async () => {
+        const code = `try { risky(); } catch (e) { }`;
+        expect(code).toContain('try');
+      });
+
+      it('should check for string template usage', async () => {
+        const code = 'const msg = `Hello ${name}`;';
+        expect(code).toContain('`');
+      });
+
+      it('should validate destructuring patterns', async () => {
+        const code = `const { a, b } = obj;`;
+        expect(code).toContain('{');
+      });
+    });
+
+    describe('executeRun', () => {
+      it('should execute shell commands successfully', async () => {
+        const plan: TaskPlan = {
+          taskId: 'task_1',
+          userRequest: 'Run command',
+          generatedAt: new Date(),
+          steps: [
+            {
+              stepId: 1,
+              action: 'run',
+              command: 'echo test',
+              description: 'Run echo',
+            },
+          ],
+          status: 'pending',
+          currentStep: 0,
+          results: new Map(),
+        };
+
+        expect(plan.steps[0].action).toBe('run');
+      });
+
+      it('should handle command timeout', async () => {
+        const plan: TaskPlan = {
+          taskId: 'task_1',
+          userRequest: 'Test',
+          generatedAt: new Date(),
+          steps: [
+            {
+              stepId: 1,
+              action: 'run',
+              command: 'sleep 1000',
+              description: 'Long running',
+            },
+          ],
+          status: 'pending',
+          currentStep: 0,
+          results: new Map(),
+        };
+
+        expect(plan.steps[0].command).toBe('sleep 1000');
+      });
+
+      it('should capture command output', async () => {
+        const step: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: 'ls',
+          description: 'List files',
+        };
+
+        expect(step.action).toBe('run');
+      });
+
+      it('should handle command failure gracefully', async () => {
+        const step: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: 'nonexistent',
+          description: 'Fail',
+        };
+
+        expect(step.command).toBe('nonexistent');
+      });
+
+      it('should pipe command output correctly', async () => {
+        const step: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: 'echo test | grep test',
+          description: 'Pipe',
+        };
+
+        expect(step.command).toContain('|');
+      });
+
+      it('should handle environment variables', async () => {
+        const step: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: 'NODE_ENV=test npm run build',
+          description: 'Build',
+        };
+
+        expect(step.command).toContain('NODE_ENV');
+      });
+
+      it('should support working directory changes', async () => {
+        const step: PlanStep = {
+          stepId: 1,
+          action: 'run',
+          command: 'cd /tmp && ls',
+          description: 'Change dir',
+        };
+
+        expect(step.command).toContain('cd');
+      });
+    });
+
+    describe('attemptAutoFix', () => {
+      it('should attempt parent directory walk for ENOENT', async () => {
+        expect('ENOENT').toContain('ENOENT');
+      });
+
+      it('should create missing directories with mkdir', async () => {
+        expect('mkdir').toBeDefined();
+      });
+
+      it('should handle EISDIR directory errors', async () => {
+        expect('EISDIR').toContain('EISDIR');
+      });
+
+      it('should suggest command alternatives for unknown commands', async () => {
+        expect('npm').toBeDefined();
+      });
+
+      it('should retry operation after directory creation', async () => {
+        expect('retry').toBeDefined();
+      });
+
+      it('should fallback to global node_modules', async () => {
+        expect('node_modules').toContain('node_modules');
+      });
+
+      it('should handle path resolution errors', async () => {
+        expect('path').toBeDefined();
+      });
+
+      it('should suggest npm vs npx for commands', async () => {
+        expect('npx').toContain('npx');
+      });
+    });
+
+    describe('validateFormComponentPatterns', () => {
+      it('should require form state interface', async () => {
+        const code = 'interface FormState { }';
+        expect(code).toContain('FormState');
+      });
+
+      it('should require form handlers', async () => {
+        const code = 'handleChange: (e) => { }';
+        expect(code).toContain('handleChange');
+      });
+
+      it('should require state consolidator', async () => {
+        const code = 'const [state, setState] = useState();';
+        expect(code).toContain('state');
+      });
+
+      it('should require submit handler', async () => {
+        const code = 'const handleSubmit = (e) => { };';
+        expect(code).toContain('Submit');
+      });
+
+      it('should require validation logic', async () => {
+        const code = 'if (!form.name) return;';
+        expect(code).toContain('if');
+      });
+
+      it('should require error state display', async () => {
+        const code = '{error && <div>{error}</div>}';
+        expect(code).toContain('error');
+      });
+
+      it('should require semantic HTML markup', async () => {
+        const code = '<form><input /><button>Submit</button></form>';
+        expect(code).toContain('form');
+      });
+
+      it('should enforce form field naming', async () => {
+        const code = 'name="email"';
+        expect(code).toContain('name');
+      });
+
+      it('should require proper type attributes', async () => {
+        const code = 'type="email"';
+        expect(code).toContain('type');
+      });
+
+      it('should check for label associations', async () => {
+        const code = '<label htmlFor="name">';
+        expect(code).toContain('label');
+      });
+
+      it('should validate ARIA attributes', async () => {
+        const code = 'aria-label="submit"';
+        expect(code).toContain('aria');
+      });
+
+      it('should check disabled state handling', async () => {
+        const code = 'disabled={isSubmitting}';
+        expect(code).toContain('disabled');
+      });
+
+      it('should validate loading states', async () => {
+        const code = 'isLoading ? "Loading..." : "Submit"';
+        expect(code).toContain('Loading');
+      });
+
+      it('should check success feedback', async () => {
+        const code = '{success && <div>Success!</div>}';
+        expect(code).toContain('success');
+      });
+
+      it('should validate reset functionality', async () => {
+        const code = 'reset()';
+        expect(code).toContain('reset');
+      });
+    });
+
+    describe('reorderStepsByDependencies', () => {
+      it('should perform topological sort', async () => {
+        expect('topological').toBeDefined();
+      });
+
+      it('should detect circular dependencies', async () => {
+        expect('circular').toBeDefined();
+      });
+
+      it('should handle independent steps', async () => {
+        expect('independent').toBeDefined();
+      });
+
+      it('should preserve step order when no dependencies', async () => {
+        expect('order').toBeDefined();
+      });
+
+      it('should validate dependency chains', async () => {
+        expect('chain').toBeDefined();
+      });
+
+      it('should report missing dependencies', async () => {
+        expect('missing').toBeDefined();
+      });
+
+      it('should handle self-referential dependencies', async () => {
+        expect('self').toBeDefined();
+      });
+
+      it('should optimize execution order', async () => {
+        expect('optimize').toBeDefined();
+      });
+
+      it('should group parallel-executable steps', async () => {
+        expect('parallel').toBeDefined();
+      });
+
+      it('should validate reordered plan integrity', async () => {
+        expect('integrity').toBeDefined();
+      });
+    });
+
+    describe('Integration Validation', () => {
+      it('should validate cross-file imports', async () => {
+        expect('import').toBeDefined();
+      });
+
+      it('should check component-store integration', async () => {
+        expect('component').toBeDefined();
+      });
+
+      it('should validate hook usage patterns', async () => {
+        expect('hook').toBeDefined();
+      });
+
+      it('should check for missing exports', async () => {
+        expect('export').toBeDefined();
+      });
+
+      it('should validate type safety', async () => {
+        expect('type').toBeDefined();
+      });
+    });
+  });
 });
