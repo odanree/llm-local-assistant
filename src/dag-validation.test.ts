@@ -1,21 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Planner } from './planner';
-import { ExecutionStep } from './types/executor';
 
 /**
  * Tests for DAG Dependency Validation (Phase 2.4)
- * 
- * Comprehensive test suite for:
- * - Semantic step ID generation
- * - Semantic dependency extraction
- * - Topological sorting
- * - Circular dependency detection
- * - Missing dependency detection
- * - Real Qwen output samples
- * - Edge cases and error handling
+ *
+ * Tests the topological sorting, circular dependency detection,
+ * and missing dependency detection in the Planner.
+ *
+ * NOTE: Step IDs are generated as step_1, step_2, etc. based on position
  */
 
-describe('DAG Dependency Validation (Phase 2.4)', () => {
+describe('DAG Dependency Validation', () => {
   let planner: Planner;
   let mockConfig: any;
 
@@ -31,250 +26,334 @@ describe('DAG Dependency Validation (Phase 2.4)', () => {
       },
       onProgress: undefined,
     };
-
-    planner = new Planner(mockConfig);
-  });
-
-  describe('Semantic Step ID Generation', () => {
-    it('generates deterministic IDs from action and description', () => {
-      // This is a private method, so we test through integration
-      // by mocking LLM to return a plan
-      expect(true).toBe(true); // Placeholder for integration test
-    });
-
-    it('handles special characters in descriptions', () => {
-      // IDs should be slug-ified
-      expect(true).toBe(true);
-    });
-
-    it('caps description length at 20 chars', () => {
-      expect(true).toBe(true);
-    });
-  });
-
-  describe('Semantic Dependency Extraction', () => {
-    it('extracts "Depends on:" format', () => {
-      expect(true).toBe(true);
-    });
-
-    it('extracts "Dependency:" format', () => {
-      expect(true).toBe(true);
-    });
-
-    it('handles multiple dependencies', () => {
-      expect(true).toBe(true);
-    });
-
-    it('returns undefined when no dependencies', () => {
-      expect(true).toBe(true);
-    });
   });
 
   describe('Topological Sorting - Linear Chains', () => {
-    it('sorts linear dependency chain A → B → C', () => {
-      expect(true).toBe(true);
+    it('sorts linear dependency chain step1 → step2 → step3', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts", "notes": "Depends on: step_2"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create ABC');
+      expect(plan.steps[0].id).toBe('step_1');
+      expect(plan.steps[1].id).toBe('step_2');
+      expect(plan.steps[2].id).toBe('step_3');
+      // Verify topological order was maintained
+      expect(plan.steps.map(s => s.id)).toEqual(['step_1', 'step_2', 'step_3']);
     });
 
-    it('maintains order for steps with no dependencies', () => {
-      expect(true).toBe(true);
+    it('maintains order for independent steps', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create files');
+      expect(plan.steps).toHaveLength(3);
+      expect(plan.steps.every(s => !s.dependsOn || s.dependsOn.length === 0)).toBe(true);
     });
   });
 
-  describe('Topological Sorting - Multi-Root', () => {
-    it('handles parallel steps (A, B both in-degree 0)', () => {
-      // Multi-root: Both A and B can run first
-      expect(true).toBe(true);
+  describe('Topological Sorting - Parallel Steps', () => {
+    it('handles parallel steps before dependent step', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create base", "path": "src/base.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts", "notes": "Depends on: step_1"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create parallel');
+      const step1Idx = plan.steps.findIndex(s => s.id === 'step_1');
+      const step2Idx = plan.steps.findIndex(s => s.id === 'step_2');
+      const step3Idx = plan.steps.findIndex(s => s.id === 'step_3');
+
+      expect(step1Idx).toBeLessThan(step2Idx);
+      expect(step1Idx).toBeLessThan(step3Idx);
     });
 
-    it('merges parallel steps before dependent step', () => {
-      // A, B both run, then C depends on [A, B]
-      expect(true).toBe(true);
+    it('handles multi-level parallel dependencies', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create base", "path": "src/base.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts", "notes": "Depends on: step_1"},
+  {"step": 4, "action": "write", "description": "Create D", "path": "src/d.ts", "notes": "Depends on: step_1"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create multi-leaf');
+      const step1Idx = plan.steps.findIndex(s => s.id === 'step_1');
+
+      expect(plan.steps[0].id).toBe('step_1');
+      expect(step1Idx).toBeLessThan(plan.steps.findIndex(s => s.id === 'step_2'));
+      expect(step1Idx).toBeLessThan(plan.steps.findIndex(s => s.id === 'step_3'));
+      expect(step1Idx).toBeLessThan(plan.steps.findIndex(s => s.id === 'step_4'));
     });
   });
 
-  describe('Topological Sorting - Multi-Leaf', () => {
-    it('handles multi-leaf scenario (A → B, C, D)', () => {
-      // A runs first, then B, C, D can all run (depend on A)
-      expect(true).toBe(true);
-    });
+  describe('Diamond Pattern Dependencies', () => {
+    it('handles diamond pattern step1 → step2,step3 → step4', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create base", "path": "src/base.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts", "notes": "Depends on: step_1"},
+  {"step": 4, "action": "write", "description": "Create D", "path": "src/d.ts", "notes": "Depends on: step_2, step_3"}
+]`;
 
-    it('identifies concurrent execution groups', () => {
-      // B, C, D have same in-degree and can run in parallel
-      expect(true).toBe(true);
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create diamond');
+      const indices = {
+        1: plan.steps.findIndex(s => s.id === 'step_1'),
+        2: plan.steps.findIndex(s => s.id === 'step_2'),
+        3: plan.steps.findIndex(s => s.id === 'step_3'),
+        4: plan.steps.findIndex(s => s.id === 'step_4'),
+      };
+
+      // step_1 comes first
+      expect(indices[1]).toBeLessThan(indices[2]);
+      expect(indices[1]).toBeLessThan(indices[3]);
+      // step_2 and step_3 come before step_4
+      expect(indices[2]).toBeLessThan(indices[4]);
+      expect(indices[3]).toBeLessThan(indices[4]);
     });
   });
 
-  describe('Circular Dependency Detection', () => {
-    it('detects simple cycle A → B → A', () => {
-      // Should throw CIRCULAR_DEPENDENCY
-      expect(true).toBe(true);
+  describe('Multiple Independent Chains', () => {
+    it('handles independent chains A→B and C→D', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts"},
+  {"step": 4, "action": "write", "description": "Create D", "path": "src/d.ts", "notes": "Depends on: step_3"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create chains');
+      const indices = {
+        1: plan.steps.findIndex(s => s.id === 'step_1'),
+        2: plan.steps.findIndex(s => s.id === 'step_2'),
+        3: plan.steps.findIndex(s => s.id === 'step_3'),
+        4: plan.steps.findIndex(s => s.id === 'step_4'),
+      };
+
+      // Chain 1: step_1 before step_2
+      expect(indices[1]).toBeLessThan(indices[2]);
+      // Chain 2: step_3 before step_4
+      expect(indices[3]).toBeLessThan(indices[4]);
+    });
+  });
+
+  describe('Circular Dependency Handling', () => {
+    it('handles circular dependency with fallback ordering', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts", "notes": "Depends on: step_2"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      // Circular dependency triggers fallback: original order is used
+      const plan = await planner.generatePlan('Create AB');
+      expect(plan.steps).toHaveLength(2);
+      expect(plan.steps[0].id).toBe('step_1');
+      expect(plan.steps[1].id).toBe('step_2');
     });
 
-    it('detects complex cycle A → B → C → A', () => {
-      expect(true).toBe(true);
+    it('handles complex cycle with fallback', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts", "notes": "Depends on: step_3"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create C", "path": "src/c.ts", "notes": "Depends on: step_2"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      // Should return original order due to cycle
+      const plan = await planner.generatePlan('Create ABC');
+      expect(plan.steps).toHaveLength(3);
+      expect(plan.steps.map(s => s.id)).toEqual(['step_1', 'step_2', 'step_3']);
     });
 
-    it('detects self-loop A → A', () => {
-      expect(true).toBe(true);
-    });
+    it('returns valid plan even on circular detection', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts", "notes": "Depends on: step_2"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_1"}
+]`;
 
-    it('throws clear error message with cycle info', () => {
-      expect(true).toBe(true);
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create AB');
+      // Even with circular deps, plan is valid with original order
+      expect(plan.steps).toHaveLength(2);
+      expect(plan.steps[0].id).toBe('step_1');
+      expect(plan.steps[1].id).toBe('step_2');
     });
   });
 
   describe('Missing Dependency Detection', () => {
-    it('detects reference to non-existent step', () => {
-      // Step B depends on step_nonexistent which doesn't exist
-      // Should throw MISSING_DEPENDENCY
-      expect(true).toBe(true);
+    it('detects reference to non-existent step and uses fallback ordering', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_99"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      // The Planner falls back to original order on sort failure
+      const plan = await planner.generatePlan('Create B');
+      expect(plan.steps).toHaveLength(1);
+      expect(plan.steps[0].id).toBe('step_1');
     });
 
-    it('lists available steps in error message', () => {
-      expect(true).toBe(true);
+    it('handles multiple steps with invalid dependency references', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_99"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      // Fallback behavior: returns original order
+      const plan = await planner.generatePlan('Create AB');
+      expect(plan.steps).toHaveLength(2);
+      expect(plan.steps[0].id).toBe('step_1');
+      expect(plan.steps[1].id).toBe('step_2');
     });
 
-    it('shows which step has the missing dependency', () => {
-      expect(true).toBe(true);
-    });
-  });
+    it('shows dependency attempt even when target missing', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts", "notes": "Depends on: step_missing"}
+]`;
 
-  describe('Orphaned Steps', () => {
-    it('handles steps with no dependencies (orphaned)', () => {
-      // Orphaned steps should be sorted first
-      expect(true).toBe(true);
-    });
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
 
-    it('places orphaned steps before dependent steps', () => {
-      expect(true).toBe(true);
-    });
-  });
-
-  describe('Real Qwen Output Samples', () => {
-    it('processes real Qwen multi-step plan', () => {
-      const qwenOutput = `
-**[Step 1] WRITE**
-- Description: Create config file
-- Path: src/config.ts
-
-**[Step 2] RUN**
-- Description: Install dependencies
-- Command: npm install
-
-**[Step 3] RUN**
-- Description: Run tests
-- Command: npm test
-- Depends on: step_run_install_dependencies
-`;
-      // Parse and sort this real output
-      expect(true).toBe(true);
-    });
-
-    it('extracts dependencies from Qwen output format', () => {
-      // "Depends on: step_write_config, step_install_deps"
-      expect(true).toBe(true);
-    });
-
-    it('handles Qwen verbose descriptions', () => {
-      // Real Qwen outputs include detailed descriptions
-      expect(true).toBe(true);
-    });
-  });
-
-  describe('Complex Dependency Patterns', () => {
-    it('handles diamond pattern A → B, C → D', () => {
-      // A splits to B and C, both converge to D
-      expect(true).toBe(true);
-    });
-
-    it('handles multiple independent chains', () => {
-      // A → B and C → D (no relationship)
-      expect(true).toBe(true);
-    });
-
-    it('handles partially dependent chains', () => {
-      // A → B → C
-      // D → C
-      // (C has two dependencies)
-      expect(true).toBe(true);
+      const plan = await planner.generatePlan('Create AB');
+      expect(plan.steps).toHaveLength(2);
+      // Both steps should be present in fallback order
+      expect(plan.steps[0].id).toBe('step_1');
+      expect(plan.steps[1].id).toBe('step_2');
     });
   });
 
   describe('Edge Cases', () => {
-    it('handles empty step list', () => {
-      expect(true).toBe(true);
+    it('handles single step', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create file", "path": "src/file.ts"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create file');
+      expect(plan.steps).toHaveLength(1);
+      expect(plan.steps[0].id).toBe('step_1');
     });
 
-    it('handles single step', () => {
-      expect(true).toBe(true);
+    it('handles steps with no dependencies', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create A", "path": "src/a.ts"},
+  {"step": 2, "action": "write", "description": "Create B", "path": "src/b.ts"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create files');
+      expect(plan.steps.every(s => !s.dependsOn || s.dependsOn.length === 0)).toBe(true);
     });
 
-    it('handles steps with empty dependsOn array', () => {
-      // dependsOn: [] should be treated as no dependencies
-      expect(true).toBe(true);
+    it('handles undefined dependsOn', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create file", "path": "src/file.ts"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Create file');
+      expect(plan.steps[0].dependsOn).toBeUndefined();
     });
 
-    it('handles steps with undefined dependsOn', () => {
-      expect(true).toBe(true);
-    });
+    it('preserves step order with no dependencies', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "First", "path": "src/first.ts"},
+  {"step": 2, "action": "write", "description": "Second", "path": "src/second.ts"},
+  {"step": 3, "action": "write", "description": "Third", "path": "src/third.ts"}
+]`;
 
-    it('handles step IDs with special characters', () => {
-      // Some slugs might have underscores or numbers
-      expect(true).toBe(true);
-    });
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
 
-    it('is case-insensitive for dependency matching', () => {
-      // step_WRITE_CONFIG should match step_write_config
-      expect(true).toBe(true);
-    });
-  });
-
-  describe('Error Messages', () => {
-    it('provides clear CIRCULAR_DEPENDENCY error', () => {
-      expect(true).toBe(true);
-    });
-
-    it('provides clear MISSING_DEPENDENCY error', () => {
-      expect(true).toBe(true);
-    });
-
-    it('includes available steps in error', () => {
-      expect(true).toBe(true);
-    });
-
-    it('suggests how to fix dependency issues', () => {
-      expect(true).toBe(true);
+      const plan = await planner.generatePlan('Create three');
+      expect(plan.steps.map(s => s.id)).toEqual(['step_1', 'step_2', 'step_3']);
     });
   });
 
   describe('Integration: Full DAG Flow', () => {
-    it('parses Qwen output → generates IDs → extracts deps → topological sort', () => {
-      // Full integration test
-      expect(true).toBe(true);
+    it('parses plan → generates IDs → extracts deps → topological sort', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Setup config", "path": "src/config.ts"},
+  {"step": 2, "action": "write", "description": "Create component", "path": "src/Component.tsx", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Create tests", "path": "src/Component.test.tsx", "notes": "Depends on: step_2"}
+]`;
+
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
+
+      const plan = await planner.generatePlan('Setup component');
+
+      expect(plan.taskId).toBeDefined();
+      expect(plan.userRequest).toBe('Setup component');
+      expect(plan.steps).toHaveLength(3);
+      expect(plan.steps[0].id).toBe('step_1');
+      // Verify topological order (dependencies should be sorted)
+      expect(plan.steps.map(s => s.id)).toEqual(['step_1', 'step_2', 'step_3']);
     });
 
-    it('logs execution order correctly', () => {
-      expect(true).toBe(true);
-    });
+    it('maintains execution order for complex dependencies', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Setup", "path": "src/setup.ts"},
+  {"step": 2, "action": "write", "description": "Feature A", "path": "src/a.ts", "notes": "Depends on: step_1"},
+  {"step": 3, "action": "write", "description": "Feature B", "path": "src/b.ts", "notes": "Depends on: step_1"},
+  {"step": 4, "action": "write", "description": "Integrate", "path": "src/index.ts", "notes": "Depends on: step_2, step_3"}
+]`;
 
-    it('handles mixed dependent and independent steps', () => {
-      expect(true).toBe(true);
-    });
-  });
+      mockConfig.llmCall = vi.fn().mockResolvedValue(planResponse);
+      planner = new Planner(mockConfig);
 
-  describe('Robustness', () => {
-    it('gracefully handles sort failure with fallback', () => {
-      // If sort fails, should fall back to original order
-      expect(true).toBe(true);
-    });
+      const plan = await planner.generatePlan('Complex flow');
+      const idOrder = plan.steps.map(s => s.id);
 
-    it('continues execution even if dependencies not fully specified', () => {
-      expect(true).toBe(true);
-    });
-
-    it('validates dependencies without breaking with whitespace variations', () => {
-      // "Depends on: step_a, step_b" vs "Depends on:step_a,step_b"
-      expect(true).toBe(true);
+      // step_1 must come before step_2, step_3, and step_4
+      expect(idOrder.indexOf('step_1')).toBeLessThan(idOrder.indexOf('step_2'));
+      expect(idOrder.indexOf('step_1')).toBeLessThan(idOrder.indexOf('step_3'));
+      expect(idOrder.indexOf('step_1')).toBeLessThan(idOrder.indexOf('step_4'));
+      // step_2 and step_3 must come before step_4
+      expect(idOrder.indexOf('step_2')).toBeLessThan(idOrder.indexOf('step_4'));
+      expect(idOrder.indexOf('step_3')).toBeLessThan(idOrder.indexOf('step_4'));
     });
   });
 });
