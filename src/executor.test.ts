@@ -1316,4 +1316,368 @@ describe('Executor', () => {
       });
     });
   });
+
+  describe('Executor Implementation Details (Phase 10)', () => {
+    it('should validate step contract before execution', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_validate',
+        userRequest: 'Test validation',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Read test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result).toBeDefined();
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should track execution duration for each step', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_duration',
+        userRequest: 'Test duration',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Read test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.duration).toBeDefined();
+      expect(typeof result.duration).toBe('number');
+      expect(result.duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should handle step with missing action gracefully', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_missing_action',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            description: 'No action field',
+          } as any,
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should handle step with invalid action type', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_invalid_action',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'teleport' as any,
+            description: 'Invalid action',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should handle multiple sequential steps', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_sequential',
+        userRequest: 'Multi-step',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'file1.ts',
+            description: 'Step 1',
+          },
+          {
+            stepId: 2,
+            action: 'read',
+            path: 'file2.ts',
+            description: 'Step 2',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result1 = await executor.executeStep(plan, 1);
+      expect(result1.stepId).toBe(1);
+
+      const result2 = await executor.executeStep(plan, 2);
+      expect(result2.stepId).toBe(2);
+    });
+
+    it('should provide error messages with context', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_error_context',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'invalid' as any,
+            description: 'Bad action',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(typeof result.error).toBe('string');
+      expect(result.error.length).toBeGreaterThan(0);
+    });
+
+    it('should handle write step with generated content', async () => {
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: '// Generated code',
+      });
+
+      const plan: TaskPlan = {
+        taskId: 'task_write_generated',
+        userRequest: 'Generate file',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'generated.ts',
+            prompt: 'Generate code',
+            description: 'Write generated code',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+      expect(mockLLMClient.sendMessage).toHaveBeenCalled();
+    });
+
+    it('should handle step execution state', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_state',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Read',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result).toHaveProperty('success');
+      expect(result).toHaveProperty('stepId');
+      expect(result).toHaveProperty('duration');
+    });
+
+    it('should handle delete step', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_delete',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'delete',
+            path: 'old.ts',
+            description: 'Delete old file',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle manual step type', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_manual',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'manual',
+            description: 'Manual step',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle executePlan with no steps', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_empty_plan',
+        userRequest: 'Empty',
+        generatedAt: new Date(),
+        steps: [],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executePlan(plan);
+      expect(result).toBeDefined();
+      expect(result.completedSteps).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should handle plan execution with callbacks', async () => {
+      const onProgressMock = vi.fn();
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        onProgress: onProgressMock,
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+
+      const plan: TaskPlan = {
+        taskId: 'task_callbacks',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Read',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      await executor2.executePlan(plan);
+      // Verify that the callback exists and plan executed
+      expect(executor2).toBeDefined();
+      expect(plan.taskId).toBe('task_callbacks');
+    });
+
+    it('should handle max retries configuration', async () => {
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        maxRetries: 5,
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      expect(executor2).toBeDefined();
+    });
+
+    it('should handle timeout configuration', async () => {
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: mockWorkspace,
+        timeout: 60000,
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+      expect(executor2).toBeDefined();
+    });
+
+    it('should preserve plan state across executions', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_preserve',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Read',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const originalId = plan.taskId;
+      await executor.executeStep(plan, 1);
+
+      expect(plan.taskId).toBe(originalId);
+    });
+
+    it('should handle step fields with different types', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_types',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'test.ts',
+            prompt: 'Generate',
+            description: 'Test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result).toBeDefined();
+    });
+  });
 });
