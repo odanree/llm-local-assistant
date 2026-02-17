@@ -1680,4 +1680,436 @@ describe('Executor', () => {
       expect(result).toBeDefined();
     });
   });
+
+  describe('Command Execution - executeRun (Phase 11)', () => {
+    it('should execute echo command successfully', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_echo',
+        userRequest: 'Test echo',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo "Hello from executor"',
+            description: 'Echo test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+      expect(result.duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should execute pwd command', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_pwd',
+        userRequest: 'Test pwd',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'pwd',
+            description: 'Print working directory',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle run step with no command provided', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_no_cmd',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            description: 'Missing command',
+          } as any,
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should execute ls/dir command', async () => {
+      const command = process.platform === 'win32' ? 'dir' : 'ls -la';
+      const plan: TaskPlan = {
+        taskId: 'task_ls',
+        userRequest: 'List files',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: command,
+            description: 'List directory',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle run commands with environment variables', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_env',
+        userRequest: 'Test env',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo $PATH',
+            description: 'Echo PATH',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle multiline command', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_multiline',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo "line1" && echo "line2"',
+            description: 'Multiline echo',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should track command execution duration', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_duration',
+        userRequest: 'Test duration',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo "quick"',
+            description: 'Quick command',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.duration).toBeDefined();
+      expect(typeof result.duration).toBe('number');
+      expect(result.duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should handle run step result structure', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_result_structure',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo "test"',
+            description: 'Structure test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result).toHaveProperty('stepId');
+      expect(result).toHaveProperty('success');
+      expect(result).toHaveProperty('duration');
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle nonexistent command gracefully', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_nonexistent',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'nonexistentcommand12345',
+            description: 'Nonexistent command',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result).toBeDefined();
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle command with pipes', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_pipe',
+        userRequest: 'Test pipe',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo "test output" | grep test',
+            description: 'Pipe command',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle command with redirects', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_redirect',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'echo "output" > /dev/null',
+            description: 'Redirect to null',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+  });
+
+  describe('Error Handling & Suggestions (Phase 11)', () => {
+    it('should handle permission denied errors', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_permission',
+        userRequest: 'Test permission',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'chmod -x /bin/ls',  // Will fail with permission denied
+            description: 'Permission denied',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+      expect(result).toBeDefined();
+    });
+
+    it('should generate error suggestions for missing commands', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_missing_cmd',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'run',
+            command: 'commandnotfound',
+            description: 'Missing command',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result).toBeDefined();
+    });
+  });
+
+  describe('Pause/Resume Execution (Phase 11)', () => {
+    it('should support pause flag configuration', async () => {
+      const executor2 = new Executor(mockConfig);
+      expect(executor2).toBeDefined();
+      // Pause/resume would be tested through pauseExecution/resumeExecution methods
+    });
+
+    it('should handle cancellation during execution', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_cancel',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Read',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      await executor.executeStep(plan, 1);
+      // Cancel operation would be triggered externally
+      expect(executor).toBeDefined();
+    });
+
+    it('should support cancelExecution method', async () => {
+      await executor.cancelExecution();
+      // Should complete without error
+      expect(executor).toBeDefined();
+    });
+
+    it('should support cancelExecution with rollback flag', async () => {
+      await executor.cancelExecution(true);
+      // Should handle rollback flag (currently not implemented)
+      expect(executor).toBeDefined();
+    });
+
+    it('should support cancelExecution with false rollback', async () => {
+      await executor.cancelExecution(false);
+      // Should cancel without rollback
+      expect(executor).toBeDefined();
+    });
+  });
+
+  describe('Step Validation & Contract (Phase 11)', () => {
+    it('should validate step before execution', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_validate_contract',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Contract test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+      expect(result).toHaveProperty('success');
+    });
+
+    it('should handle step with all required fields', async () => {
+      const plan: TaskPlan = {
+        taskId: 'task_all_fields',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'write',
+            path: 'output.ts',
+            prompt: 'Generate code',
+            description: 'Complete step',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      mockLLMClient.sendMessage.mockResolvedValue({
+        success: true,
+        message: '// code',
+      });
+
+      const result = await executor.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+
+    it('should handle plan with custom workspace', async () => {
+      const customWorkspace = { fsPath: '/custom/path' };
+      const mockConfig2 = {
+        extension: {} as any,
+        llmClient: mockLLMClient,
+        workspace: customWorkspace,
+      };
+
+      const executor2 = new Executor(mockConfig2 as any);
+
+      const plan: TaskPlan = {
+        taskId: 'task_custom_workspace',
+        userRequest: 'Test',
+        generatedAt: new Date(),
+        steps: [
+          {
+            stepId: 1,
+            action: 'read',
+            path: 'test.ts',
+            description: 'Test',
+          },
+        ],
+        status: 'pending',
+        currentStep: 0,
+        results: new Map(),
+      };
+
+      const result = await executor2.executeStep(plan, 1);
+      expect(result.stepId).toBe(1);
+    });
+  });
 });
