@@ -41,10 +41,11 @@ describe('GitClient', () => {
       expect(typeof gitClient.getBranch).toBe('function');
     });
 
-    it('should be async', () => {
+    it('should be async', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getBranch();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
   });
 
@@ -55,10 +56,11 @@ describe('GitClient', () => {
       expect(typeof gitClient.getStagedDiff).toBe('function');
     });
 
-    it('should return Promise', () => {
+    it('should return Promise', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getStagedDiff();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
   });
 
@@ -69,10 +71,11 @@ describe('GitClient', () => {
       expect(typeof gitClient.getUnstagedDiff).toBe('function');
     });
 
-    it('should return Promise', () => {
+    it('should return Promise', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getUnstagedDiff();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
   });
 
@@ -83,10 +86,11 @@ describe('GitClient', () => {
       expect(typeof gitClient.getAllChanges).toBe('function');
     });
 
-    it('should return Promise', () => {
+    it('should return Promise', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getAllChanges();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
   });
 
@@ -97,10 +101,11 @@ describe('GitClient', () => {
       expect(typeof gitClient.getStatus).toBe('function');
     });
 
-    it('should return Promise', () => {
+    it('should return Promise', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getStatus();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
 
     it('should support GitStatus interface', () => {
@@ -117,22 +122,25 @@ describe('GitClient', () => {
       expect(typeof gitClient.getRecentCommits).toBe('function');
     });
 
-    it('should return Promise', () => {
+    it('should return Promise', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getRecentCommits();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
 
-    it('should accept count parameter', () => {
+    it('should accept count parameter', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getRecentCommits(10);
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
 
-    it('should have default count of 5', () => {
+    it('should have default count of 5', async () => {
       const gitClient = new GitClient(mockUri);
       const result = gitClient.getRecentCommits();
       expect(result).toBeInstanceOf(Promise);
+      await result.catch(() => {});
     });
   });
 

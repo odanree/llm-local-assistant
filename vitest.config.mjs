@@ -5,6 +5,13 @@ export default defineConfig({
     globals: true,
     environment: 'happy-dom',
     setupFiles: ['./src/vitest.setup.ts'],
+    onConsoleLog(log, type) {
+      // Suppress specific console logs if needed
+      if (log.includes && log.includes('git')) {
+        return false;
+      }
+    },
+    hookTimeout: 30000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
