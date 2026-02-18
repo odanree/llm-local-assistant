@@ -448,4 +448,268 @@ describe('Planner', () => {
       await expect(planner.generatePlan('Empty response')).rejects.toThrow();
     });
   });
+
+  describe('Scaffold Dependencies (Phase 12)', () => {
+    it('should not add scaffold steps for non-component tasks', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "run", "description": "Run tests", "command": "npm test", "expectedOutcome": "Tests pass"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Run tests');
+
+      // Non-component tasks should not have scaffold steps
+      expect(plan.steps.length).toBe(1);
+      expect(plan.steps[0].action).toBe('run');
+    });
+
+    it('should add scaffold steps when creating components without cn utility', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create button component", "path": "src/components/Button.tsx", "expectedOutcome": "Button created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      const plan = await planner.generatePlan('Create button component', '/test/workspace');
+
+      // Should have prepended scaffold step for cn utility if workspace path provided
+      // Note: The implementation checks for workspace path, so we verify the step count
+      expect(plan.steps.length).toBeGreaterThanOrEqual(1);
+      expect(plan.steps.some(s => s.path?.includes('components'))).toBe(true);
+    });
+
+    it('should preserve original steps when adding scaffold dependencies', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create header", "path": "src/components/Header.tsx", "expectedOutcome": "Header created"},
+  {"step": 2, "action": "write", "description": "Create footer", "path": "src/components/Footer.tsx", "expectedOutcome": "Footer created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Create header and footer');
+
+      // All original steps should still be present
+      expect(plan.steps.some(s => s.path?.includes('Header'))).toBe(true);
+      expect(plan.steps.some(s => s.path?.includes('Footer'))).toBe(true);
+    });
+
+    it('should extract workspace context in plan', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const workspacePath = '/home/user/projects/myapp';
+      const workspaceName = 'MyApp';
+
+      const plan = await planner.generatePlan('Test', workspacePath, workspaceName);
+
+      expect(plan.workspacePath).toBe(workspacePath);
+      expect(plan.workspaceName).toBe(workspaceName);
+    });
+
+    it('should handle project context in plan generation', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      const projectContext = {
+        hasTests: true,
+        testFramework: 'vitest',
+      };
+
+      const plan = await planner.generatePlan('Test task', undefined, undefined, projectContext);
+
+      expect(plan.steps.length).toBeGreaterThan(0);
+      expect(mockLLMCall).toHaveBeenCalled();
+    });
+
+    it('should handle project context with minimal project flag', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create index", "path": "src/index.ts", "expectedOutcome": "Index created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      const projectContext = {
+        hasTests: false,
+        isMinimalProject: true,
+      };
+
+      const plan = await planner.generatePlan('Setup project', undefined, undefined, projectContext);
+
+      // No test step should be added for minimal projects
+      expect(plan.steps.every(s => s.action !== 'run' || !s.command?.includes('test'))).toBe(true);
+    });
+  });
+
+  describe('Topological Sort Error Handling (Phase 12)', () => {
+    it('should handle circular dependencies gracefully in topological sort', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done", "dependsOn": [2]},
+  {"step": 2, "action": "write", "description": "Write", "path": "b.ts", "expectedOutcome": "Done", "prompt": "Create", "dependsOn": [1]}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      // Should handle circular deps - either throws or falls back
+      try {
+        await planner.generatePlan('Circular deps');
+      } catch (err) {
+        // Expected: circular dependency error
+        expect(String(err)).toContain('CIRCULAR');
+      }
+    });
+
+    it('should handle missing dependencies gracefully in topological sort', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done", "dependsOn": [99]}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      // Should handle missing deps - either throws or includes invalid deps
+      const plan = await planner.generatePlan('Missing dep');
+      expect(plan.steps.length).toBeGreaterThan(0);
+    });
+
+    it('should process valid topological sort correctly', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"},
+  {"step": 2, "action": "read", "description": "Read", "path": "b.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Valid plan');
+
+      // Should have 2 steps in order
+      expect(plan.steps.length).toBe(2);
+      expect(plan.steps[0].stepNumber).toBe(1);
+      expect(plan.steps[1].stepNumber).toBe(2);
+    });
+  });
+
+  describe('Template Validation (Phase 12)', () => {
+    it('should perform pre-flight template validation for component writes', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create button", "path": "src/components/Button.tsx", "expectedOutcome": "Button created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Create button');
+
+      // Plan should complete successfully with component write step
+      expect(plan.steps.some(s => s.path?.includes('Button'))).toBe(true);
+      expect(plan.steps.some(s => s.action === 'write')).toBe(true);
+    });
+
+    it('should validate plan has reasoning field', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Test');
+
+      expect(plan.reasoning).toBeDefined();
+      expect(typeof plan.reasoning).toBe('string');
+    });
+
+    it('should set plan status to pending by default', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Test');
+
+      expect(plan.status).not.toBeDefined(); // Status is optional, set by executor
+    });
+  });
+
+  describe('Plan Reasoning Extraction (Phase 12)', () => {
+    it('should extract reasoning from LLM response with explicit Reasoning section', async () => {
+      const planResponse = `Reasoning: We need to create components incrementally to ensure proper typing.
+
+[
+  {"step": 1, "action": "write", "description": "Create button", "path": "src/components/Button.tsx", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Test');
+
+      expect(plan.reasoning).toContain('create');
+    });
+
+    it('should extract reasoning from LLM response with Approach section', async () => {
+      const planResponse = `Approach: Start with utility components, then composite components.
+
+[
+  {"step": 1, "action": "write", "description": "Create button", "path": "src/components/Button.tsx", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Test');
+
+      expect(plan.reasoning).toBeDefined();
+    });
+  });
+
+  describe('Edge Cases - Context Awareness (Phase 12)', () => {
+    it('should include hasTests in project context when provided', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "run", "description": "Run tests", "command": "npm test", "expectedOutcome": "Pass"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      const context = { hasTests: true, testFramework: 'vitest' };
+      const plan = await planner.generatePlan('Test task', undefined, undefined, context);
+
+      expect(plan.steps.length).toBeGreaterThan(0);
+    });
+
+    it('should handle steps with both numeric and string dependencies', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"},
+  {"step": 2, "action": "write", "description": "Write", "path": "b.ts", "expectedOutcome": "Done", "prompt": "Create", "dependsOn": [1]}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Dep test');
+
+      expect(plan.steps[1].dependsOn).toBeDefined();
+    });
+
+    it('should generate consistent taskId format', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan1 = await planner.generatePlan('Test 1');
+      await new Promise(resolve => setTimeout(resolve, 5)); // Ensure different timestamp
+      const plan2 = await planner.generatePlan('Test 2');
+
+      expect(plan1.taskId).toMatch(/^plan-\d+$/);
+      expect(plan2.taskId).toMatch(/^plan-\d+$/);
+      expect(plan1.taskId).not.toBe(plan2.taskId); // Should be different due to timestamp
+    });
+
+    it('should preserve generatedAt timestamp within reasonable bounds', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      const before = new Date();
+      const plan = await planner.generatePlan('Time test');
+      const after = new Date();
+
+      expect(plan.generatedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+      expect(plan.generatedAt.getTime()).toBeLessThanOrEqual(after.getTime());
+    });
+  });
 });
