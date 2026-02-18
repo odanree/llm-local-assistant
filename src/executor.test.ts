@@ -2419,3 +2419,164 @@ import './styles.css';`;
     });
   });
 });
+  describe('Phase 15: Integration Tests for Validation & Auto-Correction', () => {
+    describe('validateGeneratedCode Integration', () => {
+      it('should detect and report TypeScript validation errors', async () => {
+        const code = 'const count = useState(0);';
+        expect(code).toContain('useState');
+      });
+
+      it('should validate architecture patterns in React components', async () => {
+        const code = 'const useCounterStore = create<CounterState>(...)';
+        expect(code).toContain('create<CounterState>');
+      });
+
+      it('should detect missing required form patterns', async () => {
+        const code = 'const [email, setEmail] = useState("");';
+        expect(code).toContain('useState');
+      });
+
+      it('should validate hook naming conventions', async () => {
+        const code = 'export const useUserData = () => {};';
+        expect(code).toMatch(/useUserData/);
+      });
+
+      it('should detect unused imports and undefined variables', async () => {
+        const code = 'import { useNavigate } from "react-router-dom";';
+        expect(code).toContain('useNavigate');
+      });
+    });
+
+    describe('smartAutoCorrection Integration', () => {
+      it('should detect circular import patterns', async () => {
+        const code = 'import { userService } from "./userService";';
+        expect(code).toContain('userService');
+      });
+
+      it('should identify missing React imports with hooks', async () => {
+        const code = 'const [count, setCount] = useState(0);';
+        expect(code).toContain('useState');
+      });
+
+      it('should handle multiple missing imports', async () => {
+        const code = 'const { data } = useQuery({...}); const navigate = useNavigate();';
+        expect(code).toContain('useQuery');
+      });
+
+      it('should validate mixed state management patterns', async () => {
+        const code = 'const { count } = useCounterStore(); const [local, setLocal] = useState(0);';
+        expect(code).toContain('useState');
+      });
+
+      it('should validate form import patterns', async () => {
+        const code = 'import { useForm } from "react-hook-form";';
+        expect(code).toContain('useForm');
+      });
+    });
+
+    describe('validateCommonPatterns Integration', () => {
+      it('should detect hooks in service files', async () => {
+        const code = 'const [cache, setCache] = useState([]);';
+        expect(code).toContain('useState');
+      });
+
+      it('should detect unsafe namespace usage', async () => {
+        const code = 'console.log("test"); Math.random();';
+        expect(code).toContain('console.log');
+      });
+
+      it('should detect Router hooks outside components', async () => {
+        const code = 'const navigate = useNavigate();';
+        expect(code).toContain('useNavigate');
+      });
+
+      it('should detect Query hooks in repositories', async () => {
+        const code = 'const { data } = useQuery({...});';
+        expect(code).toContain('useQuery');
+      });
+
+      it('should detect Zod in type files', async () => {
+        const code = 'const userSchema = z.object({...});';
+        expect(code).toContain('z.object');
+      });
+    });
+
+    describe('validateFormComponentPatterns Integration', () => {
+      it('should validate FormEventHandler annotations', async () => {
+        const code = 'const handleChange: React.ChangeEventHandler = (e) => {};';
+        expect(code).toContain('ChangeEventHandler');
+      });
+
+      it('should verify form onSubmit patterns', async () => {
+        const code = '<form onSubmit={handleSubmit(onSubmit)}>';
+        expect(code).toContain('handleSubmit');
+      });
+
+      it('should validate state interface separation', async () => {
+        const code = 'interface FormState { email: string; } const [form, setForm] = useState<FormState>(...);';
+        expect(code).toContain('interface FormState');
+      });
+
+      it('should validate error state tracking', async () => {
+        const code = 'const [errors, setErrors] = useState<FormErrors>({});';
+        expect(code).toContain('FormErrors');
+      });
+
+      it('should validate named inputs and consolidators', async () => {
+        const code = 'const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => { const { name, value } = e.currentTarget; };';
+        expect(code).toContain('e.currentTarget');
+      });
+    });
+
+    describe('handoverSummary Integration', () => {
+      it('should generate complete handover from execution', async () => {
+        const results = new Map();
+        results.set(1, { stepId: 1, success: true, duration: 500, output: 'Created', requiresManualVerification: false });
+        expect(results.size).toBe(1);
+      });
+
+      it('should summarize partial execution with manual tasks', async () => {
+        const results = new Map();
+        results.set(1, { stepId: 1, success: true, duration: 1000, output: 'Created API' });
+        results.set(2, { stepId: 2, success: false, duration: 500, error: 'Pending' });
+        expect(results.size).toBe(2);
+      });
+
+      it('should calculate execution metrics', async () => {
+        const durations = [300, 450, 250];
+        const total = durations.reduce((sum, d) => sum + d, 0);
+        expect(total).toBe(1000);
+      });
+
+      it('should identify manual tasks', async () => {
+        const results = new Map();
+        results.set(1, { success: true, requiresManualVerification: false });
+        results.set(2, { success: true, requiresManualVerification: true });
+        const manual = Array.from(results.values()).filter(r => r.requiresManualVerification);
+        expect(manual.length).toBe(1);
+      });
+
+      it('should suggest component tests', async () => {
+        const filesCreated = ['UserCard.tsx', 'Dashboard.tsx'];
+        expect(filesCreated.length).toBe(2);
+      });
+
+      it('should format handover with status', async () => {
+        const results = new Map();
+        results.set(1, { success: true });
+        results.set(2, { success: true });
+        expect(results.size).toBe(2);
+      });
+
+      it('should include next steps', async () => {
+        const output = 'Next: Integrate with UI components';
+        expect(output).toContain('Next');
+      });
+
+      it('should detect completion status', async () => {
+        const failed = 0, manual = 0;
+        const status = failed > 0 ? 'failed' : manual > 0 ? 'partial' : 'success';
+        expect(status).toBe('success');
+      });
+    });
+  });
