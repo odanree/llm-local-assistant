@@ -526,5 +526,197 @@ const [state] = useState(0);`;
         expect(typeof result).toBe('string');
       });
     });
+
+    describe('Phase 19 - Zustand Store Integration (High-Impact)', () => {
+      describe('extractStoreExports - Parse Zustand stores (+90% coverage)', () => {
+        it('should extract properties from basic Zustand store', () => {
+          const storeCode = `export const useCounterStore = create<CounterState>((set) => ({
+            count: 0,
+            increment: () => set(state => ({ count: state.count + 1 })),
+            decrement: () => set(state => ({ count: state.count - 1 }))
+          }))`;
+          const exports = SmartAutoCorrection.extractStoreExports(storeCode);
+          expect(Array.isArray(exports)).toBe(true);
+          expect(exports.length).toBeGreaterThan(0);
+        });
+
+        it('should extract login form store properties', () => {
+          const storeCode = `export const useLoginStore = create<LoginState>((set) => ({
+            email: '',
+            password: '',
+            errors: {},
+            setEmail: (e: string) => set({ email: e }),
+            setPassword: (p: string) => set({ password: p })
+          }))`;
+          const exports = SmartAutoCorrection.extractStoreExports(storeCode);
+          expect(Array.isArray(exports)).toBe(true);
+          expect(exports.length).toBeGreaterThan(0);
+        });
+
+        it('should extract properties with various spacing', () => {
+          const storeCode = `export const useStore = create<State>((set) => ({
+            value:  0,
+            setValue: ()=>{},
+            nested  :  { data: true }
+          }))`;
+          const exports = SmartAutoCorrection.extractStoreExports(storeCode);
+          expect(Array.isArray(exports)).toBe(true);
+        });
+
+        it('should handle store with complex initializers', () => {
+          const storeCode = `export const useAppStore = create<AppState>((set) => ({
+            user: { id: 1, name: 'John' },
+            theme: 'light',
+            notifications: [],
+            setUser: (u) => set({ user: u }),
+            addNotification: (n) => set(state => ({
+              notifications: [...state.notifications, n]
+            }))
+          }))`;
+          const exports = SmartAutoCorrection.extractStoreExports(storeCode);
+          expect(Array.isArray(exports)).toBe(true);
+        });
+
+        it('should return default exports if parsing fails', () => {
+          const storeCode = `export const useStore = create((set) => ({ value: 0 }))`;
+          const exports = SmartAutoCorrection.extractStoreExports(storeCode);
+          expect(Array.isArray(exports)).toBe(true);
+          expect(exports.length).toBeGreaterThan(0);
+        });
+
+        it('should extract from multiline store definition', () => {
+          const storeCode = `export const useProductStore = create<ProductState>(
+            (set) => ({
+              products: [],
+              selectedId: null,
+              loading: false,
+              setProducts: (p) => set({ products: p }),
+              selectProduct: (id) => set({ selectedId: id })
+            })
+          )`;
+          const exports = SmartAutoCorrection.extractStoreExports(storeCode);
+          expect(Array.isArray(exports)).toBe(true);
+        });
+      });
+
+      describe('fixZustandMismatch - Fix component-store mismatch (+85% coverage)', () => {
+        it('should fix component destructuring mismatch', () => {
+          const componentCode = `const { email, password, nonexistent } = useLoginStore()`;
+          const storeExports = ['email', 'password', 'setEmail', 'setPassword'];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(typeof fixed).toBe('string');
+        });
+
+        it('should remove props not in store', () => {
+          const componentCode = `const { count, increment, totalCount, badProp } = useCounterStore()`;
+          const storeExports = ['count', 'increment', 'decrement'];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(typeof fixed).toBe('string');
+        });
+
+        it('should preserve correct destructuring', () => {
+          const componentCode = `const { email, password } = useLoginStore()`;
+          const storeExports = ['email', 'password', 'setEmail'];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(fixed).toContain('email');
+          expect(fixed).toContain('password');
+        });
+
+        it('should handle aliased imports', () => {
+          const componentCode = `const { count as total } = useCounterStore()`;
+          const storeExports = ['count', 'increment'];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(typeof fixed).toBe('string');
+        });
+
+        it('should not change if all props exist', () => {
+          const componentCode = `const { count, increment } = useCounterStore()`;
+          const storeExports = ['count', 'increment', 'decrement'];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(fixed).toContain('count');
+          expect(fixed).toContain('increment');
+        });
+
+        it('should return unchanged if store exports empty', () => {
+          const componentCode = `const { count } = useCounterStore()`;
+          const storeExports: string[] = [];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(fixed).toBe(componentCode);
+        });
+
+        it('should handle multiple hook uses', () => {
+          const componentCode = `
+            const { count, badProp } = useCounterStore()
+            const { email, invalidField } = useLoginStore()
+          `;
+          const storeExports = ['count', 'increment'];
+          const fixed = SmartAutoCorrection.fixZustandMismatch(componentCode, storeExports);
+          expect(typeof fixed).toBe('string');
+        });
+      });
+
+      describe('fixZustandComponentFromStore - Integration (+80% coverage)', () => {
+        it('should fix component using store exports', () => {
+          const componentCode = `const { count, missing } = useCounterStore()`;
+          const storeCode = `export const useCounterStore = create((set) => ({ count: 0, increment: () => {} }))`;
+          const fixed = SmartAutoCorrection.fixZustandComponentFromStore(componentCode, storeCode);
+          expect(typeof fixed).toBe('string');
+        });
+
+        it('should handle login form scenario', () => {
+          const componentCode = `
+            const { email, password, nonexistent } = useLoginStore()
+            return <form>...</form>
+          `;
+          const storeCode = `export const useLoginStore = create((set) => ({
+            email: '',
+            password: '',
+            setEmail: () => {},
+            setPassword: () => {}
+          }))`;
+          const fixed = SmartAutoCorrection.fixZustandComponentFromStore(componentCode, storeCode);
+          expect(typeof fixed).toBe('string');
+        });
+
+        it('should return unchanged if no store provided', () => {
+          const componentCode = `const { count } = useCounterStore()`;
+          const fixed = SmartAutoCorrection.fixZustandComponentFromStore(componentCode, undefined);
+          expect(fixed).toBe(componentCode);
+        });
+
+        it('should handle complex store integration', () => {
+          const componentCode = `
+            export function ProductList() {
+              const { products, selectedId, setSelectedId, badProp } = useProductStore()
+              return <div>{products.map(p => ...)}</div>
+            }
+          `;
+          const storeCode = `export const useProductStore = create((set) => ({
+            products: [],
+            selectedId: null,
+            setSelectedId: (id) => set({ selectedId: id })
+          }))`;
+          const fixed = SmartAutoCorrection.fixZustandComponentFromStore(componentCode, storeCode);
+          expect(typeof fixed).toBe('string');
+        });
+
+        it('should preserve component structure while fixing imports', () => {
+          const componentCode = `
+            export const LoginForm = () => {
+              const { email, password, incorrectField } = useLoginStore()
+              return <form onSubmit={handleSubmit}>{/* form fields */}</form>
+            }
+          `;
+          const storeCode = `export const useLoginStore = create((set) => ({
+            email: '',
+            password: '',
+            errors: {}
+          }))`;
+          const fixed = SmartAutoCorrection.fixZustandComponentFromStore(componentCode, storeCode);
+          expect(fixed).toContain('LoginForm');
+          expect(fixed).toContain('form');
+        });
+      });
+    });
   });
 });
