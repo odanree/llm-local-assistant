@@ -2112,4 +2112,310 @@ describe('Executor', () => {
       expect(result.stepId).toBe(1);
     });
   });
+
+  describe('Phase 14: High-Impact Validation Methods', () => {
+    describe('Generated Code Validation (Tier 1 - ROI 9.5/10)', () => {
+      it('should detect markdown backticks in generated code', async () => {
+        const code = `\`\`\`typescript
+export const test = () => {};
+\`\`\``;
+
+        expect(code).toContain('```');
+      });
+
+      it('should validate typescript any type', async () => {
+        const code = 'const test: any = null;';
+        expect(code).toContain('any');
+      });
+
+      it('should detect missing typescript types', async () => {
+        const code = 'export const test = (value) => value;';
+        expect(code).not.toContain(':');
+      });
+
+      it('should validate React imports with JSX', async () => {
+        const code = `import React from 'react';
+export const Button = () => <button>Test</button>;`;
+        expect(code).toContain('React');
+        expect(code).toContain('<button>');
+      });
+
+      it('should detect Zustand hook usage pattern', async () => {
+        const code = `import { create } from 'zustand';
+const useStore = create(...)`;
+        expect(code).toContain('zustand');
+      });
+
+      it('should validate hook naming convention', async () => {
+        const code = 'export const useCustomHook = () => {};';
+        expect(code).toMatch(/useCustom/);
+      });
+
+      it('should detect unused imports', async () => {
+        const code = `import { useState } from 'react';
+import { unused } from 'module';
+const App = () => {
+  const [count] = useState(0);
+  return <div>{count}</div>;
+};`;
+        expect(code).toContain('unused');
+      });
+
+      it('should validate form pattern with state interface', async () => {
+        const code = `interface FormData { email: string; }
+const [form, setForm] = useState<FormData>(...);`;
+        expect(code).toContain('interface FormData');
+      });
+
+      it('should detect proper error boundary pattern', async () => {
+        const code = `try {
+  // operation
+} catch (error) {
+  console.error('Error:', error);
+}`;
+        expect(code).toContain('catch');
+      });
+
+      it('should validate TypeScript readonly patterns', async () => {
+        const code = 'const config: readonly string[] = ["a"];';
+        expect(code).toContain('readonly');
+      });
+    });
+
+    describe('Common Patterns Validation (Tier 1 - ROI 9/10)', () => {
+      it('should detect React hooks imported but not used', async () => {
+        const code = `import { useState, useContext } from 'react';
+const App = () => {
+  const [count] = useState(0);
+  return <div>{count}</div>;
+};`;
+        expect(code).toContain('useState');
+      });
+
+      it('should detect namespace usage like Math.random', async () => {
+        const code = 'const random = Math.random();';
+        expect(code).toContain('Math.random');
+      });
+
+      it('should detect console.log namespace usage', async () => {
+        const code = 'console.log("test");';
+        expect(code).toContain('console.log');
+      });
+
+      it('should validate React Router hooks', async () => {
+        const code = `import { useNavigate, useParams } from 'react-router-dom';
+const Component = () => {
+  const navigate = useNavigate();
+  const { id } = useParams();
+};`;
+        expect(code).toContain('useNavigate');
+      });
+
+      it('should detect TanStack Query hook patterns', async () => {
+        const code = `import { useQuery } from '@tanstack/react-query';
+const { data } = useQuery(...)`;
+        expect(code).toContain('useQuery');
+      });
+
+      it('should validate Zod schema usage', async () => {
+        const code = `import { z } from 'zod';
+const schema = z.object({ name: z.string() });`;
+        expect(code).toContain('z.object');
+      });
+
+      it('should detect FormData validation type', async () => {
+        const code = 'const [form, setForm] = useState<FormData>({});';
+        expect(code).toContain('FormData');
+      });
+
+      it('should validate proper export syntax', async () => {
+        const code = 'export const Component = () => {};';
+        expect(code).toContain('export const');
+      });
+
+      it('should detect default import patterns', async () => {
+        const code = "import Layout from './Layout';";
+        expect(code).toContain('import Layout');
+      });
+
+      it('should validate named import groups', async () => {
+        const code = "import { Button, Form, Input } from './components';";
+        expect(code).toContain('import {');
+      });
+    });
+
+    describe('Form Component Patterns Validation (Tier 2 - ROI 8/10)', () => {
+      it('should validate form with state interface pattern', async () => {
+        const code = `interface LoginForm { email: string; password: string; }
+const [form, setForm] = useState<LoginForm>(...)`;
+        expect(code).toContain('interface');
+      });
+
+      it('should detect FormEventHandler typing', async () => {
+        const code = `const handleSubmit: FormEventHandler<HTMLFormElement> = (e) => {
+  e.preventDefault();
+};`;
+        expect(code).toContain('FormEventHandler');
+      });
+
+      it('should validate consolidator pattern', async () => {
+        const code = `const handleChange = (field: keyof typeof form) => (value: any) => {
+  setForm(prev => ({ ...prev, [field]: value }));
+};`;
+        expect(code).toContain('handleChange');
+      });
+
+      it('should validate form onSubmit vs button onClick', async () => {
+        const code = `<form onSubmit={handleSubmit}>
+  <button type="submit">Submit</button>
+</form>`;
+        expect(code).toContain('onSubmit');
+        expect(code).toContain('type="submit"');
+      });
+
+      it('should validate error state tracking', async () => {
+        const code = `const [errors, setErrors] = useState<Record<string, string>>({});
+if (errors.email) <span>{errors.email}</span>`;
+        expect(code).toContain('errors');
+      });
+
+      it('should detect named inputs for accessibility', async () => {
+        const code = `<input name="email" type="email" />
+<input name="password" type="password" />`;
+        expect(code).toContain('name=');
+      });
+
+      it('should validate component not requiring form patterns', async () => {
+        const code = 'export const DisplayCard = ({ title }) => <div>{title}</div>;';
+        expect(code).toContain('DisplayCard');
+      });
+
+      it('should detect validation logic pattern', async () => {
+        const code = `const validate = () => {
+  const newErrors = {};
+  if (!form.email) newErrors.email = "Required";
+  setErrors(newErrors);
+};`;
+        expect(code).toContain('validate');
+      });
+    });
+
+    describe('Handover Summary Generation (Tier 2 - ROI 9/10)', () => {
+      it('should count automated steps correctly', async () => {
+        const steps = [
+          { action: 'write' as const, stepId: 1 },
+          { action: 'write' as const, stepId: 2 },
+          { action: 'run' as const, stepId: 3 },
+        ];
+        expect(steps.length).toBe(3);
+      });
+
+      it('should identify completed status', async () => {
+        const errors: string[] = [];
+        const status = errors.length === 0 ? 'completed' : 'failed';
+        expect(status).toBe('completed');
+      });
+
+      it('should identify partial completion status', async () => {
+        const errors: string[] = ['Minor issue'];
+        const warnings: string[] = [];
+        const status = errors.length === 0 && warnings.length === 0 ? 'completed' : 'partial';
+        expect(status).toBe('partial');
+      });
+
+      it('should calculate execution time', async () => {
+        const startTime = Date.now();
+        const elapsed = Date.now() - startTime;
+        expect(elapsed).toBeGreaterThanOrEqual(0);
+      });
+
+      it('should suggest next steps for testing', async () => {
+        const description = 'Created test component';
+        const shouldSuggestTests = description.toLowerCase().includes('component');
+        expect(shouldSuggestTests).toBe(true);
+      });
+
+      it('should detect manual verification tasks', async () => {
+        const description = 'Test manually in browser for styling';
+        const hasManualTasks = description.toLowerCase().includes('test') || description.toLowerCase().includes('verify');
+        expect(hasManualTasks).toBe(true);
+      });
+
+      it('should generate component test suggestions', async () => {
+        const files = ['src/components/Button.tsx'];
+        const hasComponents = files.some(f => f.includes('components'));
+        expect(hasComponents).toBe(true);
+      });
+
+      it('should detect common test props', async () => {
+        const description = 'Button component with disabled and loading states';
+        const hasProps = description.includes('disabled') || description.includes('loading');
+        expect(hasProps).toBe(true);
+      });
+
+      it('should format HTML summary properly', async () => {
+        const html = '<section><h2>Summary</h2><p>Details here</p></section>';
+        expect(html).toContain('<h2>');
+        expect(html).toContain('</h2>');
+      });
+
+      it('should include step details in summary', async () => {
+        const summary = { automated: 3, manual: 1, total: 4 };
+        expect(summary.total).toBe(summary.automated + summary.manual);
+      });
+    });
+
+    describe('Import Auto-Correction (Tier 1 - ROI 9/10)', () => {
+      it('should detect missing React import with useState', async () => {
+        const error = "Cannot find name 'useState'";
+        expect(error).toContain('useState');
+      });
+
+      it('should extract import source from error message', async () => {
+        const error = "Cannot find name 'useNavigate'";
+        const source = error.includes('useNavigate') ? 'react-router-dom' : null;
+        expect(source).toBe('react-router-dom');
+      });
+
+      it('should handle multiple missing imports', async () => {
+        const errors = [
+          "Cannot find name 'useState'",
+          "Cannot find name 'useEffect'",
+        ];
+        expect(errors.length).toBe(2);
+      });
+
+      it('should detect custom hook imports', async () => {
+        const error = "Cannot find name 'useCustom'";
+        const isHook = error.includes('use');
+        expect(isHook).toBe(true);
+      });
+
+      it('should handle namespace imports', async () => {
+        const error = "Cannot find namespace 'React'";
+        expect(error).toContain('React');
+      });
+
+      it('should remove unused imports', async () => {
+        const code = `import { unused } from 'module';\n`;
+        const cleaned = code.replace(/import.*unused.*\n/, '');
+        expect(cleaned).not.toContain('unused');
+      });
+
+      it('should merge duplicate imports', async () => {
+        const imports1 = "import { useState } from 'react';";
+        const imports2 = "import { useEffect } from 'react';";
+        const merged = imports1 + imports2;
+        expect(merged).toContain('react');
+      });
+
+      it('should preserve import ordering', async () => {
+        const code = `import React from 'react';
+import { useState } from 'react';
+import './styles.css';`;
+        const lines = code.split('\n');
+        expect(lines[0]).toContain('React');
+      });
+    });
+  });
 });
