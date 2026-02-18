@@ -255,12 +255,17 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**Agent Mode Commands (v2.5.0)**\n\n` +
-          `📋 **Planning & Execution (UPDATED v2.5.0):**\n` +
-          `- /plan <task> → Create a multi-step action plan (NOW: No infinite loops)\n` +
+        text: `**LLM Local Assistant - v2.7.0**\n` +
+          `✨ Latest: v2.6 Voice Narration + v2.7 Test Infrastructure\n\n` +
+          `📋 **Planning & Execution (v2.7.0 - Quality & Testing Focus):**\n` +
+          `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
-          `- /approve → Acknowledge and approve the plan (NOW: Re-enabled)\n` +
+          `- /approve → Acknowledge and approve the plan\n` +
           `- /reject → Discard the current plan\n\n` +
+          `🔊 **Voice Narration (v2.6 - NEW):**\n` +
+          `- /explain <path> → Generate detailed code explanation WITH automatic voice narration\n` +
+          `- Audio player embedded in chat with play/pause controls\n` +
+          `- Beautiful markdown-formatted explanations (v2.6)\n\n` +
           `🔍 **Codebase Context:**\n` +
           `- /context show structure → Show project file organization\n` +
           `- /context show patterns → Show detected code patterns\n` +
@@ -269,19 +274,19 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `🔧 **Refactoring & Architecture:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n` +
           `- /extract-service <hook> <name> → Extract business logic to service\n` +
-          `- /design-system <feature> → Generate full feature architecture (NOW: No infinite loops)\n` +
+          `- /design-system <feature> → Generate full feature architecture with validation\n` +
           `- /rate-architecture → Score codebase quality (0-10)\n` +
           `- /suggest-patterns → Show pattern improvements\n\n` +
           `📝 **File Operations:**\n` +
           `- /read <path> → Read a file from workspace\n` +
           `- /write <path> <prompt> → Generate and write file content\n` +
-          `- /suggestwrite <path> <prompt> → Preview before writing\n` +
-          `- /explain <path> → Generate detailed code explanation\n\n` +
-          ` **Git Integration:**\n` +
+          `- /suggestwrite <path> <prompt> → Preview before writing\n\n` +
+          `📚 **Git Integration:**\n` +
           `- /git-commit-msg → Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] → Review code changes with AI\n\n` +
-          ` **Diagnostics:**\n` +
-          `- /check-model → Show configured model and available models on server`,
+          `🧪 **Diagnostics & Testing:**\n` +
+          `- /check-model → Verify LLM server connection\n` +
+          `- Run: npm test -- --coverage (for test coverage reports)`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
