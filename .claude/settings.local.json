@@ -15,7 +15,14 @@
       "Bash(ls:*)",
       "Bash(git mv:*)",
       "Bash(node:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(sort:*)",
+      "Bash(gh pr list:*)",
+      "Bash(npm --version:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(grep:*)"
     ]
   }
 }
