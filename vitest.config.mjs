@@ -5,6 +5,12 @@ export default defineConfig({
     globals: true,
     environment: 'happy-dom',
     setupFiles: ['./src/vitest.setup.ts'],
+    exclude: [
+      'node_modules',
+      '.claude/worktrees/**',
+      'dist/**',
+      'out/**',
+    ],
     onConsoleLog(log, type) {
       // Suppress specific console logs if needed
       if (log.includes && log.includes('git')) {
@@ -17,6 +23,7 @@ export default defineConfig({
       reporter: ['text', 'json', 'html', 'lcov'],
       exclude: [
         'node_modules/',
+        '.claude/worktrees/',
         'src/vitest.setup.ts',
         '**/*.d.ts',
         '**/*.test.ts',
