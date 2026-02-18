@@ -20,3 +20,8 @@ docs/LINKEDIN_POST.md
 
 # Generated packages
 llm-local-assistant-*.vsix
+
+# Test coverage reports (HTML artifacts inflate repo language detection)
+coverage/
+.nyc_output/
+*.lcov
