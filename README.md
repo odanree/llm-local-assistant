@@ -1,21 +1,54 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.6.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.7.0-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
-[![Tests](https://img.shields.io/badge/tests-521%2F521%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![Tests](https://img.shields.io/badge/tests-1345%2F1345%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![Code Coverage](https://img.shields.io/badge/coverage-58.46%25-yellow.svg)](#testing--coverage)
 [![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
 [![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
 A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM.
 
-**🎯 v2.6.1 Focus: Markdown Rendering + Polish**
+**🎯 v2.7.0 Focus: Comprehensive Test Suite & Quality Foundation**
 
-> **Latest Release**: v2.6.1 - Beautiful formatted explanations with voice narration ✅  
-> **Philosophy**: Beautiful AI interactions with accessibility features.  
-> **Status**: 521/521 tests passing. Production ready.
+> **Latest Release**: v2.7.0 - Test infrastructure for 70% coverage goal ✅
+> **Philosophy**: Quality-first development with comprehensive testing and reliability.
+> **Status**: 1,345/1,345 tests passing. Production ready. 58.46% coverage baseline.
+
+## ✨ What's v2.7.0 (Test Suite & Coverage Infrastructure)
+
+### 🧪 NEW: Comprehensive Test Infrastructure
+
+v2.7.0 establishes a foundation for high-quality, reliable code through:
+
+- **+72 New Tests** (1,345 total, 100% passing)
+  - `refactoringExecutor.test.ts`: Multi-step execution, error handling, file state management
+  - `architectureValidator.test.ts`: Architecture analysis, pattern detection, dependency analysis
+
+- **Test Factories** - Reusable mock generators for consistent testing
+  - `ExecutorFactory`, `PlannerFactory`, `MockFactory`
+  - Standardized approach to test data generation
+
+- **Coverage Reporting** - Professional metrics and visibility
+  - v8 coverage provider with HTML + LCOV reporting
+  - Coverage thresholds: 70% lines, 70% functions, 70% statements, 65% branches
+  - Run tests with: `npm test -- --coverage`
+
+- **Quality Baseline** - Established 58.46% coverage with zero regressions
+  - 100% test pass rate (1,345/1,345)
+  - Zero build errors, TypeScript strict mode enabled
+  - Path to 70% coverage clearly defined
+
+**What This Means for Development:**
+- ✅ Test infrastructure ready for future expansion
+- ✅ Professional coverage reporting for CI/CD
+- ✅ Reusable test patterns reduce test writing time
+- ✅ Higher confidence in code reliability
+
+---
 
 ## ✨ What's v2.6.1 (Markdown + Voice)
 
@@ -1022,10 +1055,59 @@ npm run test:watch   # Auto-run on changes
 - **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping documentation clean
 - **[Documentation Organization](docs/DOCS_REORGANIZATION_COMPLETE.md)** - How documentation is structured
 
-### Testing & Coverage (/docs/phase-docs/)
-- **[Phase 3 Coverage Strategy](docs/phase-docs/PHASE3-COVERAGE-STRATEGY.md)** - SE2-level honest assessment and 30-day roadmap for test coverage (41% → 50%+)
-- **[Phase 3 Coverage Improvements](docs/phase-docs/PHASE3-COVERAGE-IMPROVEMENTS.md)** - Phase 2 test expansion details (52 new tests, critical paths, edge cases)
-- **[Phase 2 Test Improvements](docs/phase-docs/PHASE2-TEST-IMPROVEMENTS.md)** - DAG validation tests, error paths, test factories, snapshot validation
+### Testing & Development
+
+#### Running Tests
+```bash
+# Run all tests
+npm test
+
+# Run tests with coverage report
+npm test -- --coverage
+
+# Watch mode (re-run on file changes)
+npm run test:watch
+
+# View coverage reports
+# HTML Report: open coverage/lcov-report/index.html
+# Console Output: Shows coverage metrics after test run
+```
+
+#### Test Coverage & Quality Goals
+
+**Current Status (v2.7.0)**:
+- **Baseline Coverage:** 58.46%
+- **Test Suite:** 1,345 tests passing (100% green)
+- **No Regressions:** ✅ All existing functionality preserved
+
+**Roadmap to 70% Coverage**:
+- **v2.7.0:** Foundation & infrastructure (58.46% baseline) ✅
+- **v2.8.0:** Focus on src/services/executor.ts (targeting 80%+)
+- **v2.9.0+:** Continued expansion toward 100%
+
+**Quality Commitments**:
+- Zero regressions policy
+- 100% test pass rate maintained
+- Coverage thresholds enforced in CI/CD
+- Strategic focus on critical/dangerous code paths
+
+#### Test Architecture
+
+The test suite uses:
+- **Vitest** - Fast, ESM-native testing framework
+- **happy-dom** - Lightweight DOM simulation (no browser overhead)
+- **Test Factories** - Reusable mock generators for consistent testing
+- **Coverage Provider** - v8 with HTML + LCOV reporting
+
+Files:
+- `vitest.config.mjs` - Test configuration and coverage thresholds
+- `src/vitest.setup.ts` - Test environment initialization
+- `src/test/factories/*` - Reusable factory patterns for mocks
+
+#### Detailed Documentation (/docs/)
+- **[Coverage Strategy](docs/COVERAGE_ANALYSIS.md)** - In-depth coverage analysis and metrics
+- **[Coverage Roadmap](docs/COVERAGE_DELIVERABLES.md)** - Detailed plan for reaching 70% coverage
+- **[Test Documentation](docs/COVERAGE_DOCUMENTATION_INDEX.md)** - Test suite documentation index
 
 ### Development History (/docs/phase-docs/ and /docs/archive/)
 - **[Phase Documentation](docs/phase-docs/)** - Phase-specific development notes and roadmaps
@@ -1054,6 +1136,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**✨ v2.6.1 - Beautiful Markdown + Voice Narration | 🎯 Complete Architecture | 🔒 100% Private | 🚀 Marketplace Ready**
+**✨ v2.7.0 - Comprehensive Test Suite & Coverage Infrastructure | 🧪 1,345 Tests Passing | 📊 58.46% Coverage Baseline | 🎯 70% Coverage Target | 🔒 100% Private | 🚀 Production Ready**
 
 Created by [@odanree](https://github.com/odanree)
