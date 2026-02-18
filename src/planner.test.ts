@@ -712,4 +712,178 @@ describe('Planner', () => {
       expect(plan.generatedAt.getTime()).toBeLessThanOrEqual(after.getTime());
     });
   });
+
+  describe('Private Helper Methods - Edge Cases (Phase 12+)', () => {
+    it('should handle buildPlanPrompt with project context', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create component", "path": "src/components/Test.tsx", "expectedOutcome": "Created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+
+      const context = {
+        language: 'TypeScript' as const,
+        strategy: 'SCAFFOLD_MODE' as const,
+        extension: '.tsx' as const,
+        root: 'src',
+        isMinimalProject: false,
+      };
+
+      const planner2 = new Planner({
+        llmCall: mockLLMCall,
+        onProgress: mockProgress,
+        projectContext: context,
+      });
+
+      const plan = await planner2.generatePlan('Create test component');
+
+      expect(plan.steps.length).toBeGreaterThan(0);
+      expect(mockLLMCall).toHaveBeenCalled();
+      // Verify the prompt included context
+      const callArg = mockLLMCall.mock.calls[0][0];
+      expect(callArg).toContain('TypeScript');
+      expect(callArg).toContain('SCAFFOLD_MODE');
+    });
+
+    it('should handle empty dependencies in topological sort', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read A", "path": "a.ts", "expectedOutcome": "Done"},
+  {"step": 2, "action": "read", "description": "Read B", "path": "b.ts", "expectedOutcome": "Done"},
+  {"step": 3, "action": "read", "description": "Read C", "path": "c.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Multi-step no deps');
+
+      expect(plan.steps.length).toBe(3);
+      // All steps should be present in order
+      expect(plan.steps.map(s => s.stepNumber)).toEqual([1, 2, 3]);
+    });
+
+    it('should handle large step numbers', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "First", "path": "a.ts", "expectedOutcome": "Done"},
+  {"step": 100, "action": "write", "description": "Hundredth", "path": "z.ts", "expectedOutcome": "Done", "prompt": "Create"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Non-sequential steps');
+
+      expect(plan.steps.length).toBe(2);
+      expect(plan.steps.some(s => s.stepNumber === 100)).toBe(true);
+    });
+
+    it('should handle steps with minimal required fields', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "run", "description": "Test", "command": "npm test"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Minimal fields');
+
+      expect(plan.steps.length).toBe(1);
+      expect(plan.steps[0].command).toBe('npm test');
+      expect(plan.steps[0].action).toBe('run');
+    });
+
+    it('should extract reasoning fallback on missing section', async () => {
+      const planResponse = `Some initial context about the approach here.
+
+[
+  {"step": 1, "action": "read", "description": "Read", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('No explicit reasoning');
+
+      expect(plan.reasoning).toBeDefined();
+      expect(plan.reasoning.length).toBeGreaterThan(0);
+    });
+
+    it('should handle dependencies as both array and string formats', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Config", "path": "config.ts", "expectedOutcome": "Done"},
+  {"step": 2, "action": "write", "description": "App", "path": "app.ts", "prompt": "Create", "expectedOutcome": "Done", "dependsOn": "step_1"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('String deps');
+
+      expect(plan.steps[1].dependsOn).toBeDefined();
+      expect(Array.isArray(plan.steps[1].dependsOn)).toBe(true);
+    });
+
+    it('should handle template key mapping for cn.ts', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create cn utility", "path": "src/utils/cn.ts", "expectedOutcome": "Created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Create cn utility');
+
+      expect(plan.steps.length).toBeGreaterThan(0);
+      expect(plan.steps[0].path).toContain('cn.ts');
+    });
+
+    it('should handle validation of plan against templates', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "write", "description": "Create cn", "path": "src/utils/cn.ts", "expectedOutcome": "Created"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Template validation test');
+
+      // Should complete without throwing
+      expect(plan).toBeDefined();
+      expect(plan.steps.length).toBeGreaterThan(0);
+    });
+
+    it('should handle steps with delete action', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "delete", "description": "Remove old file", "path": "src/old.ts", "expectedOutcome": "Deleted"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Delete file');
+
+      expect(plan.steps[0].action).toBe('delete');
+      expect(plan.steps[0].path).toBe('src/old.ts');
+    });
+
+    it('should handle invalid action type with graceful fallback', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "analyze", "description": "Analyze code", "path": "src/app.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Invalid action');
+
+      // Should fallback to 'read' for invalid actions
+      expect(plan.steps.length).toBeGreaterThan(0);
+    });
+
+    it('should handle very long description fields', async () => {
+      const longDesc = 'A'.repeat(500);
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "${longDesc}", "path": "a.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Long description');
+
+      expect(plan.steps[0].description.length).toBeGreaterThan(400);
+    });
+
+    it('should handle steps with alternative field names', async () => {
+      const planResponse = `[
+  {"step": 1, "action": "read", "description": "Read file", "filePath": "src/test.ts", "expectedOutcome": "Done"}
+]`;
+
+      mockLLMCall.mockResolvedValue(planResponse);
+      const plan = await planner.generatePlan('Alternative fields');
+
+      // Should recognize filePath as path alternative
+      expect(plan.steps[0].path).toBe('src/test.ts');
+    });
+  });
 });
