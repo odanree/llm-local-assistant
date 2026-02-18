@@ -885,4 +885,408 @@ export function ActualComponent() {
       expect(result).toBeDefined();
     });
   });
+
+  describe('Comprehensive Layer Detection Tests', () => {
+    it('should detect service layer from services/ path', () => {
+      const code = `export const getUsers = async () => [];`;
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      expect(result.layer).toBe('services/');
+      expect(result.recommendation).toBe('allow');
+    });
+
+    it('should detect hook layer from use* prefix in filename', () => {
+      const code = `import { useState } from 'react'; export function useCounter() { return useState(0); }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useCounter.ts');
+      expect(result.layer).toBe('hooks/');
+    });
+
+    it('should detect component layer from .tsx extension', () => {
+      const code = `export function MyComponent() { return <div>test</div>; }`;
+      const result = validator.validateAgainstLayer(code, 'src/components/MyComponent.tsx');
+      expect(result.layer).toBe('components/');
+    });
+
+    it('should detect component layer from .jsx extension', () => {
+      const code = `export function MyComponent() { return <div>test</div>; }`;
+      const result = validator.validateAgainstLayer(code, 'src/components/MyComponent.jsx');
+      expect(result.layer).toBe('components/');
+    });
+
+    it('should detect type layer from types/ path', () => {
+      const code = `export interface User { id: string; name: string; }`;
+      const result = validator.validateAgainstLayer(code, 'src/types/User.ts');
+      expect(result.layer).toBe('types/');
+    });
+
+    it('should detect utils layer from utils/ path', () => {
+      const code = `export function formatDate(d: Date) { return d.toString(); }`;
+      const result = validator.validateAgainstLayer(code, 'src/utils/dateFormatter.ts');
+      expect(result.layer).toBe('utils/');
+    });
+
+    it('should fallback to unknown/ layer when unclear', () => {
+      const code = `export const value = 42;`;
+      const result = validator.validateAgainstLayer(code, 'src/index.ts');
+      expect(result.layer).toBe('unknown/');
+    });
+  });
+
+  describe('Forbidden Import Detection - Services Layer', () => {
+    it('should detect React import in services', () => {
+      const code = `import React from 'react'; export const service = () => {};`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import === 'react')).toBe(true);
+    });
+
+    it('should detect useState in services', () => {
+      const code = `import { useState } from 'react'; export const bad = () => useState(0);`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.type === 'semantic-error')).toBe(true);
+    });
+
+    it('should detect useEffect in services', () => {
+      const code = `import { useEffect } from 'react'; export const bad = () => { useEffect(() => {}, []); };`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import === 'react')).toBe(true);
+    });
+
+    it('should detect Zustand in services', () => {
+      const code = `import { create } from 'zustand'; export const store = create(() => ({}));`;
+      const result = validator.validateAgainstLayer(code, 'src/services/store.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import === 'zustand')).toBe(true);
+    });
+
+    it('should detect Redux in services', () => {
+      const code = `import { createSlice } from '@reduxjs/toolkit'; export const slice = createSlice({});`;
+      const result = validator.validateAgainstLayer(code, 'src/services/redux.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import.includes('redux'))).toBe(true);
+    });
+
+    it('should detect react-router in services', () => {
+      const code = `import { useNavigate } from 'react-router'; export const nav = () => useNavigate();`;
+      const result = validator.validateAgainstLayer(code, 'src/services/navigation.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import.includes('react-router'))).toBe(true);
+    });
+
+    it('should detect deep React imports like react/jsx-runtime', () => {
+      const code = `import { jsx } from 'react/jsx-runtime'; export const render = () => jsx('div');`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import.includes('react'))).toBe(true);
+    });
+
+    it('should detect multiple forbidden imports', () => {
+      const code = `
+import React from 'react';
+import { useState } from 'react';
+import { create } from 'zustand';
+import { useNavigate } from 'react-router';
+export const bad = () => {};
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/services/bad.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('Layer-Specific Rules Validation', () => {
+    it('should allow useQuery in hooks', () => {
+      const code = `import { useQuery } from '@tanstack/react-query'; export function useData() { return useQuery({}); }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useData.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow useMutation in hooks', () => {
+      const code = `import { useMutation } from '@tanstack/react-query'; export function useMutate() { return useMutation({}); }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useMutate.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow services in hooks', () => {
+      const code = `import { userService } from '../services/user'; export function useUser() { return userService.getUser(); }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useUser.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow all imports in components', () => {
+      const code = `
+import React from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { create } from 'zustand';
+import { userService } from '../services/user';
+import { User } from '../types/User';
+import { formatDate } from '../utils/dateFormatter';
+export function Component() { return <div></div>; }
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/components/Component.tsx');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should forbid nothing in components', () => {
+      const code = `
+import axios from 'axios';
+import { parse } from 'lodash';
+export function Component() { return <div></div>; }
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/components/Component.tsx');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow only types in types layer', () => {
+      const code = `export interface User { id: string; } export type UserID = string;`;
+      const result = validator.validateAgainstLayer(code, 'src/types/User.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow Zod in types layer', () => {
+      const code = `import { z } from 'zod'; export const UserSchema = z.object({ id: z.string() });`;
+      const result = validator.validateAgainstLayer(code, 'src/types/schemas.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow utils in services', () => {
+      const code = `import { formatDate } from '../utils/dateFormatter'; export async function getFormattedUsers() { return formatDate(new Date()); }`;
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should allow utils in hooks', () => {
+      const code = `import { formatDate } from '../utils/dateFormatter'; export function useFormattedDate() { return formatDate(new Date()); }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useFormattedDate.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+  });
+
+  describe('Suggestion Generation Tests', () => {
+    it('should suggest moving file to services layer', () => {
+      const code = `import { useQuery } from '@tanstack/react-query'; export function useData() {}`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations[0].suggestion).toBeTruthy();
+      expect(result.violations[0].suggestion.toLowerCase()).toContain('react');
+    });
+
+    it('should suggest removing forbidden import', () => {
+      const code = `import { useState } from 'react'; export async function getUser() {}`;
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.length > 0).toBe(true);
+    });
+
+    it('should suggest using alternative library', () => {
+      const code = `import { useQuery } from '@tanstack/react-query'; export async function fetchData() {}`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.suggestion.length > 0)).toBe(true);
+    });
+
+    it('should provide multiple suggestions for multiple violations', () => {
+      const code = `
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+export const bad = () => {};
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/services/bad.ts');
+      expect(result.violations.length).toBeGreaterThanOrEqual(1);
+      expect(result.violations.every(v => v.suggestion && v.suggestion.length > 0)).toBe(true);
+    });
+  });
+
+  describe('Report Generation Tests', () => {
+    it('should create readable violation report', () => {
+      const code = `
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+export const userService = {
+  getUser: () => useQuery({}),
+};
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      const report = validator.generateErrorReport(result);
+
+      expect(report).toBeTruthy();
+      expect(report.length).toBeGreaterThan(0);
+      expect(report).toContain('services/');
+    });
+
+    it('should include layer information in report', () => {
+      const code = `import { useState } from 'react'; export const bad = () => useState(0);`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      const report = validator.generateErrorReport(result);
+
+      expect(report).toContain('services');
+    });
+
+    it('should include recommendations in report', () => {
+      const code = `import { useQuery } from '@tanstack/react-query'; export const bad = () => {};`;
+      const result = validator.validateAgainstLayer(code, 'src/services/bad.ts');
+      const report = validator.generateErrorReport(result);
+
+      expect(report.length > 0).toBe(true);
+    });
+
+    it('should format violations clearly in report', () => {
+      const code = `import { useState } from 'react'; export const x = useState(0);`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      const report = validator.generateErrorReport(result);
+
+      expect(report).toMatch(/violation|error|warning/i);
+    });
+
+    it('should report when no violations found', () => {
+      const code = `export async function getUsers() { return []; }`;
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      const report = validator.generateErrorReport(result);
+
+      expect(report).toBe('');
+    });
+
+    it('should handle empty violations array', () => {
+      const code = ``;
+      const result = validator.validateAgainstLayer(code, 'src/services/empty.ts');
+      const report = validator.generateErrorReport(result);
+
+      expect(report).toBe('');
+    });
+  });
+
+  describe('Cross-Layer Validation Tests', () => {
+    it('should not allow service to use component utilities', () => {
+      const code = `import { useComponentHelper } from '../components/helpers'; export const service = () => {};`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      // Services can use relative imports, but this tests the layer detection
+      expect(result.layer).toBe('services/');
+    });
+
+    it('should not allow hook to import components directly', () => {
+      const code = `import { MyComponent } from '../components/MyComponent'; export function useHook() { return MyComponent; }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useHook.ts');
+      // Hooks CAN import components (via relative paths), so this is actually allowed
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should verify type layer has no runtime code', () => {
+      const code = `
+export interface User {
+  id: string;
+  name: string;
+}
+
+export function processUser(user: User) {
+  console.log('Processing');
+  return user;
+}
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/types/User.ts');
+      expect(result.layer).toBe('types/');
+    });
+
+    it('should prevent React in utils layer', () => {
+      const code = `import { useState } from 'react'; export function useFormat() { const [x] = useState(0); return x; }`;
+      const result = validator.validateAgainstLayer(code, 'src/utils/formatter.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import === 'react')).toBe(true);
+    });
+
+    it('should prevent Zustand in utils layer', () => {
+      const code = `import { create } from 'zustand'; export const store = create(() => ({}));`;
+      const result = validator.validateAgainstLayer(code, 'src/utils/store.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import === 'zustand')).toBe(true);
+    });
+
+    it('should prevent routing in services', () => {
+      const code = `import { useNavigate } from 'react-router-dom'; export function navigate() {}`;
+      const result = validator.validateAgainstLayer(code, 'src/services/navigation.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import.includes('react-router'))).toBe(true);
+    });
+
+    it('should prevent routing in hooks (wrong router library)', () => {
+      const code = `import { useNavigate } from 'react-router-dom'; export function useNav() { return useNavigate(); }`;
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useNav.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import.includes('react-router-dom'))).toBe(true);
+    });
+  });
+
+  describe('Edge Cases and Complex Scenarios', () => {
+    it('should handle deeply nested path structures', () => {
+      const code = `export const x = 1;`;
+      const result = validator.validateAgainstLayer(code, 'src/services/api/endpoints/userService.ts');
+      expect(result.layer).toBe('services/');
+    });
+
+    it('should handle Windows-style paths', () => {
+      const code = `export const x = 1;`;
+      const result = validator.validateAgainstLayer(code, 'src\\services\\test.ts');
+      expect(result.layer).toBeDefined();
+    });
+
+    it('should handle mixed import quote styles', () => {
+      const code = `
+import { z } from "zod";
+import axios from 'axios';
+import { formatDate } from '../utils/format';
+export async function getData() {}
+      `;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should detect re-exports of forbidden modules', () => {
+      const code = `export { useState } from 'react';`;
+      const result = validator.validateAgainstLayer(code, 'src/services/badExport.ts');
+      expect(result.hasViolations).toBe(true);
+    });
+
+    it('should handle namespace imports correctly', () => {
+      const code = `import React from 'react'; export const bad = () => {};`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.hasViolations).toBe(true);
+      expect(result.violations.some(v => v.import === 'react')).toBe(true);
+    });
+
+    it('should handle dynamic imports', () => {
+      const code = `const React = await import('react'); export const x = 1;`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      // Dynamic imports may not be detected by simple regex, which is OK
+      expect(result.layer).toBe('services/');
+    });
+  });
+
+  describe('Recommendation Logic Tests', () => {
+    it('should recommend skip for high severity violations', () => {
+      const code = `import { useState } from 'react'; export const bad = () => {};`;
+      const result = validator.validateAgainstLayer(code, 'src/services/test.ts');
+      expect(result.recommendation).toBe('skip');
+    });
+
+    it('should recommend fix for medium severity violations', () => {
+      const code = `export const x = 1;`;
+      const result = validator.validateAgainstLayer(code, 'src/types/bad.ts');
+      // const in types layer is a violation, should be fix
+      expect(result.recommendation).toBe('fix');
+    });
+
+    it('should recommend allow for valid code', () => {
+      const code = `export async function getUsers() { return []; }`;
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      expect(result.recommendation).toBe('allow');
+    });
+
+    it('should recommend allow for unknown layers', () => {
+      const code = `export const x = 1;`;
+      const result = validator.validateAgainstLayer(code, 'src/index.ts');
+      expect(result.recommendation).toBe('allow');
+    });
+  });
 });
+

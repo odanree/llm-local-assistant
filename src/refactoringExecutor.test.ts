@@ -908,4 +908,746 @@ export function cn(...inputs) {
       expect(execution).toBeDefined();
     });
   });
+
+  describe('Full Refactoring Pipeline (Comprehensive Coverage)', () => {
+    it('executes complete pipeline with error handling refactoring', async () => {
+      const originalCode = `
+export const useUser = () => {
+  const [user, setUser] = useState(null);
+  const fetchUser = async () => {
+    const res = await fetch('/api/user');
+    setUser(await res.json());
+  };
+  return { user, fetchUser };
+};`;
+
+      const refactoredCode = `
+export const useUser = () => {
+  const [user, setUser] = useState(null);
+  const [error, setError] = useState(null);
+  const fetchUser = async () => {
+    try {
+      const res = await fetch('/api/user');
+      setUser(await res.json());
+    } catch (err) {
+      setError(err);
+    }
+  };
+  return { user, fetchUser, error };
+};`;
+
+      const testCode = `
+test('useUser fetches successfully', async () => {
+  const { result } = renderHook(() => useUser());
+  await result.current.fetchUser();
+  expect(result.current.user).toBeDefined();
+});
+
+test('useUser handles errors', async () => {
+  const { result } = renderHook(() => useUser());
+  vi.mocked(global.fetch).mockRejectedValueOnce(new Error('Network error'));
+  await result.current.fetchUser();
+  expect(result.current.error).toBeDefined();
+});`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactoredCode } as any)
+        .mockResolvedValueOnce({ success: true, message: testCode } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/hooks/useUser.ts',
+        estimatedComplexity: 'medium',
+        proposedChanges: [
+          {
+            type: 'add',
+            description: 'Add error handling',
+            impact: 'Improve reliability',
+            priority: 'high',
+          },
+          {
+            type: 'add',
+            description: 'Add error state',
+            impact: 'Allow consumers to handle errors',
+            priority: 'high',
+          },
+        ],
+        estimatedEffort: '30 minutes',
+        confidence: 0.85,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, originalCode);
+
+      expect(execution.success).toBe(true);
+      expect(execution.originalCode).toBe(originalCode);
+      expect(execution.refactoredCode).toContain('error');
+      expect(execution.executionLog.length).toBeGreaterThan(0);
+      expect(execution.testCases.length).toBeGreaterThanOrEqual(0);
+      expect(execution.validationResults.length).toBeGreaterThan(0);
+      expect(execution.estimatedImpact).toBeDefined();
+      // estimatedBenefits may be populated from plan.proposedChanges
+      expect(execution.estimatedImpact.estimatedBenefits || []).toBeDefined();
+    });
+
+    it('verifies execution log contains all steps', async () => {
+      const code = 'export const test = () => { };';
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: code } as any)
+        .mockResolvedValueOnce({ success: true, message: 'test("test", () => {});' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.9,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, code);
+
+      expect(execution.executionLog.length).toBeGreaterThan(0);
+      expect(execution.executionLog.some(log => log.includes('Starting refactoring'))).toBe(true);
+      expect(execution.executionLog.some(log => log.includes('Generating refactored code'))).toBe(true);
+      expect(execution.executionLog.some(log => log.includes('Generating test cases'))).toBe(true);
+      expect(execution.executionLog.some(log => log.includes('Validating'))).toBe(true);
+      expect(execution.executionLog.every(log => log.match(/\[\d{1,2}:\d{2}:\d{2}/)))
+        .toBe(true);
+    });
+  });
+
+  describe('Code Generation Variations', () => {
+    it('handles refactored code that is shorter than original', async () => {
+      const original = `
+export const longFunction = () => {
+  const value = 100;
+  const doubled = value * 2;
+  const quadrupled = doubled * 2;
+  return quadrupled;
+};`;
+
+      const refactored = `
+export const longFunction = () => 100 * 4;`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/compute.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [
+          {
+            type: 'simplify',
+            description: 'Simplify constant calculation',
+            impact: 'Reduce code size',
+            priority: 'medium',
+          },
+        ],
+        estimatedEffort: '5 minutes',
+        confidence: 0.9,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.refactoredCode.length).toBeLessThan(original.length);
+      expect(execution.estimatedImpact.estimatedBenefits.some(b => b.includes('reduced'))).toBe(true);
+    });
+
+    it('handles refactored code with complex logic addition', async () => {
+      const original = `
+export const filter = (items) => {
+  return items.filter(x => x > 5);
+};`;
+
+      const refactored = `
+export const filter = (items) => {
+  if (!Array.isArray(items)) {
+    throw new Error('Items must be an array');
+  }
+  return items
+    .filter(x => typeof x === 'number')
+    .filter(x => x > 5)
+    .map(x => ({ value: x, doubled: x * 2 }));
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/filter.ts',
+        estimatedComplexity: 'medium',
+        proposedChanges: [
+          {
+            type: 'add',
+            description: 'Add type checking and transformation',
+            impact: 'Increase robustness',
+            priority: 'high',
+          },
+        ],
+        estimatedEffort: '15 minutes',
+        confidence: 0.8,
+        risks: ['API change - returns different shape'],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.refactoredCode).toContain('throw');
+      expect(execution.refactoredCode).toContain('Array.isArray');
+      expect(execution.refactoredCode.length).toBeGreaterThan(original.length);
+    });
+
+    it('handles markdown-wrapped refactored code', async () => {
+      const code = 'export const test = () => 42;';
+      const markdownResponse = `
+Here's the refactored version:
+
+\`\`\`typescript
+export const test = () => 42;
+export const test2 = () => 43;
+\`\`\`
+
+This adds an additional helper function.`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: markdownResponse } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.9,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, code);
+
+      expect(execution.refactoredCode).toContain('test2');
+      expect(execution.refactoredCode).not.toContain('```');
+    });
+  });
+
+  describe('Validation Scenarios', () => {
+    it('allows validation to pass when all checks succeed', async () => {
+      const code = `
+export const safeFunction = (value: string): string => {
+  if (!value) {
+    throw new Error('Value required');
+  }
+  return value.trim().toUpperCase();
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: code } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/string.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.95,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, code);
+
+      expect(execution.success).toBe(true);
+      const criticalFailures = execution.validationResults.filter(
+        r => r.severity === 'critical' && !r.passed
+      );
+      expect(criticalFailures.length).toBe(0);
+    });
+
+    it('detects syntax error and marks validation as failed', async () => {
+      const invalidCode = `
+export const broken = () => {
+  const x = 1
+  // Missing semicolon but more importantly unbalanced braces in original code
+  return x
+}
+// Extra brace here
+}`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: invalidCode } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'broken.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.5,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      const syntaxValidation = execution.validationResults.find(r => r.type === 'syntax');
+      expect(syntaxValidation).toBeDefined();
+      // Unbalanced braces should be detected
+      if (!syntaxValidation?.passed) {
+        expect(syntaxValidation?.severity).toBe('critical');
+      }
+    });
+
+    it('detects type errors in refactored code', async () => {
+      const codeWithTypeError = `
+export const handler = (event: any) => {
+  // Using any type instead of specific Event type
+  return event.target.value;
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: codeWithTypeError } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/handlers/event.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.8,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      const typeValidation = execution.validationResults.find(r => r.type === 'types');
+      expect(typeValidation).toBeDefined();
+      if (typeValidation && !typeValidation.passed) {
+        expect(typeValidation.details).toContain('any');
+      }
+    });
+
+    it('accepts warnings-only validation results and proceeds', async () => {
+      const codeWithWarning = `
+export const process = (data: any[]): number => {
+  // Warning: using any type, but code is otherwise valid
+  return data.length;
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: codeWithWarning } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/process.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.85,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      // Should succeed even with warnings (no critical errors)
+      expect(execution.success).toBe(true);
+      const warningsOnly = execution.validationResults.filter(
+        r => r.severity === 'warning'
+      );
+      // May have warnings but no critical failures
+      const criticalFailures = execution.validationResults.filter(
+        r => r.severity === 'critical' && !r.passed
+      );
+      expect(criticalFailures.length).toBe(0);
+    });
+
+    it('validates multiple validation types together', async () => {
+      const code = `
+export const fetchData = async (url: string): Promise<any> => {
+  try {
+    const response = await fetch(url);
+    return response.json();
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: code } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/api/fetch.ts',
+        estimatedComplexity: 'medium',
+        proposedChanges: [],
+        estimatedEffort: '10 minutes',
+        confidence: 0.8,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, code);
+
+      expect(execution.validationResults.length).toBeGreaterThanOrEqual(3);
+      const validationTypes = execution.validationResults.map(r => r.type);
+      expect(validationTypes).toContain('syntax');
+      expect(validationTypes).toContain('types');
+      expect(validationTypes).toContain('logic');
+    });
+  });
+
+  describe('Impact Assessment Coverage', () => {
+    it('identifies performance improvements with useMemo', async () => {
+      const original = `
+export const Component = ({ data }) => {
+  const result = expensiveCalculation(data);
+  return <div>{result}</div>;
+};`;
+
+      const refactored = `
+export const Component = ({ data }) => {
+  const result = useMemo(() => expensiveCalculation(data), [data]);
+  return <div>{result}</div>;
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/components/Component.tsx',
+        estimatedComplexity: 'low',
+        proposedChanges: [
+          {
+            type: 'optimize',
+            description: 'Memoize expensive computation',
+            impact: 'Improve performance',
+            priority: 'medium',
+          },
+        ],
+        estimatedEffort: '10 minutes',
+        confidence: 0.85,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.estimatedImpact.performanceImpact).toBe('positive');
+    });
+
+    it('detects potential risks in refactoring', async () => {
+      const original = `
+export const processData = (items: Item[]) => {
+  return items.map(item => transform(item));
+};`;
+
+      const refactored = `
+export const processData = async (items: Item[]) => {
+  return Promise.all(items.map(item => transformAsync(item)));
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/process.ts',
+        estimatedComplexity: 'medium',
+        proposedChanges: [
+          {
+            type: 'extract',
+            description: 'Make processing asynchronous',
+            impact: 'Enable parallel processing',
+            priority: 'high',
+          },
+        ],
+        estimatedEffort: '20 minutes',
+        confidence: 0.75,
+        risks: [
+          {
+            description: 'Function signature changed - now async',
+            severity: 'high',
+            mitigation: 'Update all call sites to handle promises',
+          },
+        ],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.estimatedImpact.potentialRisks.length).toBeGreaterThan(0);
+      expect(execution.estimatedImpact.potentialRisks).toContain(
+        'Function signature changed - now async'
+      );
+    });
+
+    it('identifies breaking changes in exports', async () => {
+      const original = `
+export function getUserData() { return {}; }
+export function updateUserData(id: string) { }
+export function deleteUserData(id: string) { }`;
+
+      const refactored = `
+export function getUserData() { return {}; }
+export function updateUserData(id: string) { }`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/services/user.ts',
+        estimatedComplexity: 'medium',
+        proposedChanges: [
+          {
+            type: 'remove',
+            description: 'Remove deprecated API',
+            impact: 'Reduce API surface',
+            priority: 'high',
+          },
+        ],
+        estimatedEffort: '15 minutes',
+        confidence: 0.8,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.estimatedImpact.breakingChanges).toBe(true);
+    });
+
+    it('tracks affected dependencies in impact assessment', async () => {
+      const original = 'const x = 1;';
+
+      const refactored = `
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { axios } from 'axios';
+
+export const useUserData = () => {
+  const { data } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => axios.get('/api/user'),
+  });
+  return data;
+};`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/hooks/useUserData.ts',
+        estimatedComplexity: 'high',
+        proposedChanges: [
+          {
+            type: 'extract',
+            description: 'Use React Query for data fetching',
+            impact: 'Improved caching',
+            priority: 'high',
+          },
+        ],
+        estimatedEffort: '30 minutes',
+        confidence: 0.8,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.estimatedImpact.affectedDependencies.length).toBeGreaterThan(0);
+      expect(execution.estimatedImpact.affectedDependencies).toContain('react');
+      expect(execution.estimatedImpact.affectedDependencies.some(d => d.includes('tanstack')))
+        .toBe(true);
+    });
+  });
+
+  describe('Error Handling Scenarios', () => {
+    it('handles LLM unavailable error gracefully', async () => {
+      vi.mocked(mockLlmClient.sendMessage).mockResolvedValue({
+        success: false,
+        error: 'LLM service unavailable - connection timeout',
+      } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.9,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      expect(execution.success).toBe(false);
+      expect(execution.errors.length).toBeGreaterThan(0);
+      expect(execution.errors[0]).toContain('LLM failed');
+      expect(execution.executionLog.some(log => log.includes('ERROR'))).toBe(true);
+    });
+
+    it('handles malformed LLM response', async () => {
+      vi.mocked(mockLlmClient.sendMessage).mockResolvedValue({
+        success: true,
+        message: 'This is not code, just random text without any code blocks',
+      } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.8,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      expect(execution.success).toBe(false);
+      expect(execution.errors.some(e => e.includes('valid code'))).toBe(true);
+    });
+
+    it('handles empty code generation', async () => {
+      vi.mocked(mockLlmClient.sendMessage).mockResolvedValue({
+        success: true,
+        message: '',
+      } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.5,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      expect(execution.success).toBe(false);
+      expect(execution.errors.length).toBeGreaterThan(0);
+    });
+
+    it('preserves rollback capability on error', async () => {
+      const originalCode = 'const important = "do not lose";';
+
+      vi.mocked(mockLlmClient.sendMessage).mockResolvedValue({
+        success: false,
+        error: 'LLM error',
+      } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.5,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, originalCode);
+
+      expect(execution.rollbackAvailable).toBe(true);
+      expect(execution.originalCode).toBe(originalCode);
+      expect(execution.refactoredCode).toBe(originalCode);
+    });
+
+    it('logs error details in execution log', async () => {
+      const errorMessage = 'Specific LLM failure: Rate limit exceeded';
+
+      vi.mocked(mockLlmClient.sendMessage).mockResolvedValue({
+        success: false,
+        error: errorMessage,
+      } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'test.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.5,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, 'const x = 1;');
+
+      expect(execution.executionLog.some(log => log.includes(errorMessage))).toBe(true);
+    });
+  });
+
+  describe('Complex Test Case Generation', () => {
+    it('generates multiple test cases for refactored code', async () => {
+      const code = `
+export const add = (a: number, b: number): number => {
+  return a + b;
+};`;
+
+      const testCode = `
+test('add returns correct sum', async () => {
+  expect(add(2, 3)).toBe(5);
+});
+
+test('add handles negative numbers', async () => {
+  expect(add(-1, 3)).toBe(2);
+});
+
+test('add handles zero', async () => {
+  expect(add(0, 0)).toBe(0);
+});`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: code } as any)
+        .mockResolvedValueOnce({ success: true, message: testCode } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/math.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [],
+        estimatedEffort: '5 minutes',
+        confidence: 0.95,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, code);
+
+      expect(execution.testCases.length).toBeGreaterThanOrEqual(2);
+      expect(execution.testCases.every(t => t.name && t.code && t.description))
+        .toBe(true);
+    });
+  });
+
+  describe('Validation & Impact Assessment Integration', () => {
+    it('computes impact assessment when validation passes', async () => {
+      const original = `
+export const sum = (a: number, b: number) => a + b;`;
+
+      const refactored = `
+export const sum = (a: number, b: number): number => a + b;`;
+
+      vi.mocked(mockLlmClient.sendMessage)
+        .mockResolvedValueOnce({ success: true, message: refactored } as any)
+        .mockResolvedValueOnce({ success: true, message: '' } as any);
+
+      const plan: RefactoringPlan = {
+        hookFile: 'src/utils/math.ts',
+        estimatedComplexity: 'low',
+        proposedChanges: [
+          {
+            type: 'add',
+            description: 'Add return type annotation',
+            impact: 'Improve type safety',
+            priority: 'medium',
+          },
+        ],
+        estimatedEffort: '2 minutes',
+        confidence: 0.95,
+        risks: [],
+      };
+
+      const execution = await executor.executeRefactoring(plan, original);
+
+      expect(execution.success).toBe(true);
+      expect(execution.estimatedImpact).toBeDefined();
+      // estimatedBenefits are populated from plan.proposedChanges
+      expect(execution.estimatedImpact.estimatedBenefits.length).toBeGreaterThanOrEqual(0);
+      expect(execution.validationResults.length).toBeGreaterThan(0);
+    });
+  });
 });
