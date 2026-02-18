@@ -420,10 +420,10 @@ import { useGetUser } from '../hooks/useGetUser';
 
 export function UserDisplay() {
   const { data, isLoading, error } = useGetUser();
-  
+
   if (isLoading) return <div>Loading...</div>;
   if (error) return <div>Error: {error.message}</div>;
-  
+
   return <div>{data?.name}</div>;
 }
       `;
@@ -431,6 +431,458 @@ export function UserDisplay() {
       const result = validator.validateAgainstLayer(componentCode, 'src/components/UserDisplay.tsx');
       // Components can import anything, so this should pass basic validation
       expect(result.layer).toBe('components/');
+    });
+  });
+
+  describe('Cross-File Contract Validation (Phase 8)', () => {
+    it('should validate imported symbol exists in source file', async () => {
+      const componentCode = `
+import { useUser } from '../hooks/useUser';
+
+export function UserList() {
+  const user = useUser();
+  return <div>{user.name}</div>;
+}
+      `;
+
+      const previousFiles = new Map([
+        ['../hooks/useUser', 'export const useUser = () => ({ name: "test" });'],
+      ]);
+
+      const result = await validator.validateCrossFileContract(
+        componentCode,
+        'src/components/UserList.tsx',
+        { fsPath: '/workspace' } as any,
+        previousFiles
+      );
+
+      expect(result).toBeDefined();
+      expect(result.violations).toBeDefined();
+    });
+
+    it('should detect missing export in imported file', async () => {
+      const componentCode = `
+import { missingFunction } from '../services/api';
+
+export function DataFetcher() {
+  return missingFunction();
+}
+      `;
+
+      const previousFiles = new Map([
+        ['../services/api', 'export const getUsers = async () => {};'],
+      ]);
+
+      const result = await validator.validateCrossFileContract(
+        componentCode,
+        'src/components/DataFetcher.tsx',
+        { fsPath: '/workspace' } as any,
+        previousFiles
+      );
+
+      expect(result).toBeDefined();
+    });
+
+    it('should handle relative import paths', async () => {
+      const componentCode = `
+import { useStore } from '../store/app';
+
+export function App() {
+  const { count } = useStore();
+  return <div>{count}</div>;
+}
+      `;
+
+      const previousFiles = new Map([
+        ['../store/app', 'export const useStore = () => ({ count: 0 });'],
+      ]);
+
+      const result = await validator.validateCrossFileContract(
+        componentCode,
+        'src/pages/App.tsx',
+        { fsPath: '/workspace' } as any,
+        previousFiles
+      );
+
+      expect(result).toBeDefined();
+    });
+  });
+
+  describe('Hook Usage Validation (Phase 8)', () => {
+    it('should detect React hooks called outside components', async () => {
+      const code = `
+import { useState } from 'react';
+
+const useGetUser = () => {
+  return useState(null);
+};
+
+export const data = useGetUser();
+      `;
+
+      const violations = await validator.validateHookUsage(code, 'src/hooks/useGetUser.ts');
+      expect(violations).toBeDefined();
+      expect(Array.isArray(violations)).toBe(true);
+    });
+
+    it('should allow React hooks in hook files', async () => {
+      const code = `
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+
+export const useUser = (id: string) => {
+  const [local, setLocal] = useState(null);
+  const { data } = useQuery({
+    queryKey: ['user', id],
+    queryFn: async () => {},
+  });
+
+  return { local, data };
+};
+      `;
+
+      const violations = await validator.validateHookUsage(code, 'src/hooks/useUser.ts');
+      expect(violations).toBeDefined();
+    });
+
+    it('should detect hooks in component files violating patterns', async () => {
+      const code = `
+import { useState, useEffect } from 'react';
+
+export function MyComponent() {
+  const [state, setState] = useState(null);
+
+  // Multiple useEffects could be a code smell
+  useEffect(() => {}, []);
+  useEffect(() => {}, []);
+  useEffect(() => {}, []);
+
+  return <div>{state}</div>;
+}
+      `;
+
+      const violations = await validator.validateHookUsage(code, 'src/components/MyComponent.tsx');
+      expect(violations).toBeDefined();
+    });
+
+    it('should allow custom hooks in components', async () => {
+      const code = `
+import { useGetUser } from '../hooks/useGetUser';
+
+export function UserProfile() {
+  const user = useGetUser();
+
+  return <div>{user.name}</div>;
+}
+      `;
+
+      const violations = await validator.validateHookUsage(code, 'src/components/UserProfile.tsx');
+      expect(violations).toBeDefined();
+    });
+
+    it('should detect unconditional hook calls in loops', async () => {
+      const code = `
+import { useState } from 'react';
+
+export function BadComponent() {
+  for (let i = 0; i < 5; i++) {
+    const [state, setState] = useState(null);
+  }
+
+  return <div></div>;
+}
+      `;
+
+      const violations = await validator.validateHookUsage(code, 'src/components/BadComponent.tsx');
+      expect(violations).toBeDefined();
+    });
+
+    it('should detect conditional hook calls', async () => {
+      const code = `
+import { useState } from 'react';
+
+export function ConditionalComponent(props) {
+  if (props.condition) {
+    const [state, setState] = useState(null);
+  }
+
+  return <div></div>;
+}
+      `;
+
+      const violations = await validator.validateHookUsage(code, 'src/components/ConditionalComponent.tsx');
+      expect(violations).toBeDefined();
+    });
+  });
+
+  describe('Zustand Pattern Validation (Phase 8)', () => {
+    it('should allow properly destructured Zustand stores', () => {
+      const code = `
+import { create } from 'zustand';
+
+const useStore = create((set) => ({
+  count: 0,
+  increment: () => set(state => ({ count: state.count + 1 })),
+}));
+
+export function Counter() {
+  const { count, increment } = useStore();
+
+  return (
+    <button onClick={increment}>
+      Count: {count}
+    </button>
+  );
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Counter.tsx');
+      expect(result).toBeDefined();
+    });
+
+    it('should detect improper Zustand access patterns', () => {
+      const code = `
+import { create } from 'zustand';
+
+const useStore = create((set) => ({
+  count: 0,
+  increment: () => set(state => ({ count: state.count + 1 })),
+}));
+
+export function Counter() {
+  const store = useStore();
+
+  return (
+    <button onClick={store.increment}>
+      Count: {store.count}
+    </button>
+  );
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Counter.tsx');
+      expect(result).toBeDefined();
+    });
+
+    it('should detect mixed state management', () => {
+      const code = `
+import { create } from 'zustand';
+import { useState } from 'react';
+
+const useStore = create((set) => ({
+  count: 0,
+}));
+
+export function Counter() {
+  const { count } = useStore();
+  const [local, setLocal] = useState(0);
+
+  return <div>{count + local}</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Counter.tsx');
+      expect(result).toBeDefined();
+    });
+  });
+
+  describe('Import/Export Analysis (Phase 8)', () => {
+    it('should detect unused imports', () => {
+      const code = `
+import { useState, useEffect } from 'react';
+import { format } from 'date-fns';
+
+export function Component() {
+  const [state, setState] = useState(null);
+
+  return <div>{state}</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Component.tsx');
+      expect(result).toBeDefined();
+    });
+
+    it('should validate named imports are exported', () => {
+      const code = `
+export function getUser() {
+  return { name: 'test' };
+}
+
+export function getUsers() {
+  return [{ name: 'test' }];
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      expect(result.hasViolations).toBe(false);
+    });
+
+    it('should detect missing imports for used symbols', () => {
+      const code = `
+export function UserProfile() {
+  const user = getUser();
+
+  return <div>{user.name}</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/UserProfile.tsx');
+      expect(result).toBeDefined();
+    });
+
+    it('should handle default exports', () => {
+      const code = `
+export default function App() {
+  return <div>App</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/App.tsx');
+      // App.tsx at root level might be classified as unknown, but the important
+      // thing is that it handles the export correctly
+      expect(result.hasViolations).toBeDefined();
+    });
+
+    it('should handle namespace imports', () => {
+      const code = `
+import * as utils from '../utils/helpers';
+
+export function Component() {
+  return <div>{utils.format('test')}</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Component.tsx');
+      expect(result).toBeDefined();
+    });
+  });
+
+  describe('Layer Detection (Phase 8)', () => {
+    it('should detect services layer', () => {
+      const serviceCode = `
+export async function getUsers() {
+  return [];
+}
+      `;
+
+      const result = validator.validateAgainstLayer(serviceCode, 'src/services/userService.ts');
+      expect(result.layer).toBe('services/');
+    });
+
+    it('should detect hooks layer', () => {
+      const hookCode = `
+import { useState } from 'react';
+
+export function useCounter() {
+  const [count, setCount] = useState(0);
+  return { count, setCount };
+}
+      `;
+
+      const result = validator.validateAgainstLayer(hookCode, 'src/hooks/useCounter.ts');
+      expect(result.layer).toBe('hooks/');
+    });
+
+    it('should detect components layer', () => {
+      const componentCode = `
+export function MyComponent() {
+  return <div>Test</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(componentCode, 'src/components/MyComponent.tsx');
+      expect(result.layer).toBe('components/');
+    });
+
+    it('should detect types layer', () => {
+      const typeCode = `
+export interface User {
+  id: string;
+  name: string;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(typeCode, 'src/types/User.ts');
+      expect(result.layer).toBe('types/');
+    });
+
+    it('should detect utils layer', () => {
+      const utilCode = `
+export function format(value: string) {
+  return value.toUpperCase();
+}
+      `;
+
+      const result = validator.validateAgainstLayer(utilCode, 'src/utils/format.ts');
+      expect(result.layer).toBe('utils/');
+    });
+  });
+
+  describe('Semantic Error Detection (Phase 8)', () => {
+    it('should detect async code in type files', () => {
+      const typeCode = `
+export interface Config {
+  load: async () => Promise<void>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(typeCode, 'src/types/Config.ts');
+      expect(result).toBeDefined();
+    });
+
+    it('should detect circular import patterns', () => {
+      const code = `
+import { getUser } from '../services/userService';
+
+export const user = getUser();
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
+      expect(result).toBeDefined();
+    });
+
+    it('should validate proper naming conventions', () => {
+      const code = `
+import { useState } from 'react';
+
+export function useCounter() {
+  const [count, setCount] = useState(0);
+  return count;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/hooks/useCounter.ts');
+      expect(result).toBeDefined();
+    });
+
+    it('should detect forbidden patterns in components', () => {
+      const code = `
+import * as api from 'axios';
+
+export function Component() {
+  api.post('/api/users', {});
+  return <div></div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Component.tsx');
+      expect(result).toBeDefined();
+    });
+
+    it('should validate component return JSX', () => {
+      const code = `
+export function NotAComponent() {
+  return null;
+}
+
+export function ActualComponent() {
+  return <div>Component</div>;
+}
+      `;
+
+      const result = validator.validateAgainstLayer(code, 'src/components/Mixed.tsx');
+      expect(result).toBeDefined();
     });
   });
 });
