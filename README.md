@@ -1022,8 +1022,13 @@ npm run test:watch   # Auto-run on changes
 - **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping documentation clean
 - **[Documentation Organization](docs/DOCS_REORGANIZATION_COMPLETE.md)** - How documentation is structured
 
+### Testing & Coverage (/docs/phase-docs/)
+- **[Phase 3 Coverage Strategy](docs/phase-docs/PHASE3-COVERAGE-STRATEGY.md)** - SE2-level honest assessment and 30-day roadmap for test coverage (41% → 50%+)
+- **[Phase 3 Coverage Improvements](docs/phase-docs/PHASE3-COVERAGE-IMPROVEMENTS.md)** - Phase 2 test expansion details (52 new tests, critical paths, edge cases)
+- **[Phase 2 Test Improvements](docs/phase-docs/PHASE2-TEST-IMPROVEMENTS.md)** - DAG validation tests, error paths, test factories, snapshot validation
+
 ### Development History (/docs/phase-docs/ and /docs/archive/)
-- **[Phase Documentation](docs/phase-docs/)** - Phase-specific development notes
+- **[Phase Documentation](docs/phase-docs/)** - Phase-specific development notes and roadmaps
 - **[Archives](docs/archive/)** - Session notes, analysis, and historical releases
 
 ## 🐛 Troubleshooting
