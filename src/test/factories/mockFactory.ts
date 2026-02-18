@@ -43,7 +43,7 @@ export function createMockResponse(
     body: null,
     bodyUsed: false,
     redirected: false,
-    type: 'basic' as ResponseType,
+    type: 'basic' as any,
     url: 'http://test.com',
   } as unknown as Response;
 }

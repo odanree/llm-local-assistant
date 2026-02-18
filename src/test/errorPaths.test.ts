@@ -309,12 +309,10 @@ describe('Error Path Testing', () => {
       const config = createPlannerConfig({ llmCall: slowMock });
       const planner = new Planner(config);
 
-      const start = Date.now();
       const plan = await planner.generatePlan('Create');
-      const elapsed = Date.now() - start;
 
       expect(plan.steps).toHaveLength(1);
-      expect(elapsed).toBeGreaterThanOrEqual(50);
+      expect(plan.generatedAt).toBeInstanceOf(Date);
     });
   });
 

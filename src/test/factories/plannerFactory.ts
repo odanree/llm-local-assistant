@@ -20,7 +20,7 @@ export function createPlannerConfig(overrides?: Partial<PlannerConfig>): Planner
     llmCall: vi.fn(async () => '[]'),
     onProgress: vi.fn(),
     projectContext: {
-      language: 'typescript',
+      language: 'TypeScript',
       strategy: 'DIFF_MODE',
       extension: '.tsx',
       root: 'src',
