@@ -255,11 +255,11 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**Agent Mode Commands (v2.5.0)**\n\n` +
-          `📋 **Planning & Execution (UPDATED v2.5.0):**\n` +
-          `- /plan <task> → Create a multi-step action plan (NOW: No infinite loops)\n` +
+        text: `**Agent Mode Commands (v2.7.0)**\n\n` +
+          `📋 **Planning & Execution (v2.7.0 - Quality & Testing Focus):**\n` +
+          `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
-          `- /approve → Acknowledge and approve the plan (NOW: Re-enabled)\n` +
+          `- /approve → Acknowledge and approve the plan\n` +
           `- /reject → Discard the current plan\n\n` +
           `🔍 **Codebase Context:**\n` +
           `- /context show structure → Show project file organization\n` +
