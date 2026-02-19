@@ -415,6 +415,33 @@ export class ArchitectureValidator {
   }
 
   /**
+   * Generate a formatted error report from validation result
+   * Returns an empty string if no violations, formatted report if violations exist
+   */
+  public generateErrorReport(result: LayerValidationResult): string {
+    if (!result.hasViolations || result.violations.length === 0) {
+      return '';
+    }
+
+    const lines: string[] = [];
+    lines.push(`\n❌ Layer Validation Report for ${result.layer}`);
+    lines.push(`Recommendation: ${result.recommendation.toUpperCase()}`);
+    lines.push('');
+
+    result.violations.forEach((violation, index) => {
+      lines.push(`${index + 1}. [${violation.severity.toUpperCase()}] ${violation.type}`);
+      lines.push(`   Message: ${violation.message}`);
+      if (violation.import) {
+        lines.push(`   Import: ${violation.import}`);
+      }
+      lines.push(`   Suggestion: ${violation.suggestion}`);
+      lines.push('');
+    });
+
+    return lines.join('\n');
+  }
+
+  /**
    * Validate cross-file contracts: Do imported symbols actually exist in dependencies?
    * CRITICAL for multi-step execution: Verifies component uses store API correctly
    * 

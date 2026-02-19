@@ -3119,6 +3119,14 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
   }
 
   /**
+   * Resume execution after pause
+   */
+  resumeExecution(): void {
+    this.paused = false;
+    this.config.onMessage?.('Execution resumed', 'info');
+  }
+
+  /**
    * Cancel execution
    */
   async cancelExecution(rollback?: boolean): Promise<void> {
