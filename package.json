@@ -199,6 +199,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --coverage.reporter=html",
     "lint": "eslint src",
     "format": "prettier --write src/**/*.ts",
     "package": "vsce package"
