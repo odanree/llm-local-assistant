@@ -1,7 +1,7 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.7.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.7.1-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
@@ -14,7 +14,7 @@ A powerful VS Code extension that brings autonomous AI capabilities to your loca
 
 **🎯 v2.7.0 Focus: Comprehensive Test Suite & Quality Foundation**
 
-> **Latest Release**: v2.7.0 - Test infrastructure for 70% coverage goal ✅
+> **Latest Release**: v2.7.1 - Package optimization & improved marketplace experience ✅
 > **Philosophy**: Quality-first development with comprehensive testing and reliability.
 > **Status**: 1,345/1,345 tests passing. Production ready. 58.46% coverage baseline.
 

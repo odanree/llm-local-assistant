@@ -1,0 +1,15 @@
+.git
+.gitignore
+.vscode/
+.github/
+coverage/
+node_modules/
+out/
+dist/extension.js.map
+examples/
+mock/
+python/
+src/**/*.test.ts
+src/**/*.d.ts
+*.vsix
+.DS_Store
