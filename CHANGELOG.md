@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed test output files from root
   - Deleted old VSIX releases (kept only current version)
   - Final VSIX size: **1.48 MB** ✓
+- **Documentation**: Updated README with v2.8.1 optimization highlights
+  - Version badge updated to 2.8.1
+  - Added distribution optimization section
+  - Documented root cleanup and directory organization benefits
 
 ## [2.8.0] - 2026-02-19
 
