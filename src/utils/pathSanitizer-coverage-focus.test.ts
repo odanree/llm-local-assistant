@@ -59,22 +59,25 @@ describe('PathSanitizer - Coverage Focus', () => {
     });
 
     it('should remove for pattern from description', () => {
-      const result = PathSanitizer.sanitizePath('for login form src/Login.tsx');
-      // Should throw because it still has spaces after cleaning
-      expect(() => PathSanitizer.sanitizePath('for the login form: src/Login.tsx')).toThrow();
+      // 'for the login form: src/Login.tsx' -> 'src/Login.tsx' (valid)
+      const result = PathSanitizer.sanitizePath('for the login form: src/Login.tsx');
+      expect(result).toBe('src/Login.tsx');
     });
 
     it('should remove description: prefix (spaces prevent success)', () => {
-      // These throw because the prefix removal still leaves spaces
-      expect(() => PathSanitizer.sanitizePath('description: src/file.ts')).toThrow();
+      // Prefix removal alone: 'description: src/file.ts' -> 'src/file.ts' (valid, no throw)
+      const result = PathSanitizer.sanitizePath('description: src/file.ts');
+      expect(result).toBe('src/file.ts');
     });
 
     it('should remove path: prefix (spaces prevent success)', () => {
-      expect(() => PathSanitizer.sanitizePath('path: src/file.ts')).toThrow();
+      const result = PathSanitizer.sanitizePath('path: src/file.ts');
+      expect(result).toBe('src/file.ts');
     });
 
     it('should remove file: prefix (spaces prevent success)', () => {
-      expect(() => PathSanitizer.sanitizePath('file: src/utils.ts')).toThrow();
+      const result = PathSanitizer.sanitizePath('file: src/utils.ts');
+      expect(result).toBe('src/utils.ts');
     });
 
     it('should normalize backslashes to slashes', () => {
