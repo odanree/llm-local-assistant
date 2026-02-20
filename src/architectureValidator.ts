@@ -415,6 +415,45 @@ export class ArchitectureValidator {
   }
 
   /**
+   * Generate a formatted error report from validation result
+   * Returns an empty string if no violations, formatted report if violations exist
+   */
+  public generateErrorReport(result: LayerValidationResult): string {
+    if (!result.hasViolations || result.violations.length === 0) {
+      return '';
+    }
+
+    const lines: string[] = [];
+    lines.push('');
+    lines.push('Architecture Violations');
+    lines.push('======================');
+    lines.push('');
+    lines.push(`Layer: ${result.layer}`);
+    lines.push(`Recommendation: ${result.recommendation}`);
+    lines.push('');
+
+    result.violations.forEach((violation, index) => {
+      lines.push(`${index + 1}. [${violation.severity}] ${violation.type}`);
+      lines.push(`   ${violation.message}`);
+      if (violation.import) {
+        lines.push(`   Import: ${violation.import}`);
+      }
+      lines.push(`   Fix: ${violation.suggestion}`);
+      lines.push('');
+    });
+
+    if (result.recommendation === 'skip') {
+      lines.push('💡 Recommendation: Skip this file');
+      lines.push('   Review the violations and either fix them or mark this layer as exempt.');
+    } else if (result.recommendation === 'fix') {
+      lines.push('⚠️  Recommendation: Fix before writing');
+      lines.push('   Address the violations above before generating this code.');
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
    * Validate cross-file contracts: Do imported symbols actually exist in dependencies?
    * CRITICAL for multi-step execution: Verifies component uses store API correctly
    * 
@@ -1250,198 +1289,4 @@ export class ArchitectureValidator {
     return violations;
   }
 
-  /**
-   * Validates that all imported identifiers are actually used in code
-   * Catches unused imports and missing import errors
-   */
-  public validateImportUsage(code: string): LayerViolation[] {
-    const violations: LayerViolation[] = [];
-
-    // Extract all imports with their names
-    const importRegex = /import\s+(?:(?:{([^}]+)})|(\w+)|(\*\s+as\s+(\w+)))\s+from\s+['"]([^'"]+)['"]/g;
-    const importedNames: Map<string, string> = new Map(); // name -> source
-    let importMatch;
-
-    while ((importMatch = importRegex.exec(code)) !== null) {
-      if (importMatch[1]) {
-        // Named imports: { a, b, c as d }
-        importMatch[1].split(',').forEach(n => {
-          const trimmed = n.trim();
-          const parts = trimmed.split(/\s+as\s+/);
-          const usedName = parts[1]?.trim() || parts[0].trim();
-          if (usedName) {importedNames.set(usedName, importMatch[5]);}
-        });
-      } else if (importMatch[2]) {
-        // Default imports
-        importedNames.set(importMatch[2], importMatch[5]);
-      } else if (importMatch[4]) {
-        // Namespace imports: import * as Name
-        importedNames.set(importMatch[4], importMatch[5]);
-      }
-    }
-
-    // Check each import is actually used
-    for (const [name, source] of importedNames) {
-      // Pattern: word boundary + name, but NOT when it's part of a string or inside 'from'
-      const usagePattern = new RegExp(`(?<!["'\\w])${name}(?!["'\\w])(?!\\s*from)`, 'g');
-      const usages = code.match(usagePattern) || [];
-
-      // A name appears in its own import statement, so ignore that
-      const filteredUsages = usages.filter(
-        (_, index) => {
-          const pos = code.indexOf(name, index > 0 ? code.indexOf(usages[index - 1]) + usages[index - 1].length : 0);
-          return !code.substring(Math.max(0, pos - 50), pos).includes('import');
-        }
-      );
-
-      if (filteredUsages.length === 0 && !name.includes('*')) {
-        violations.push({
-          type: 'semantic-error',
-          import: name,
-          message: `Imported '${name}' from '${source}' but never used`,
-          suggestion: `Remove unused import: import { ${name} } from '${source}';`,
-          severity: 'medium',
-        });
-      }
-    }
-
-    return violations;
-  }
-
-  /**
-   * Validates Zustand component correctness:
-   * - Store hook MUST be destructured directly: const { x } = useStore()
-   * - NOT intermediate variable: const store = useStore(); const { x } = store;
-   * - useState MUST NOT be used
-   * - All state MUST come from store hook destructuring
-   */
-  public validateZustandComponent(
-    componentCode: string,
-    expectedStoreHook: string
-  ): LayerViolation[] {
-    const violations: LayerViolation[] = [];
-
-    console.log(`[ArchitectureValidator] 🧪 Validating Zustand component for hook: ${expectedStoreHook}`);
-
-    // Check 1: Store hook is imported
-    const hookImportPattern = new RegExp(
-      `import\\s+{[^}]*${expectedStoreHook}[^}]*}\\s+from`,
-      'i'
-    );
-    if (!hookImportPattern.test(componentCode)) {
-      violations.push({
-        type: 'semantic-error',
-        import: expectedStoreHook,
-        message: `Zustand component must import '${expectedStoreHook}' from store`,
-        suggestion: `Add: import { ${expectedStoreHook} } from '../stores/...';`,
-        severity: 'high',
-      });
-      return violations; // Can't continue without import
-    }
-
-    // Check 2: Store hook is destructured directly (NOT intermediate variable)
-    // CORRECT: const { email, password } = useLoginStore();
-    // WRONG:   const store = useLoginStore(); const { email } = store;
-    const directDestructurePattern = new RegExp(
-      `const\\s+{[^}]+}\\s*=\\s*${expectedStoreHook}\\s*\\(\\)`,
-      'g'
-    );
-    
-    if (!directDestructurePattern.test(componentCode)) {
-      violations.push({
-        type: 'semantic-error',
-        import: expectedStoreHook,
-        message: `Store hook '${expectedStoreHook}' must be destructured directly in single line`,
-        suggestion: `Use this pattern: const { email, password, setEmail } = ${expectedStoreHook}();`,
-        severity: 'high',
-      });
-      return violations; // Critical structural issue
-    }
-
-    // Check 3: No intermediate store variable
-    // This catches: const store = useLoginStore(); (storing hook result in variable)
-    const intermediateVarPattern = new RegExp(
-      `const\\s+\\w+\\s*=\\s*${expectedStoreHook}\\s*\\(\\)\\s*;`
-    );
-    if (intermediateVarPattern.test(componentCode)) {
-      violations.push({
-        type: 'semantic-error',
-        import: expectedStoreHook,
-        message: `Do not store store hook in intermediate variable. Destructure directly instead.`,
-        suggestion: `Change: const store = ${expectedStoreHook}(); to: const { ... } = ${expectedStoreHook}();`,
-        severity: 'high',
-      });
-    }
-
-    // Check 4: No useState in Zustand components (single source of truth)
-    if (/const\s+\[[\w\s,]+\]\s*=\s*useState\s*\(/.test(componentCode)) {
-      violations.push({
-        type: 'semantic-error',
-        message: `Zustand component uses both store hook and useState - violates single source of truth principle`,
-        suggestion: `Remove all useState. Use '${expectedStoreHook}' hook exclusively for state.`,
-        severity: 'high',
-      });
-    }
-
-    // Check 5: Validate that destructured properties are actually used
-    // Extract what was destructured
-    const destructureMatch = componentCode.match(
-      new RegExp(`const\\s+{([^}]+)}\\s*=\\s*${expectedStoreHook}\\s*\\(\\)`)
-    );
-    
-    if (destructureMatch) {
-      const destructuredProps = destructureMatch[1]
-        .split(',')
-        .map(p => {
-          const parts = p.trim().split(/\s+as\s+/);
-          return parts[parts.length - 1].trim(); // Get the actual name used in code
-        });
-
-      for (const prop of destructuredProps) {
-        // Check if this property is used anywhere in the component (not counting the destructuring line)
-        const propUsagePattern = new RegExp(`\\b${prop}\\b(?!\\s*[,}])`);
-        const usages = (componentCode.split(destructureMatch[0])[1] || '').match(propUsagePattern);
-        
-        if (!usages) {
-          violations.push({
-            type: 'semantic-error',
-            import: expectedStoreHook,
-            message: `Property '${prop}' destructured from store but never used`,
-            suggestion: `Remove '${prop}' from destructuring or use it in the component`,
-            severity: 'medium',
-          });
-        }
-      }
-    }
-
-    return violations;
-  }
-
-  /**
-   * Generate human-readable error report
-   */
-  public generateErrorReport(result: LayerValidationResult): string {
-    if (!result.hasViolations) {
-      return '';
-    }
-
-    let report = `\n⚠️ **Architecture Violations in ${result.layer}**\n\n`;
-    report += `Layer Rule: ${LAYER_RULES[result.layer]?.rule || 'Unknown'}\n\n`;
-
-    for (const violation of result.violations) {
-      report += `**${violation.type}**: ${violation.message}\n`;
-      report += `→ ${violation.suggestion}\n\n`;
-    }
-
-    report += `**Recommendation**: `;
-    if (result.recommendation === 'skip') {
-      report += `Skip this file (high-severity violations)`;
-    } else if (result.recommendation === 'fix') {
-      report += `Fix violations before writing`;
-    } else {
-      report += `OK to write`;
-    }
-
-    return report;
-  }
 }

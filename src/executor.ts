@@ -611,47 +611,9 @@ export class Executor {
           );
         }
 
-        // ✅ Validate import usage (catch unused/missing imports)
-        const importUsageViolations = validator.validateImportUsage(content);
-        if (importUsageViolations.length > 0) {
-          for (const violation of importUsageViolations) {
-            if (violation.severity === 'high') {
-              errors.push(`❌ Import Usage: ${violation.message}. ${violation.suggestion}`);
-            } else {
-              console.log(`[Executor] ⚠️ Import Usage: ${violation.message}`);
-            }
-          }
-        }
+        // ✅ REMOVED: Validate Zustand components for correctness
+        // validateImportUsage and validateZustandComponent were unused methods removed in cleanup
 
-        // ✅ Validate Zustand components for correctness
-        // Check if component imports ANY store hook (use*Store pattern)
-        const allStoreImportMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}\s+from\s+['"]([^'"]*store[^'"]*)['"]\s*;/gi);
-        
-        for (const match of allStoreImportMatches) {
-          const importedItems = match[1]; // e.g., "useLoginStore"
-          const importPath = match[2];  // e.g., "../stores/loginStore"
-          
-          // Extract all store hooks from the import statement
-          const hookNames = importedItems
-            .split(',')
-            .map(item => {
-              const parts = item.trim().split(/\s+as\s+/);
-              return parts[parts.length - 1].trim(); // Get the name used in code
-            })
-            .filter(name => name.toLowerCase().includes('use') && name.toLowerCase().includes('store'));
-          
-          // Validate EACH store hook used in this component
-          for (const hookName of hookNames) {
-            const zustandViolations = validator.validateZustandComponent(content, hookName);
-            if (zustandViolations.length > 0) {
-              const zustandErrors = zustandViolations.map(
-                v => `❌ Zustand Pattern (${hookName}): ${v.message}. ${v.suggestion}`
-              );
-              errors.push(...zustandErrors);
-            }
-          }
-        }
-        
         // If component imports from stores but Zustand pattern not detected, that's also an error
         if (content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
           errors.push(
@@ -3002,19 +2964,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
   }
 
   /**
-   * Execute /suggestwrite step: Generate suggestions for user approval
-   * Note: This is deferred for Phase 2.1 as it requires user interaction
-   */
-  private async executeSuggestWrite(step: PlanStep, startTime: number): Promise<StepResult> {
-    return {
-      stepId: step.stepId,
-      success: false,
-      error: 'suggestwrite requires user approval - not yet implemented in agent mode (Phase 2.2+)',
-      duration: Date.now() - startTime,
-    };
-  }
-
-  /**
    * Execute /run step: Run shell command
    */
   private async executeRun(
@@ -3167,14 +3116,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
   pauseExecution(): void {
     this.paused = true;
     this.config.onMessage?.('Execution paused', 'info');
-  }
-
-  /**
-   * Resume paused execution
-   */
-  resumeExecution(): void {
-    this.paused = false;
-    this.config.onMessage?.('Execution resumed', 'info');
   }
 
   /**

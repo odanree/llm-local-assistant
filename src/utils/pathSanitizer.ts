@@ -81,6 +81,21 @@ export class PathSanitizer {
       );
     }
 
+    // ✅ FIX 2B: SPACE IN FILENAME (Danh's Fix)
+    // Filenames should usually not have spaces - indicates LLM description
+    // Extract filename portion (after last /)
+    const lastSlash = trimmedPath.lastIndexOf('/');
+    const filename = lastSlash === -1 ? trimmedPath : trimmedPath.substring(lastSlash + 1);
+    if (filename.includes(' ') && !filename.startsWith('"') && !filename.startsWith("'")) {
+      return createValidationReport(
+        false,
+        `PATH_VIOLATION: Filename contains spaces: "${filename}". ` +
+        `Web project filenames should use kebab-case or camelCase, not spaces.`,
+        [ViolationCodes.PATH_INVALID],
+        { action: context?.action, targetFile: rawPath }
+      );
+    }
+
     // Guard 2: Path is not a description/sentence
     // Heuristics:
     // - Contains "contains", "has", "with", "for the" (sentence patterns)
@@ -88,12 +103,12 @@ export class PathSanitizer {
     // - Doesn't start with valid path prefix (src/, components/, etc.)
     // - Contains multiple spaces (natural language)
     const descriptionPatterns = [
-      /contains.*\w+/i,
-      /has\s+the\s+\w+/i,
-      /with\s+\w+/i,
-      /for\s+the\s+\w+/i,
-      /includes\s+\w+/i,
-      /jsx|code|form|component/i, // Common in descriptions
+      /^contains\s+/i,
+      /^has\s+the\s+/i,
+      /^with\s+/i,
+      /^for\s+the\s+/i,
+      /^includes\s+/i,
+      /^(jsx|code|form|html)\s+/i, // Match only at beginning, not in "components/"
     ];
 
     const isDescription =
@@ -198,6 +213,18 @@ export class PathSanitizer {
     // 3. Remove accidental whitespace or control characters (UTF-8 artifacts)
     clean = clean.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
 
+    // ✅ EARLY: Normalize placeholders BEFORE removing underscores
+    // (Otherwise {PROJECT_ROOT} becomes {PROJECTROOT} when _ is removed)
+    const placeholderNormalizations = [
+      { pattern: /^\{PROJECT_ROOT\}\//i, replace: 'src/' },
+      { pattern: /^\{workspacePath\}\//i, replace: '' },
+    ];
+    for (const { pattern, replace } of placeholderNormalizations) {
+      if (pattern.test(clean)) {
+        clean = clean.replace(pattern, replace);
+      }
+    }
+
     // 4. Strip markdown quotes and emphasis markers
     clean = clean.replace(/[*_~]/g, '');
 
@@ -236,15 +263,13 @@ export class PathSanitizer {
 
     // 2. Remove common description patterns
     clean = clean.replace(/contains.*JSX.*code/i, '');
-    clean = clean.replace(/for.*form.*component/i, '');
+    clean = clean.replace(/^for\s+the\s+.+?:\s*/i, ''); // "for the X: " → "" (handles multi-word like "login form")
     clean = clean.replace(/^(description|path|file):\s*/i, '');
 
-    // 3. Normalize common placeholders (The /path/to/ fix)
+    // 3. Normalize remaining placeholders (ones not caught during normalizeString)
     const placeholders = [
       { pattern: /^\/path\/to\//i, replace: 'src/' },
       { pattern: /^your-project\//i, replace: '' },
-      { pattern: /^{PROJECT_ROOT}\//i, replace: 'src/' },
-      { pattern: /^\{workspacePath\}\//i, replace: '' },
       { pattern: /^\.\/src\//i, replace: 'src/' },
       { pattern: /^\.\/components\//i, replace: 'src/components/' },
     ];

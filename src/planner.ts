@@ -634,56 +634,6 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
   }
 
   /**
-   * Parse a single step block (for fallback pattern)
-   */
-  private parseStepBlock(block: string, stepNumber: number): ExecutionStep | null {
-    const lines = block.split('\n').filter(l => l.trim());
-    if (lines.length === 0) {return null;}
-
-    // Extract action from first line (case-insensitive!)
-    const firstLine = lines[0].toLowerCase();  // Convert to lowercase for comparison
-    let action = 'read'; // Default to read
-    
-    if (firstLine.includes('manual')) {action = 'manual';}   // CONTEXT-AWARE: Check MANUAL first (highest priority)
-    else if (firstLine.includes('write')) {action = 'write';}
-    else if (firstLine.includes('run')) {action = 'run';}
-    else if (firstLine.includes('delete')) {action = 'delete';}
-    else if (firstLine.includes('read')) {action = 'read';}
-    // Note: If it says 'analyze' or 'review', we default to 'read' 
-    // (schema enforcement: these should not appear in step output)
-
-    const description = this.extractDescription(block);
-    const rawDependsOn = this.extractSemanticDependencies(block);
-    
-    // CRITICAL: Filter out self-referential dependencies
-    // If a step somehow includes its own ID in dependsOn, remove it
-    const currentStepId = this.generateStepId(stepNumber);
-    const cleanDependsOn = rawDependsOn
-      ? rawDependsOn.filter(depId => depId !== currentStepId)
-      : undefined;
-    
-    // Warn if self-reference was detected (shouldn't happen, but catch it)
-    if (rawDependsOn && rawDependsOn.length > 0 && cleanDependsOn && 
-        rawDependsOn.length !== cleanDependsOn.length) {
-      console.warn(`[PARSER] Warning: Step "${currentStepId}" had self-referential dependency, removed`);
-    }
-
-    return {
-      stepNumber,
-      stepId: stepNumber,
-      id: currentStepId, // NEW: Simple numeric ID for DAG (step_1, step_2, ...)
-      action: action as ActionTypeString,
-      description,
-      path: this.extractTargetFile(block),
-      targetFile: this.extractTargetFile(block), // For backward compat
-      command: this.extractCommand(block), // CRITICAL: Extract command for run steps
-      expectedOutcome: this.extractExpectedOutcome(block),
-      dependencies: this.extractDependencies(block),
-      dependsOn: cleanDependsOn, // CRITICAL: Already filtered for self-references
-    };
-  }
-
-  /**
    * Extract description from step block
    */
   private extractDescription(text: string): string {

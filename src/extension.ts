@@ -255,9 +255,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**LLM Local Assistant - v2.7.0**\n` +
-          `✨ Latest: v2.6 Voice Narration + v2.7 Test Infrastructure\n\n` +
-          `📋 **Planning & Execution (v2.7.0 - Quality & Testing Focus):**\n` +
+        text: `**LLM Local Assistant - v2.8.0**\n` +
+          `✨ Latest: v2.8 Production-Grade Quality (72% Coverage) + v2.6 Voice Narration\n\n` +
+          `📋 **Planning & Execution (v2.7 Feature Set):**\n` +
           `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
           `- /approve → Acknowledge and approve the plan\n` +

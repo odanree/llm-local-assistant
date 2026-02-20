@@ -2,7 +2,7 @@
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
   "description": "Local LLM code generation, refactoring, and explanation with voice narration",
-  "version": "2.7.1",
+  "version": "2.8.0",
   "publisher": "odanree",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -199,6 +199,8 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --coverage.reporter=html",
+    "coverage": "vitest run --coverage",
     "lint": "eslint src",
     "format": "prettier --write src/**/*.ts",
     "package": "vsce package"

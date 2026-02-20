@@ -78,11 +78,6 @@ export declare class Executor {
      */
     private executeWrite;
     /**
-     * Execute /suggestwrite step: Generate suggestions for user approval
-     * Note: This is deferred for Phase 2.1 as it requires user interaction
-     */
-    private executeSuggestWrite;
-    /**
      * Execute /run step: Run shell command
      */
     private executeRun;
@@ -90,10 +85,6 @@ export declare class Executor {
      * Pause execution (can be resumed)
      */
     pauseExecution(): void;
-    /**
-     * Resume paused execution
-     */
-    resumeExecution(): void;
     /**
      * Cancel execution
      */
