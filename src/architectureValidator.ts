@@ -424,19 +424,31 @@ export class ArchitectureValidator {
     }
 
     const lines: string[] = [];
-    lines.push(`\n❌ Layer Validation Report for ${result.layer}`);
-    lines.push(`Recommendation: ${result.recommendation.toUpperCase()}`);
+    lines.push('');
+    lines.push('Architecture Violations');
+    lines.push('======================');
+    lines.push('');
+    lines.push(`Layer: ${result.layer}`);
+    lines.push(`Recommendation: ${result.recommendation}`);
     lines.push('');
 
     result.violations.forEach((violation, index) => {
-      lines.push(`${index + 1}. [${violation.severity.toUpperCase()}] ${violation.type}`);
-      lines.push(`   Message: ${violation.message}`);
+      lines.push(`${index + 1}. [${violation.severity}] ${violation.type}`);
+      lines.push(`   ${violation.message}`);
       if (violation.import) {
         lines.push(`   Import: ${violation.import}`);
       }
-      lines.push(`   Suggestion: ${violation.suggestion}`);
+      lines.push(`   Fix: ${violation.suggestion}`);
       lines.push('');
     });
+
+    if (result.recommendation === 'skip') {
+      lines.push('💡 Recommendation: Skip this file');
+      lines.push('   Review the violations and either fix them or mark this layer as exempt.');
+    } else if (result.recommendation === 'fix') {
+      lines.push('⚠️  Recommendation: Fix before writing');
+      lines.push('   Address the violations above before generating this code.');
+    }
 
     return lines.join('\n');
   }
