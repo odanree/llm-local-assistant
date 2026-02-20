@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2026-02-19
+
+### Changed
+- **Build optimization**: Reduced VSIX package size by 48% (2.83MB → 1.48MB)
+  - Added `.vscodeignore` rules to exclude test output files and coverage artifacts
+  - Excluded temporary build folders (temp_vsix/, vsix_extracted/)
+- **Root directory cleanup**: Organized per documentation standards
+  - Moved analysis scripts and coverage reports to `/docs/`
+  - Removed test output files from root
+  - Deleted old VSIX releases (kept only current version)
+  - Final VSIX size: **1.48 MB** ✓
+
 ## [2.8.0] - 2026-02-19
 
 ### Added
