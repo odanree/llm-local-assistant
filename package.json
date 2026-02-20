@@ -200,6 +200,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --coverage.reporter=html",
+    "coverage": "vitest run --coverage",
     "lint": "eslint src",
     "format": "prettier --write src/**/*.ts",
     "package": "vsce package"
