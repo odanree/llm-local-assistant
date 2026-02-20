@@ -101,46 +101,39 @@ Heavy setup code in beforeEach is multiplied by test count. Identify and optimiz
 
 ---
 
-### Phase 3: Eliminate Timing Delays (Medium Impact - Est. 2-4s savings)
+### Phase 3: Eliminate Timing Delays (NOT RECOMMENDED - Async/Await Incompatibility)
 
-Real timeouts (`setTimeout`, `await new Promise(...)`) are slow. Use fake timers.
+Real timeouts (`setTimeout`, `await new Promise(...)`) exist in executor retry logic (100ms, 500ms, 1000ms delays). Using fake timers to skip these would save 2-4s in theory, BUT:
 
-**Implementation Steps:**
+**⚠️ ARCHITECTURAL BLOCKER**: This codebase's async/await patterns are incompatible with Vitest's fake timers
 
-1. **Replace Real Delays with Fake Timers**
-   ```typescript
-   // BEFORE: Waits real 100ms per test
-   it('test', async () => {
-     action();
-     await new Promise(r => setTimeout(r, 100));
-     expect(result).toBe(true);
-   });
+**Technical Issue:**
+- Executor uses `await new Promise(r => setTimeout(r, delay))` for retry delays
+- Fake timers require explicit `vi.runAllTimersAsync()` to flush queue
+- The `await` in test code doesn't automatically flush executor's internal timers
+- Result: Promise chains break, 34/45 tests fail with deadlocks
 
-   // AFTER: Instant
-   beforeEach(() => {
-     vi.useFakeTimers();
-   });
+**Test Results:**
+```
+With vi.useFakeTimers():
+- FAIL 34/45 tests (deadlock on Promise resolution)
+- Typical error: "should track total duration" times out at 5000ms
+- Incompatible with executor.executePlan() async operations
+```
 
-   afterEach(() => {
-     vi.restoreAllMocks();
-   });
+**Why It Doesn't Work for This Codebase:**
+1. The retry delays are embedded in the executor's internal logic (lines 290, 331, 355)
+2. Tests call `await executor.executePlan()` which internally uses setTimeout
+3. Fake timers don't auto-advance when inside deep async call stacks
+4. Would require unwrapping all setTimeout calls from executor.ts (architectural change)
 
-   it('test', async () => {
-     action();
-     await vi.runAllTimersAsync();  // Instant
-     expect(result).toBe(true);
-   });
-   ```
+**Recommendation**: **SKIP Phase 3**. Focus on Phases 4-5 instead (instrumentation and imports).
 
-2. **Find all timing in tests**
-   - Search: `setTimeout`, `delay`, `wait`, `new Promise.*setTimeout`
-   - Replace with `vi.useFakeTimers()` + `vi.runAllTimersAsync()`
+**Alternative Approach** (If fake timers needed in future):
+- Refactor executor.ts to accept a `delay()` function as injectable dependency
+- Allow tests to pass `async delay = () => {}` to skip delays entirely
+- This would decouple timing from test logic, but is a larger refactor
 
-3. **Verify Async Operations**
-   - Ensure fake timers work with your executor's async patterns
-   - Test Promise resolution order
-
-**Expected Savings**: 2-4 seconds (eliminate all wait time)
 
 ---
 
