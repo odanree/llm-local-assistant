@@ -14,6 +14,7 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 docs/**
 examples/**
+coverage/**
 .DS_Store
 assets/.DS_Store
 assets/phase2-*.png
@@ -26,6 +27,19 @@ vitest.*
 package-lock.json
 .github/**
 
+# Test and coverage output files
+test-results.txt
+test-coverage-output.txt
+test-coverage-output.log
+test-output.txt
+coverage-output.log
+coverage_output.txt
+
+# Build artifacts and temp folders
+temp_vsix/**
+vsix_extracted/**
+vsix_extracted2/**
+
 # IMPORTANT: DO NOT IGNORE python/ folder - it's needed for voice narration!
 # The python/ folder contains setup_tts.py and tts_service.py
 # but DO ignore large files like models and node_modules
@@ -34,4 +48,6 @@ python/**/*.pycache/**
 python/**/__pycache__/**
 python/**/*.pyc
 python/**/.pytest_cache/**
+
+
 
