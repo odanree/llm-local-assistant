@@ -44,7 +44,7 @@ vi.mock('vscode', () => ({
   },
 }));
 
-describe('Executor - Coverage Extension', () => {
+describe.concurrent('Executor - Coverage Extension', () => {
   // ⚡ OPTIMIZATION: Create shared config once, reuse across all tests
   let sharedConfig: ExecutorConfig;
 
