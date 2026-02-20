@@ -1,7 +1,7 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.8.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.8.1-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
@@ -12,11 +12,36 @@
 
 A powerful VS Code extension that brings autonomous AI capabilities to your local machine. Analyze code patterns, detect architecture issues, refactor with confidence, and now with automatic voice narration. All running on your local LLM.
 
-**🎯 v2.8.0 Focus: Production-Grade Test Suite & 72% Coverage Achievement**
+**🎯 v2.8.1 Focus: Distribution Optimization & Clean Architecture**
 
-> **Latest Release**: v2.8.0 - Comprehensive test expansion achieving 72% coverage milestone ✅
-> **Philosophy**: Quality-first development with production-grade testing and reliability.
-> **Status**: 2,514/2,514 tests passing. 72% coverage achieved. Production ready.
+> **Latest Release**: v2.8.1 - VSIX size optimization (48% reduction: 2.83MB → 1.47MB) + root cleanup ✅
+> **Philosophy**: Quality-first development with lean dependencies and optimized distribution.
+> **Status**: 2,514/2,514 tests passing. 72% coverage maintained. Optimized builds. Production ready.
+
+## ✨ What's v2.8.1 (Optimization & Distribution Polish)
+
+### 🚀 Distribution Optimization
+
+v2.8.1 focuses on lean, efficient distribution:
+
+- **VSIX Size Reduction: 48%** (2.83MB → 1.47MB)
+  - Enhanced `.vscodeignore` to exclude test outputs and coverage artifacts
+  - Removed temporary build folders from distribution
+  - Final package size: **1.47MB** ✨
+
+- **Root Directory Cleanup**
+  - Moved analysis scripts and coverage reports to `/docs/` per documentation standards
+  - Removed test output files from repository root
+  - Deleted old VSIX releases (v2.5.1 - v2.8.0 archives)
+  - Cleaner, more maintainable project structure
+
+**What This Means:**
+- ✅ Faster download and installation for end users
+- ✅ Cleaner project repository with proper directory organization
+- ✅ Better alignment with [documentation standards](docs/ROOT_ORGANIZATION_RULES.md)
+- ✅ Maintained test coverage (72%) and functionality
+
+---
 
 ## ✨ What's v2.8.0 (Test Coverage Expansion & Quality Milestone)
 
