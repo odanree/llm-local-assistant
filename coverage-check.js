@@ -1,0 +1,11 @@
+const fs = require('fs');
+const content = fs.readFileSync('coverage/lcov.info', 'utf8');
+const lines = content.split('\n');
+const lhLines = lines.filter(l => l.startsWith('LH:'));
+const lfLines = lines.filter(l => l.startsWith('LF:'));
+const totalHit = lhLines.reduce((sum, l) => sum + parseInt(l.split(':')[1] || 0), 0);
+const totalFound = lfLines.reduce((sum, l) => sum + parseInt(l.split(':')[1] || 0), 0);
+const pct = totalFound > 0 ? ((totalHit / totalFound) * 100).toFixed(2) : 0;
+console.log('Total Coverage: ' + totalHit + '/' + totalFound + ' lines (' + pct + '%)');
+console.log('Previous before cleanup: 2747/4064 lines (67.59%)');
+console.log('Before this cleanup: ~2755/4064 lines (~67.82%)');

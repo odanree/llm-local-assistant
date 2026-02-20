@@ -1,45 +1,62 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Executor, ExecutionResult } from './executor';
-import { TaskPlan, PlanStep } from './planner';
-
 /**
- * Tests for Executor module (Phase 2: Agent Loop)
+ * FOCUSED COVERAGE TESTS FOR EXECUTOR
  * 
- * These tests verify:
- * - Single step execution (read, write, run)
- * - Plan execution with retry logic
- * - Error handling and recovery
- * - Pause/resume/cancel operations
- * - Progress tracking
+ * Strategy: Call actual public methods (executePlan, executeStep) with real business logic
+ * Mocking: Only external dependencies (vscode.workspace.fs, LLMClient responses)
+ * Goal: Improve coverage from 63% to 70%+ by exercising real code paths
+ * 
+ * This approach proved successful for architectureValidator (+6% improvement)
  */
 
-describe('Executor', () => {
+describe('Executor - Real Execution Coverage Focus', () => {
   let executor: Executor;
-  let mockConfig: any;
+  let config: ExecutorConfig;
   let mockLLMClient: any;
-  let mockWorkspace: any;
+  let mockExtension: any;
+  let mockWorkspace: vscode.Uri;
 
   beforeEach(() => {
+    // Mock LLMClient - only mock the response, not internal logic
     mockLLMClient = {
-      sendMessage: vi.fn(),
+      sendMessage: vi.fn().mockResolvedValue('// generated code'),
+      sendMessageStream: vi.fn(),
       clearHistory: vi.fn(),
+      config: {
+        endpoint: 'http://localhost:11434',
+        model: 'mistral',
+        temperature: 0.7,
+        maxTokens: 2048,
+      },
     };
 
-    mockWorkspace = {
-      fsPath: '/workspace',
+    // Mock vscode extension context
+    mockExtension = {
+      globalState: {
+        get: vi.fn(),
+        update: vi.fn(),
+      },
     };
 
-    mockConfig = {
-      extension: {} as any,
+    // Create mock workspace
+    mockWorkspace = vscode.Uri.file('/tmp/test-workspace');
+
+    // Create executor config with real dependencies
+    config = {
+      extension: mockExtension as any,
       llmClient: mockLLMClient,
       workspace: mockWorkspace,
-      maxRetries: 2,
-      timeout: 30000,
+      maxRetries: 1,
+      timeout: 5000,
       onProgress: vi.fn(),
       onMessage: vi.fn(),
+      onStepOutput: vi.fn(),
     };
 
-    executor = new Executor(mockConfig);
+    executor = new Executor(config);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
   });
 
   describe('executeStep', () => {
@@ -388,6 +405,9 @@ describe('Executor', () => {
 
       executor.pauseExecution();
       expect(executor.getStatus().paused).toBe(true);
+
+      executor.resumeExecution();
+      expect(executor.getStatus().paused).toBe(false);
     });
 
     it('should support cancel', async () => {
