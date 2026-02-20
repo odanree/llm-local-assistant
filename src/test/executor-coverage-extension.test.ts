@@ -6,7 +6,7 @@
  * Target ROI: Close the 37% coverage gap (821+ untested statements)
  */
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { Executor, ExecutorConfig, ExecutionResult } from '../executor';
 import {
@@ -71,6 +71,27 @@ describe.concurrent('Executor - Coverage Extension', () => {
 
   beforeAll(() => {
     sharedConfig = createExecutorConfig();
+  });
+
+  // ⚡ PHASE 2 OPTIMIZATION: Reset mock history instead of creating new mocks
+  // This is faster than createExecutorConfig() since we reuse the same vi.fn() instances
+  beforeEach(() => {
+    // Reset all mocks to clean state without recreating them
+    if (sharedConfig.llmClient) {
+      (sharedConfig.llmClient.sendMessage as any).mockClear();
+      (sharedConfig.llmClient.clearHistory as any).mockClear();
+    }
+    if (sharedConfig.onProgress) {
+      (sharedConfig.onProgress as any).mockClear();
+    }
+    if (sharedConfig.onMessage) {
+      (sharedConfig.onMessage as any).mockClear();
+    }
+  });
+
+  // ⚡ PHASE 3 OPTIMIZATION: Restore real timers after each test
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ⚡ OPTIMIZATION: Lazy fixture creation - only create executor when needed
