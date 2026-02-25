@@ -22,7 +22,12 @@
       "Bash(gh run list:*)",
       "Bash(gh run view:*)",
       "Bash(npm run type-check:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npm run coverage:*)",
+      "Bash(done)",
+      "Bash(xargs -I {} bash -c 'echo \"\"$\\(grep -c \"\"^\\\\s*it\\(\\\\|test\\(\"\" \"\"{}\"\" || echo 0\\): {}\"\"')",
+      "Bash(git checkout:*)",
+      "Bash(python3:*)"
     ]
   }
 }
