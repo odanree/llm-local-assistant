@@ -28,11 +28,16 @@ export default defineConfig({
         '**/*.d.ts',
         '**/*.test.ts',
         '**/mock/**',
+        'src/test/executor.shared-mocks.ts', // Test utilities don't need coverage
       ],
-      lines: 70,
-      functions: 70,
-      branches: 65,
-      statements: 70,
+      // CRITICAL: Coverage thresholds to prevent regression during parameterization
+      // These thresholds are STRICT - they prevent coverage from dropping below 72%
+      lines: 72,
+      functions: 72,
+      branches: 70, // Branch coverage is harder, slightly lower threshold
+      statements: 72,
+      // Fail the build if any threshold is not met
+      all: true,
     },
   },
   resolve: {
