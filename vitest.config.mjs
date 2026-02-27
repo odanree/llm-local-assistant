@@ -10,6 +10,8 @@ export default defineConfig({
       '.claude/worktrees/**',
       'dist/**',
       'out/**',
+      'tests-legacy-backup-wave1-20260226/**', // Phase 5 Wave 1 backup
+      'tests-legacy-backup-*/**', // All legacy backup directories
     ],
     onConsoleLog(log, type) {
       // Suppress specific console logs if needed
