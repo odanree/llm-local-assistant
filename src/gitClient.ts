@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as util from 'util';
+import { summarizeDiffPure } from './utils/diffSummarizer';
 
 const exec = util.promisify(cp.exec);
 
@@ -191,25 +192,6 @@ export class GitClient {
    * Create a summary of what changed in a diff
    */
   private summarizeDiff(diff: string): string {
-    const lines = diff.split('\n');
-    let added = 0;
-    let removed = 0;
-    const filesChanged = new Set<string>();
-
-    for (const line of lines) {
-      if (line.startsWith('+++') || line.startsWith('---')) {
-        const match = line.match(/b?\/(.*)/);
-        if (match) {
-          filesChanged.add(match[1]);
-        }
-      } else if (line.startsWith('+') && !line.startsWith('+++')) {
-        added++;
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        removed++;
-      }
-    }
-
-    const fileCount = filesChanged.size;
-    return `${fileCount} file(s) changed: +${added} lines, -${removed} lines`;
+    return summarizeDiffPure(diff);
   }
 }

@@ -5,6 +5,7 @@ node_modules
 *.vsix
 .DS_Store
 **/.DS_Store
+.claude/
 
 # Example files (documentation only, not real tests)
 examples/**/*.test.ts

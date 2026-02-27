@@ -6,10 +6,13 @@ import { WorkspaceDetector } from './workspaceDetector';
 
 describe('WorkspaceDetector', () => {
   let tempDir: string;
+  let detector: WorkspaceDetector;
 
   beforeEach(() => {
     // Create a temporary directory for test workspaces
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-detector-'));
+    // Instantiate detector with real filesystem provider (default)
+    detector = new WorkspaceDetector();
   });
 
   afterEach(() => {
@@ -28,7 +31,7 @@ describe('WorkspaceDetector', () => {
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
       fs.writeFileSync(path.join(wsDir, 'tsconfig.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       expect(workspaces.length).toBe(1);
       expect(workspaces[0].name).toBe('ts-project');
       expect(workspaces[0].type).toBe('typescript');
@@ -41,7 +44,7 @@ describe('WorkspaceDetector', () => {
       fs.mkdirSync(wsDir);
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       expect(workspaces.length).toBeGreaterThanOrEqual(1);
       const found = workspaces.find((w) => w.name === 'node-project');
       expect(found).toBeDefined();
@@ -55,7 +58,7 @@ describe('WorkspaceDetector', () => {
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
       fs.writeFileSync(path.join(wsDir, '.vscode/settings.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const found = workspaces.find((w) => w.name === 'vscode-project');
       expect(found).toBeDefined();
       expect(found?.indicators).toContain('.vscode/settings.json');
@@ -67,7 +70,7 @@ describe('WorkspaceDetector', () => {
       fs.mkdirSync(path.join(wsDir, 'src'));
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const found = workspaces.find((w) => w.name === 'src-project');
       expect(found).toBeDefined();
       expect(found?.indicators).toContain('src/');
@@ -79,7 +82,7 @@ describe('WorkspaceDetector', () => {
       fs.mkdirSync(path.join(wsDir, '.git'));
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const found = workspaces.find((w) => w.name === 'git-project');
       expect(found).toBeDefined();
       expect(found?.indicators).toContain('.git/');
@@ -89,7 +92,7 @@ describe('WorkspaceDetector', () => {
       const emptyDir = path.join(tempDir, 'empty-folder');
       fs.mkdirSync(emptyDir);
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const found = workspaces.find((w) => w.name === 'empty-folder');
       expect(found).toBeUndefined();
     });
@@ -104,7 +107,7 @@ describe('WorkspaceDetector', () => {
         fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
       }
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       expect(workspaces.length).toBeGreaterThanOrEqual(3);
       expect(workspaces.map((w) => w.name)).toContain('project1');
       expect(workspaces.map((w) => w.name)).toContain('project2');
@@ -122,7 +125,7 @@ describe('WorkspaceDetector', () => {
       fs.mkdirSync(node);
       fs.writeFileSync(path.join(node, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const tsIndex = workspaces.findIndex((w) => w.name === 'typescript');
       const nodeIndex = workspaces.findIndex((w) => w.name === 'nodejs');
 
@@ -140,10 +143,10 @@ describe('WorkspaceDetector', () => {
       fs.writeFileSync(path.join(ws1, 'package.json'), '{}');
       fs.writeFileSync(path.join(ws2, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       expect(workspaces.length).toBeGreaterThanOrEqual(2);
 
-      const selected = WorkspaceDetector.getWorkspaceByIndex(workspaces, 1);
+      const selected = detector.getWorkspaceByIndex(workspaces, 1);
       expect(selected).toBeDefined();
       expect(selected?.name).toBe(workspaces[0].name);
     });
@@ -153,9 +156,9 @@ describe('WorkspaceDetector', () => {
       fs.mkdirSync(ws);
       fs.writeFileSync(path.join(ws, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
-      expect(WorkspaceDetector.getWorkspaceByIndex(workspaces, 0)).toBeNull();
-      expect(WorkspaceDetector.getWorkspaceByIndex(workspaces, 999)).toBeNull();
+      const workspaces = detector.findWorkspaces(tempDir);
+      expect(detector.getWorkspaceByIndex(workspaces, 0)).toBeNull();
+      expect(detector.getWorkspaceByIndex(workspaces, 999)).toBeNull();
     });
   });
 
@@ -168,8 +171,8 @@ describe('WorkspaceDetector', () => {
       fs.writeFileSync(path.join(ws1, 'package.json'), '{}');
       fs.writeFileSync(path.join(ws2, 'package.json'), '{}');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
-      const display = WorkspaceDetector.formatForDisplay(workspaces);
+      const workspaces = detector.findWorkspaces(tempDir);
+      const display = detector.formatForDisplay(workspaces);
 
       expect(display).toContain('Detected');
       expect(display).toContain('Which workspace');
@@ -177,7 +180,7 @@ describe('WorkspaceDetector', () => {
     });
 
     it('should handle empty workspace list', () => {
-      const display = WorkspaceDetector.formatForDisplay([]);
+      const display = detector.formatForDisplay([]);
       expect(display).toContain('No existing workspaces');
     });
   });
@@ -189,7 +192,7 @@ describe('WorkspaceDetector', () => {
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
       fs.writeFileSync(path.join(wsDir, 'index.ts'), '// code');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const found = workspaces.find((w) => w.name === 'ts-files');
       expect(found).toBeDefined();
       expect(found?.indicators).toContain('source-files');
@@ -201,7 +204,7 @@ describe('WorkspaceDetector', () => {
       fs.writeFileSync(path.join(wsDir, 'package.json'), '{}');
       fs.writeFileSync(path.join(wsDir, 'App.tsx'), '// code');
 
-      const workspaces = WorkspaceDetector.findWorkspaces(tempDir);
+      const workspaces = detector.findWorkspaces(tempDir);
       const found = workspaces.find((w) => w.name === 'react-files');
       expect(found).toBeDefined();
     });

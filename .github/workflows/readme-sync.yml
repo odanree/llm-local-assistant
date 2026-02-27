@@ -1,4 +1,4 @@
-name: 🚀 Dynamic README Synchronizer
+name: 🚀 Metrics Validator & Quality Gate
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  sync-docs:
+  sync-metrics:
     runs-on: ubuntu-latest
     permissions:
       contents: write # Required to push changes back to the PR branch
@@ -31,9 +31,10 @@ jobs:
         # We run tests to get the most recent coverage-summary.json
         run: npm run coverage
 
-      - name: ⚡ Run Synchronization Skill
-        # This executes the logic we defined in your dynamic shell script
-        run: sh .github/skills/readme-sychronizer/sync-dynamic.sh
+      - name: ⚡ Run Metrics Validator Skill
+        # This creates/updates METRICS.json with version, tests, and coverage
+        # Validates quality gate threshold (80.27% coverage)
+        run: sh .github/skills/metrics-validator/validate-metrics.sh
 
       - name: 🏛️ Enforce Root Directory Rules
         # Optional: Run your root-enforcer here to ensure no ghost files sneak into the PR
@@ -42,5 +43,5 @@ jobs:
       - name: 📤 Commit and Push Changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(docs): dynamic sync version and coverage metrics [skip ci]"
-          file_pattern: 'README.md docs/**/*.md'
+          commit_message: "chore(metrics): update METRICS.json with latest version, tests, and coverage [skip ci]"
+          file_pattern: 'METRICS.json'

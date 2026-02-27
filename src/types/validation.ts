@@ -1,9 +1,23 @@
 /**
+ * ArchitectureViolation: Structured architecture rule violation
+ *
+ * Purpose: Return structured violation objects from pure validators
+ * so orchestration layer can map them to error messages
+ */
+export interface ArchitectureViolation {
+  type: string; // e.g., "fetch_rule", "redux_rule", "class_component"
+  severity: 'error' | 'warning' | 'info';
+  message: string; // Human-readable error message
+  rule: string; // The rule that was violated (e.g., "TanStack Query", "Zustand")
+  suggestion?: string; // Optional: what to do instead
+}
+
+/**
  * ValidationReport: Machine-Readable Feedback Structure
- * 
+ *
  * Purpose: Ensure Planner/Refiner receive actionable validation feedback,
  * not just error messages they can "hallucinate" away.
- * 
+ *
  * Danh's insight: LLMs treat general errors as suggestions.
  * Specific violation codes trigger instruction-following.
  */

@@ -4,6 +4,83 @@
 
 ---
 
+## NEW (v2.11): Dependency Injection & Provider Architecture
+
+**Release**: v2.11.0 - Side-Effect Decoupling & Fault-Tolerance
+**Status**: Production-ready; core services refactored for testability
+
+### High-Level Provider Pattern
+
+To reach "Diamond Tier" coverage (80%+), the architecture has shifted from direct Node.js calls to a Strategy Pattern for all side effects. This allows the system to simulate complex failure states (disk full, permission denied) that are impossible to trigger with physical hardware.
+
+```
+Layer 1: Orchestration (Services)
+  ├─ executor.ts (Consumes IFileSystem, ICommandRunner)
+  ├─ codebaseIndex.ts (Migrated to IFileSystem)
+  └─ plannerModule.ts (Planned migration)
+
+Layer 2: Abstraction (Interfaces)
+  ├─ IFileSystem.ts (Contract for read/write/exists)
+  └─ ICommandRunner.ts (Contract for shell/process execution)
+
+Layer 3: Implementation (Providers)
+  ├─ FileSystemProvider.ts (Production: wraps 'fs')
+  ├─ CommandRunnerProvider.ts (Production: wraps 'child_process')
+  ├─ MockFileSystem.ts (Test: memory-based with fault injection)
+  └─ MockCommandRunner.ts (Test: predictable exit codes/timeouts)
+```
+
+### Dependency Injection (DI) Implementation
+
+Services now receive their dependencies via the constructor. To maintain backward compatibility and simplify production usage, we use **Default Parameter Injection**.
+
+```typescript
+// src/executor.ts
+constructor(
+  private fs: IFileSystem = new FileSystemProvider(),
+  private commandRunner: ICommandRunner = new CommandRunnerProvider()
+) {
+  // Existing initialization...
+}
+```
+
+### Chaos Engineering & Fault Injection
+
+The MockFileSystem and MockCommandRunner are designed to inject "Apocalypse Scenarios" into tests. This provides 100% coverage of try/catch blocks that were previously "Dark Blocks."
+
+| Scenario | Mock Trigger | Purpose |
+|----------|--------------|---------|
+| Disk Full | `mockFs.setFault('write', 'ENOSPC')` | Verify graceful handling of failed saves |
+| Permission Denied | `mockFs.setFault('read', 'EACCES')` | Test UI warnings for locked files |
+| Command Timeout | `mockCmd.setTimeout(5000)` | Ensure extension remains responsive during hangs |
+| File Not Found | Default behavior for missing files | Test error recovery paths |
+
+---
+
+## NEW (v2.10): Surgical Orchestration & Pure Logic
+
+**Release**: v2.10.0 - "Elite Tier" Coverage Foundation
+**Status**: Completed; 1,000+ lines of logic extracted to utilities
+
+### The "Surgical Orchestration" Pattern
+
+To maximize testability, we have separated **Intelligence** from **Execution**. This pattern ensures that complex regex and parsing logic can be tested with 100% statement coverage without mocking the VS Code API.
+
+1. **Pure Logic (Utilities)**: Deterministic functions in `src/utils/` (e.g., `refactoringValidator.ts`, `codePatternMatcher.ts`)
+2. **Thin Orchestration (Services)**: The "Decision Maker" in the main service that calls the utility and maps results to the UI
+
+### Map and Wrap Logic
+
+```typescript
+// 1. Pure validator returns structured violations
+const violations = validateArchitectureRulePure(content, rules, filePath);
+
+// 2. Orchestration maps to service-specific formats
+violations.forEach(v => this.reportError(v.message));
+```
+
+---
+
 ## NEW (v2.6): Voice Narration Architecture
 
 **Release**: v2.6.0 - Voice narration for code explanations  

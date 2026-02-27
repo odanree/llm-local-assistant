@@ -1,8 +1,9 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as t from '@babel/types';
 import { parse } from '@babel/parser';
 import traverse from '@babel/traverse';
+import { IFileSystem } from './providers/IFileSystem';
+import { FileSystemProvider } from './providers/FileSystemProvider';
 
 /**
  * CodebaseIndex: Tracks and indexes the codebase for context-aware code generation
@@ -46,9 +47,11 @@ export class CodebaseIndex {
   private dependencies: DependencyGraph = {};
   private patterns: PatternRegistry = {};
   private projectRoot: string = '';
+  private fs: IFileSystem;
 
-  constructor(projectRoot?: string) {
+  constructor(projectRoot?: string, fs?: IFileSystem) {
     this.projectRoot = projectRoot || process.cwd();
+    this.fs = fs || new FileSystemProvider();
   }
 
   /**
@@ -75,7 +78,7 @@ export class CodebaseIndex {
     
     // Scan all directories
     for (const dir of scanDirs) {
-      if (fs.existsSync(dir)) {
+      if (this.fs.existsSync(dir)) {
         this.scanDirectory(dir);
       }
     }
@@ -97,21 +100,31 @@ export class CodebaseIndex {
     // Check for standard source directories
     for (const dir of commonSourceDirs) {
       const fullPath = path.join(this.projectRoot, dir);
-      if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
-        console.log(`[CodebaseIndex] Found source dir: ${dir}`);
-        dirs.push(fullPath);
+      try {
+        if (this.fs.existsSync(fullPath) && this.fs.statSync(fullPath).isDirectory()) {
+          console.log(`[CodebaseIndex] Found source dir: ${dir}`);
+          dirs.push(fullPath);
+        }
+      } catch (error) {
+        // Ignore stat errors (permission denied, etc.)
+        continue;
       }
     }
 
     // Always include project root if it has TypeScript files
-    const rootFiles = fs.readdirSync(this.projectRoot).filter(f => 
-      (f.endsWith('.tsx') || f.endsWith('.ts') || f.endsWith('.jsx') || f.endsWith('.js')) &&
-      !f.startsWith('.')
-    );
-    
-    if (rootFiles.length > 0) {
-      console.log(`[CodebaseIndex] Found ${rootFiles.length} files at project root`);
-      dirs.push(this.projectRoot);
+    try {
+      const rootFiles = this.fs.readdirSync(this.projectRoot).filter(f =>
+        (f.endsWith('.tsx') || f.endsWith('.ts') || f.endsWith('.jsx') || f.endsWith('.js')) &&
+        !f.startsWith('.')
+      );
+
+      if (rootFiles.length > 0) {
+        console.log(`[CodebaseIndex] Found ${rootFiles.length} files at project root`);
+        dirs.push(this.projectRoot);
+      }
+    } catch (error) {
+      // If can't read root, skip it
+      console.debug(`[CodebaseIndex] Could not read project root for file enumeration`);
     }
 
     // If no directories found, default to project root
@@ -149,7 +162,7 @@ export class CodebaseIndex {
         return;
       }
 
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = this.fs.readdirSync(dir, { withFileTypes: true });
 
       entries.forEach(entry => {
         const fullPath = path.join(dir, entry.name);
@@ -172,7 +185,7 @@ export class CodebaseIndex {
    */
   private indexFile(filePath: string): void {
     try {
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = this.fs.readFileSync(filePath, 'utf-8');
       const relativePath = path.relative(this.projectRoot, filePath);
 
       const ast = parse(content, {

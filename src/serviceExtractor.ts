@@ -1,6 +1,11 @@
 import { ArchitecturePatterns, PatternType } from './architecturePatterns';
 import { FeatureAnalyzer, FatHook } from './featureAnalyzer';
 import { LLMClient } from './llmClient';
+import {
+  detectExtractionCandidatesPure,
+  extractDependenciesPure,
+  detectErrorHandlingPure,
+} from './utils/extractionCandidateFinder';
 
 /**
  * Phase 3.4.3: Service Extractor
@@ -145,56 +150,20 @@ export class ServiceExtractor {
    * Detect what code can be extracted to a service
    */
   private detectExtractionCandidates(code: string): ExtractionCandidate[] {
-    const candidates: ExtractionCandidate[] = [];
+    // Use pure function from utility
+    const pureCandidates = detectExtractionCandidatesPure(code);
 
-    // Detect API calls
-    const fetchCalls = code.match(/fetch\([^)]+\)|axios\.[a-z]+\([^)]+\)/gi) || [];
-    if (fetchCalls.length > 0) {
-      const apiCode = code.match(/(?:async\s+function|const\s+\w+\s*=.*async.*\(.*\)\s*=>).*?fetch|axios/i);
-      candidates.push({
-        name: 'API Operations',
-        type: 'api',
-        lines: fetchCalls.length * 3, // Rough estimate
-        confidence: 0.9,
-        reason: `${fetchCalls.length} API calls detected - should be in service layer`,
-      });
-    }
-
-    // Detect mutation logic
-    const mutations = code.match(/useMutation|mutation|update|set[A-Z]/gi) || [];
-    if (mutations.length > 2) {
-      candidates.push({
-        name: 'Mutation Logic',
-        type: 'logic',
-        lines: mutations.length * 5,
-        confidence: 0.8,
-        reason: `${mutations.length} mutations detected - extract to service`,
-      });
-    }
-
-    // Detect validation logic
-    const validation = code.match(/validate|schema|\.parse|\.refine|error/gi) || [];
-    if (validation.length > 3) {
-      candidates.push({
-        name: 'Validation Logic',
-        type: 'validation',
-        lines: validation.length * 2,
-        confidence: 0.7,
-        reason: `${validation.length} validation checks - move to schemas`,
-      });
-    }
-
-    // Detect state management
-    const stateOps = code.match(/useState|setState|setData|set[A-Z]\w+\(/g) || [];
-    if (stateOps.length > 3) {
-      candidates.push({
-        name: 'State Management',
-        type: 'state',
-        lines: stateOps.length * 2,
-        confidence: 0.6,
-        reason: `${stateOps.length} state operations - consider Zustand store`,
-      });
-    }
+    // Adapt the pure candidates to serviceExtractor's interface
+    const candidates: ExtractionCandidate[] = pureCandidates.map(pc => {
+      const confidenceMap: Record<string, number> = { high: 0.9, medium: 0.7, low: 0.5 };
+      return {
+        name: pc.description,
+        type: pc.type as 'logic' | 'api' | 'state' | 'validation',
+        lines: 10, // Estimation - not available in pure function output
+        confidence: confidenceMap[pc.confidence] || 0.5,
+        reason: pc.description,
+      };
+    });
 
     return candidates.sort((a, b) => b.confidence - a.confidence);
   }
@@ -203,47 +172,20 @@ export class ServiceExtractor {
    * Extract imports from code
    */
   private extractDependencies(code: string): string[] {
-    const imports: string[] = [];
-    const importRegex = /import\s+(?:{[^}]+}|[\w*]+|\w+\s+as\s+\w+)\s+from\s+['"]([^'"]+)['"]/g;
-
-    let match;
-    while ((match = importRegex.exec(code)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Remove duplicates
-    const uniqueImports = [];
-    for (const imp of imports) {
-      if (!uniqueImports.includes(imp)) {
-        uniqueImports.push(imp);
-      }
-    }
-
-    return uniqueImports;
+    return extractDependenciesPure(code);
   }
 
   /**
    * Analyze error handling in hook
    */
   private analyzeErrorHandling(code: string): ErrorHandlingAnalysis {
-    const hasTryCatch = code.includes('try') && code.includes('catch');
-    const hasErrorState = /setError|error|Error/.test(code);
-    const trycatches = (code.match(/try\s*{/g) || []).length;
-    const asyncOps = (code.match(/await\s+/g) || []).length;
-
-    const issues: string[] = [];
-    if (asyncOps > 0 && !hasTryCatch) {
-      issues.push('Async operations without try-catch');
-    }
-    if (asyncOps > 2 && trycatches < asyncOps / 2) {
-      issues.push('Multiple async operations with insufficient error handling');
-    }
+    const pureResult = detectErrorHandlingPure(code);
 
     return {
-      hasTryCatch,
-      hasErrorState,
-      isComplete: hasTryCatch && hasErrorState,
-      issues,
+      hasTryCatch: pureResult.hasTryCatch,
+      hasErrorState: pureResult.hasErrorState,
+      isComplete: pureResult.isComplete,
+      issues: [],
     };
   }
 

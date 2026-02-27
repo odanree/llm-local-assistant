@@ -12,8 +12,9 @@
  * This enables graceful degradation when initial context assessment was wrong.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
+import { IFileSystem } from '../providers/IFileSystem';
+import { FileSystemProvider } from '../providers/FileSystemProvider';
 
 export interface GenerationModeResult {
   mode: 'diff-mode' | 'scaffold-mode';
@@ -24,11 +25,13 @@ export interface GenerationModeResult {
 }
 
 export class GenerationModeDetector {
+  constructor(private fs: IFileSystem = new FileSystemProvider()) {}
+
   /**
    * Detect optimal generation mode at runtime
    * When no diffs are parsed, or all target files are missing, switch to scaffold mode
    */
-  static detectMode(
+  detectMode(
     projectRoot: string,
     diffs: any[] | undefined,
     hasSrcDirectory: boolean
@@ -69,7 +72,7 @@ export class GenerationModeDetector {
    * Generate system prompt modifier based on detected mode
    * This instructs LLM on correct generation strategy
    */
-  static generateModePrompt(mode: 'diff-mode' | 'scaffold-mode'): string {
+  generateModePrompt(mode: 'diff-mode' | 'scaffold-mode'): string {
     if (mode === 'diff-mode') {
       return `\n\n**Generation Mode: DIFF-MODE**
 Your target is to modify EXISTING files. 
@@ -93,12 +96,17 @@ Do NOT use Search/Replace patterns. Generate whole files.`;
   /**
    * Check if a src/ or source directory exists
    */
-  static hasSourceDirectory(projectRoot: string): boolean {
+  hasSourceDirectory(projectRoot: string): boolean {
     const possibleSourceDirs = ['src', 'app', 'components', 'lib', 'source'];
-    for (const dir of possibleSourceDirs) {
-      if (fs.existsSync(path.join(projectRoot, dir))) {
-        return true;
+    try {
+      for (const dir of possibleSourceDirs) {
+        if (this.fs.existsSync(path.join(projectRoot, dir))) {
+          return true;
+        }
       }
+    } catch (error) {
+      // If we can't check directories, assume no source directory
+      return false;
     }
     return false;
   }
@@ -106,13 +114,18 @@ Do NOT use Search/Replace patterns. Generate whole files.`;
   /**
    * Get recommended location for scaffolded files
    */
-  static getScaffoldLocation(projectRoot: string): string {
+  getScaffoldLocation(projectRoot: string): string {
     const possibleDirs = ['src', 'app', 'components', 'lib', 'source'];
-    for (const dir of possibleDirs) {
-      const fullPath = path.join(projectRoot, dir);
-      if (fs.existsSync(fullPath)) {
-        return dir;
+    try {
+      for (const dir of possibleDirs) {
+        const fullPath = path.join(projectRoot, dir);
+        if (this.fs.existsSync(fullPath)) {
+          return dir;
+        }
       }
+    } catch (error) {
+      // If we can't check directories, fall back to default
+      return 'src';
     }
     // Default: return 'src' (may need to be created)
     return 'src';

@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
+import { IFileSystem } from './providers/IFileSystem';
+import { ICommandRunner } from './providers/ICommandRunner';
+import { FileSystemProvider } from './providers/FileSystemProvider';
+import { CommandRunnerProvider } from './providers/CommandRunnerProvider';
 import SmartAutoCorrection from './smartAutoCorrection';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
@@ -13,6 +17,8 @@ import { ValidationReport, formatValidationReportForLLM } from './types/validati
 import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 import { GOLDEN_TEMPLATES } from './constants/templates';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
+import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
+import { validateArchitectureRulePure } from './utils/architectureRuleValidator';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -31,6 +37,9 @@ export interface ExecutorConfig {
   onMessage?: (message: string, type: 'info' | 'error') => void;
   onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;  // Stream step output
   onQuestion?: (question: string, options: string[]) => Promise<string | undefined>;  // Ask clarification question (Priority 2.2)
+  // Phase 3A: Dependency Injection for side effects
+  fs?: IFileSystem;         // Default: FileSystemProvider (production)
+  commandRunner?: ICommandRunner;  // Default: CommandRunnerProvider (production)
 }
 
 export interface ExecutionResult {
@@ -52,12 +61,21 @@ export class Executor {
   private cancelled: boolean = false;
   private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
 
+  // Phase 3A: Dependency Injection for side effects
+  private fs: IFileSystem;
+  private commandRunner: ICommandRunner;
+
   constructor(config: ExecutorConfig) {
     this.config = {
       maxRetries: 2,
       timeout: 30000,
       ...config,
     };
+
+    // Phase 3A: Default to production providers if not injected
+    // Tests can inject mocks via ExecutorConfig.fs and ExecutorConfig.commandRunner
+    this.fs = config.fs || new FileSystemProvider();
+    this.commandRunner = config.commandRunner || new CommandRunnerProvider();
   }
 
   /**
@@ -704,119 +722,16 @@ export class Executor {
       return errors; // No rules to validate against
     }
 
-    // CRITICAL FIX: Check if this is a UI component
-    // Per .lla-rules: Components should NOT use Zod for props, only for form data
-    const isComponent = filePath && filePath.includes('src/components/');
-    const isFormComponent = filePath && filePath.includes('Form');
+    // Orchestration: Call the pure validator to extract all violations
+    const violations = validateArchitectureRulePure(content, rules, filePath || '');
 
-    // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
-    if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
-      errors.push(
-        `❌ Rule violation: Using direct fetch() instead of TanStack Query. ` +
-        `Use: const { data } = useQuery(...) or useMutation(...)`
-      );
-    }
-
-    // Check Rule: No Redux (should use Zustand)
-    if (rules.includes('Zustand') && content.includes('useSelector')) {
-      errors.push(
-        `❌ Rule violation: Using Redux (useSelector) instead of Zustand. ` +
-        `Use: const store = useStore() from your Zustand store`
-      );
-    }
-
-    // Check Rule: No class components
-    if (rules.includes('functional components') && content.includes('extends React.Component')) {
-      errors.push(
-        `❌ Rule violation: Using class component instead of functional component. ` +
-        `Convert to: export function ComponentName() { ... }`
-      );
-    }
-
-    // Check Rule: TypeScript strict mode - return types required
-    if (rules.includes('strict TypeScript') || rules.includes('Never use implicit types')) {
-      // Check for arrow functions without return type annotation
-      // Pattern: const funcName = (...) => { ... } without : Type
-      const arrowFunctionsWithoutReturnType = content.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
-      if (arrowFunctionsWithoutReturnType) {
-        errors.push(
-          `⚠️ Rule: TypeScript strict mode requires return type annotations. ` +
-          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
-        );
-      }
-
-      // Check for function declarations without return type
-      const functionsWithoutReturnType = content.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
-      if (functionsWithoutReturnType) {
-        functionsWithoutReturnType.forEach((func) => {
-          // Check if this specific function has a return type annotation
-          const funcName = func.match(/function\s+(\w+)/)?.[1];
-          if (funcName) {
-            const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*:\\s*\\w+`);
-            if (!funcRegex.test(content)) {
-              errors.push(
-                `⚠️ Function '${funcName}' missing return type annotation. ` +
-                `Use: function ${funcName}(...): ReturnType { ... }`
-              );
-            }
-          }
-        });
-      }
-    }
-
-    // Check Rule: Runtime validation with Zod for utility functions
-    if (rules.includes('Zod for all runtime validation')) {
-      // If file has function parameters that accept objects but no Zod validation
-      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(content);
-      const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
-
-      if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
-        errors.push(
-          `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
-          `Example: const schema = z.object({ ... }); ` +
-          `Then: const validated = schema.parse(input);`
-        );
-      }
-    }
-
-    // Check Rule: Validation with Zod
-    // CRITICAL: Do NOT suggest Zod for UI components or simple utilities (per .lla-rules)
-    // Exception: Allow Zod for Form components (form data validation) and domain logic
-    // Utilities like cn.ts, helpers.ts are exempt - they're simple transforms, not validators
-    const isUtilityFile = filePath.includes('/utils/') || filePath.match(/\.(util|helper)\.ts$/);
-    if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
-      // Skip Zod suggestion for utility files - they don't need runtime validation
-      if (isUtilityFile) {
-        // Silently skip for utilities
-      } else if (!isComponent || (isComponent && isFormComponent)) {
-        // Only suggest for non-component/non-utility code or form components
-        errors.push(
-          `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-          `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-        );
-      }
-      // Silently skip for non-form UI components (they use TypeScript interfaces for props)
-    }
-
-    // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
-    if ((content.includes('useForm') || content.includes('react-hook-form')) && content.includes('z.')) {
-      if (content.includes('async') && content.includes('validate')) {
-        errors.push(
-          `❌ Incorrect resolver pattern: Using manual async validation instead of zodResolver. ` +
-          `Correct: import { zodResolver } from '@hookform/resolvers/zod'` +
-          `Then: useForm({ resolver: zodResolver(schema) })`
-        );
-      }
-    }
-
-    // PATTERN: Check for mixed resolver libraries
-    if ((content.includes('yupResolver') && content.includes('z.object')) ||
-        (content.includes('yupResolver') && content.includes('zod'))) {
-      errors.push(
-        `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
-        `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
-      );
-    }
+    // Map and Wrap: Convert violations to error messages
+    // This keeps the orchestration layer thin while using the pure logic
+    violations.forEach(violation => {
+      const message = violation.message +
+        (violation.suggestion ? ` ${violation.suggestion}` : '');
+      errors.push(message);
+    });
 
     return errors;
   }
@@ -826,24 +741,28 @@ export class Executor {
    */
   private validateFormComponentPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
-    
+
     // Only validate if this is a form component
     if (!filePath.includes('Form') || !filePath.endsWith('.tsx')) {
       return errors;
     }
 
-    // Pattern 1: State Interface - Must have interface for form state
-    const hasStateInterface = /interface\s+\w+State\s*{/.test(content) || 
-                            /type\s+\w+State\s*=\s*{/.test(content);
-    if (!hasStateInterface) {
+    // Orchestration: Call the utility to extract all form patterns
+    const patterns = matchFormPatterns(content);
+
+    // Map results to error messages - keeping the orchestration logic
+    const patternMap = new Map(patterns.map(p => [p.type, p.found]));
+
+    // Pattern 1: State Interface
+    if (!patternMap.get('stateInterface')) {
       errors.push(
         `❌ Pattern 1 violation: Missing state interface. ` +
         `Forms require: interface LoginFormState { email: string; password: string; }`
       );
     }
 
-    // Pattern 2: Handler Typing - FormEventHandler must be used, not any
-    const hasFormEventHandler = /FormEventHandler\s*<\s*HTMLFormElement\s*>/.test(content);
+    // Pattern 2: Handler Typing - needs additional checks beyond the pattern
+    const hasFormEventHandler = patternMap.get('formEventHandler');
     const hasInlineHandler = /const\s+handle\w+\s*=\s*\(\s*e\s*:\s*any\s*\)/.test(content);
     if (hasInlineHandler) {
       errors.push(
@@ -857,15 +776,10 @@ export class Executor {
       );
     }
 
-    // Pattern 3: Consolidator Pattern - Single handleChange function for multi-field forms
-    // KEY: Only count field-change handlers (not submit handlers)
-    // A form legitimately needs: handleChange (field updates) + handleSubmit (form submission)
+    // Pattern 3: Consolidator Pattern
     const fieldChangeHandlers = (content.match(/const\s+(handle(?:Change|Input|Update|Form(?!Submit))\w*)\s*=/gi) || []).length;
     const hasConsolidator = /\[name,\s*value\]\s*=\s*.*currentTarget/.test(content) ||
                            /currentTarget.*name.*value/.test(content);
-    
-    // Only fail if there are MULTIPLE field-change handlers without consolidator
-    // (handleChange + handleSubmit is OK - submit handler is allowed)
     if (fieldChangeHandlers > 1 && !hasConsolidator) {
       errors.push(
         `❌ Pattern 3 violation: Multiple field handlers instead of consolidator. ` +
@@ -874,11 +788,11 @@ export class Executor {
       );
     }
 
-    // Pattern 4: Submit Handler - onSubmit must be on <form>, not button click
+    // Pattern 4: Submit Handler
     const hasFormElement = /<form/.test(content);
     const hasFormOnSubmit = /onSubmit\s*=\s*{?\s*handleSubmit/.test(content);
     const hasButtonOnClick = /<button[^>]*onClick\s*=\s*{?\s*handle/.test(content);
-    
+
     if (!hasFormOnSubmit && hasFormElement) {
       errors.push(
         `❌ Pattern 4 violation: Missing form onSubmit handler. ` +
@@ -893,13 +807,10 @@ export class Executor {
       );
     }
 
-    // Pattern 5: Validation Logic - Must have some form of input validation
-    // NOTE: Simple inline validation is preferred (NOT Zod). Zod was removed from form requirements.
-    // Validation can be done with simple if-checks in handlers: if (!email.includes('@')) { ... }
-    const hasValidationLogic = /if\s*\(\s*!/.test(content) || 
+    // Pattern 5: Validation Logic
+    const hasValidationLogic = /if\s*\(\s*!/.test(content) ||
                                /setErrors\s*\(/.test(content) ||
                                /validate/.test(content);
-    
     if (!hasValidationLogic && content.includes('email')) {
       errors.push(
         `⚠️ Pattern 5 info: Consider adding basic validation. ` +
@@ -907,10 +818,8 @@ export class Executor {
       );
     }
 
-    // Pattern 6: Error State Tracking - Must track field-level errors
+    // Pattern 6: Error State Tracking
     const hasErrorState = /useState\s*<\s*Record\s*<\s*string\s*,\s*string\s*>\s*>\s*\(\s*{}/.test(content);
-    const hasErrorDisplay = /\{errors\.\w+/.test(content) || /errors\[\w+\]/.test(content);
-    
     if (!hasErrorState && (content.includes('validation') || content.includes('error'))) {
       errors.push(
         `⚠️ Pattern 6 warning: Consider tracking field-level errors. ` +
@@ -918,11 +827,9 @@ export class Executor {
       );
     }
 
-    // Pattern 7: Semantic Form Markup - Input elements must have name attributes
+    // Pattern 7: Semantic Form Markup
     const hasNamedInputs = /name\s*=\s*['"]\w+['"]/.test(content);
     const hasInputElements = /<input|<textarea|<select/.test(content);
-    const hasMissingName = /<input[^>]*\/?>/.test(content) && !hasNamedInputs;
-    
     if (hasInputElements && !hasNamedInputs) {
       errors.push(
         `❌ Pattern 7 violation: Input elements missing name attributes. ` +
@@ -945,194 +852,13 @@ export class Executor {
       errors.push(...formErrors);
     }
 
-    // Extract all imported items and namespaces
-    const importedItems = new Set<string>();
-    const importedNamespaces = new Set<string>();
-
-    // ✅ FIX: Handle mixed imports like "import React, { useState } from 'react'"
-    // Pattern: import [DefaultName] [, { NamedImports }] from 'module'
-    
-    // First, extract named imports (destructured)
-    content.replace(/import\s+(?:\w+\s*,\s*)?{([^}]+)}/g, (_, items) => {
-      items.split(',').forEach((item: string) => {
-        importedItems.add(item.trim());
-      });
-      return '';
+    // Phase 2C: Map and Wrap - Use pure utility to detect import/syntax issues
+    const issues = findImportAndSyntaxIssuesPure(content, filePath || '');
+    issues.forEach(issue => {
+      // Wrap pure utility results into error message format
+      const prefix = issue.severity === 'error' ? '❌' : '⚠️';
+      errors.push(`${prefix} ${issue.message}`);
     });
-
-    // Also capture namespace imports (import * as X)
-    content.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
-      importedNamespaces.add(namespace.trim());
-      return '';
-    });
-
-    // And default imports (import React from 'react')
-    content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
-      importedNamespaces.add(name.trim());
-      return '';
-    });
-
-    // GENERIC NAMESPACE PATTERN DETECTOR
-    // Find all namespace.method() patterns and verify namespaces are imported
-    const namespaceUsages = new Set<string>();
-    
-    // First, collect all local variable definitions and function parameters
-    const localVariables = new Set<string>();
-    
-    // Collect function parameters: (e) => or (e, f) =>
-    content.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
-      params.split(',').forEach((param: string) => {
-        const cleaned = param.trim().split(/[:\s=]/)[0].trim();
-        if (cleaned) {localVariables.add(cleaned);}
-      });
-      return '';
-    });
-    
-    // Collect variable definitions: const x = or let x = or var x =
-    content.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
-      localVariables.add(varName.trim());
-      return '';
-    });
-    
-    // Collect destructured variables: const { x, y } =
-    content.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
-      vars.split(',').forEach((v: string) => {
-        const cleaned = v.trim().split(/[:=]/)[0].trim();
-        if (cleaned) {localVariables.add(cleaned);}
-      });
-      return '';
-    });
-    
-    // Now find namespace usages, excluding local variables
-    content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
-      // Skip common JavaScript globals
-      const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
-      // Skip single-letter params like 'e' (event parameters)
-      const isSingleLetter = namespace.length === 1;
-      // Skip if it's a local variable
-      const isLocal = localVariables.has(namespace);
-      
-      if (!globalKeywords.includes(namespace) && !isSingleLetter && !isLocal) {
-        namespaceUsages.add(namespace);
-      }
-      return '';
-    });
-
-    // Check if all used namespaces are imported
-    Array.from(namespaceUsages).forEach((namespace) => {
-      if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
-        // This namespace is used but not imported
-        errors.push(
-          `❌ Missing import: '${namespace}' is used (${namespace}.something) but never imported. ` +
-          `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
-        );
-      }
-    });
-
-    // Pattern: React/useState without import
-    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState') && !importedItems.has('useEffect')) {
-      // Check if useState is actually used in the code (not just mentioned in comments)
-      const useStateUsage = /\b(useState|useEffect)\s*\(/.test(content);
-      if (useStateUsage && !importedItems.has('useState')) {
-        errors.push(
-          `❌ Missing import: useState is used but not imported. ` +
-          `Add: import { useState } from 'react'`
-        );
-      }
-    }
-
-    // Pattern: Missing closing tags/braces
-    const openBraces = (content.match(/{/g) || []).length;
-    const closeBraces = (content.match(/}/g) || []).length;
-    if (openBraces > closeBraces) {
-      errors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
-    }
-
-    // Pattern: JSX without React import
-    if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && content.includes('<')) {
-      // React can be imported as default import or named import
-      if (!importedItems.has('React') && !importedNamespaces.has('React')) {
-        // In newer React versions, this is optional, so just warn
-        errors.push(
-          `⚠️ Possible issue: JSX detected but no React import. ` +
-          `Modern React (17+) doesn't require this, but check your tsconfig.json`
-        );
-      }
-    }
-
-    // TYPO CHECK: @hookform/resolve vs @hookform/resolvers (common mistake)
-    if (content.includes('@hookform/resolve') && !content.includes('@hookform/resolvers')) {
-      errors.push(
-        `❌ Typo detected: '@hookform/resolve' is not a valid package. ` +
-        `Did you mean '@hookform/resolvers'? ` +
-        `Correct usage: import { zodResolver } from '@hookform/resolvers/zod'`
-      );
-    }
-
-    // IMPORT PATTERN: TanStack Query imports
-    if (content.includes('useQuery') || content.includes('useMutation')) {
-      if (!content.includes('@tanstack/react-query')) {
-        errors.push(
-          `❌ TanStack Query used but not imported correctly. ` +
-          `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
-        );
-      }
-    }
-
-    // IMPORT PATTERN: Zod imports
-    if (content.includes('z.') && !content.includes("import { z }") && !content.includes("import * as z")) {
-      errors.push(
-        `❌ Zod used (z.object, z.string, etc) but not imported. ` +
-        `Add: import { z } from 'zod'`
-      );
-    }
-
-    // UNUSED IMPORTS: Check for imported items that are never used
-    const unusedImports: string[] = [];
-    importedItems.forEach((item) => {
-      // Skip common React hooks that might be used indirectly
-      if (['React', 'Component'].includes(item)) {return;}
-
-      // Check if this import is actually used in the code
-      // Pattern 1: Used as value/identifier: Item.x or Item(...) or Item[...]
-      const valueUsagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
-      const valueMatches = content.match(valueUsagePattern) || [];
-      
-      // Pattern 2: Used as type annotation (e.g., : ClassValue or ClassValue[])
-      const typeUsagePattern = new RegExp(`[:\\s<]${item}[\\s\\[,>]`, 'g');
-      const typeMatches = content.match(typeUsagePattern) || [];
-
-      // If used in either value or type position, it's not unused
-      if (valueMatches.length === 0 && typeMatches.length === 0) {
-        unusedImports.push(item);
-      }
-    });
-
-    if (unusedImports.length > 0) {
-      unusedImports.forEach((unused) => {
-        errors.push(
-          `⚠️ Unused import: '${unused}' is imported but never used. ` +
-          `Remove: import { ${unused} } from '...'`
-        );
-      });
-    }
-
-    // RETURN TYPE CHECK: Detect common functions with wrong return types
-    // JSON.stringify() always returns string, never null
-    if (content.includes('JSON.stringify') && content.includes(': string | null')) {
-      errors.push(
-        `⚠️ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
-        `Fix: Change return type to just 'string'`
-      );
-    }
-
-    // JSON.parse() can throw, but return type should reflect actual object type
-    if (content.includes('JSON.parse') && content.includes(': any')) {
-      errors.push(
-        `⚠️ Type issue: JSON.parse() result should not be 'any'. ` +
-        `Use a Zod schema or specific type instead of 'any'`
-      );
-    }
 
     return errors;
   }
@@ -3036,33 +2762,45 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       console.log(`[Executor] Platform: ${process.platform}`);
       console.log(`[Executor] Using shell: ${process.platform === 'win32' ? 'cmd.exe' : 'bash'}`);
 
+      // CRITICAL FIX: Detect package managers and use 'inherit' stdio
+      // npm/yarn/pnpm install commands need access to stdin/stdout for progress display
+      // and interactive confirmations. Other commands use 'pipe' to capture output.
+      const isPackageManagerCommand = /^(npm|yarn|pnpm)\s+(install|add|remove|ci)\b/i.test(command);
+      const stdio = isPackageManagerCommand ? 'inherit' : 'pipe';
+
+      console.log(`[Executor] stdio mode: ${stdio} (package manager: ${isPackageManagerCommand})`);
+
       const child = process.platform === 'win32'
         ? cp.spawn('cmd.exe', ['/c', command], {
             cwd: workspaceUri.fsPath,
             env: env,
-            stdio: 'pipe',
+            stdio: stdio,
             shell: false, // Don't double-shell on Windows
           })
         : cp.spawn('bash', ['-l', '-c', command], {
             cwd: workspaceUri.fsPath,
             env: env,
-            stdio: 'pipe',
+            stdio: stdio,
             shell: false, // Don't double-shell on Unix
           });
 
       let stdout = '';
       let stderr = '';
 
-      if (child.stdout) {
-        child.stdout.on('data', (data: any) => {
-          stdout += data.toString();
-        });
-      }
+      // Only collect output if stdio is 'pipe' (for non-package-manager commands)
+      // Package managers with 'inherit' stdio won't have stdout/stderr streams
+      if (stdio === 'pipe') {
+        if (child.stdout) {
+          child.stdout.on('data', (data: any) => {
+            stdout += data.toString();
+          });
+        }
 
-      if (child.stderr) {
-        child.stderr.on('data', (data: any) => {
-          stderr += data.toString();
-        });
+        if (child.stderr) {
+          child.stderr.on('data', (data: any) => {
+            stderr += data.toString();
+          });
+        }
       }
 
       const timeout = setTimeout(() => {

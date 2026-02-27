@@ -1,258 +1,101 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.10.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.11.0-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
-[![Tests](https://img.shields.io/badge/tests-2453%2F2453%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
-[![Code Coverage](https://img.shields.io/badge/coverage-74.68%25-brightgreen.svg)](#testing--coverage)
+[![Tests](https://img.shields.io/badge/tests-3594%2F3594%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![Code Coverage](https://img.shields.io/badge/coverage-80.27%25-brightgreen.svg)](#testing--coverage)
 [![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
 [![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
-**Enterprise-Grade Local AI Orchestrator** - Advanced code analysis, architecture validation, pattern detection, and Zustand/React Hook auditing. Resilient SSE streaming with 2453 tests and 74.68% coverage. All running on your local LLM with zero cloud dependencies.
+**Enterprise-Grade Local AI Orchestrator** - Advanced code analysis, architecture validation, pattern detection, and Zustand/React Hook auditing. Comprehensive test suite with 3594 tests and 80.27% coverage. All running on your local LLM with zero cloud dependencies.
 
-**🎯 v2.10.0 Focus: Elite Tier Quality & Production Reliability**
+**💎 v2.11.0 Focus: Diamond Tier Quality & Automated Quality Gates**
 
-![Elite Tier](https://img.shields.io/badge/★-Elite%20Tier-gold?style=flat-square&logo=badge) [![Tests](https://img.shields.io/badge/tests-2453%2F2453%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions) [![Coverage](https://img.shields.io/badge/coverage-74.68%25-brightgreen.svg)](#testing--coverage)
+![Diamond Tier](https://img.shields.io/badge/★★-Diamond%20Tier-cyan?style=flat-square&logo=badge) [![Tests](https://img.shields.io/badge/tests-3594%2F3594%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions) [![Coverage](https://img.shields.io/badge/coverage-80.27%25-brightgreen.svg)](#testing--coverage) [![Quality Gate](https://img.shields.io/badge/quality%20gate-80.27%25%20enforced-blue.svg)](#quality-gates)
 
-> **Latest Release**: v2.10.0 - **Elite Tier Achievement**: 2453 comprehensive tests, 74.68% coverage (+3.64% gain from baseline)
-> **Advanced Capabilities**: Architecture Validation, Zustand/React Hook Auditing, Resilient SSE Streaming
-> **Status**: 2453/2453 tests passing. 74.68% coverage achieved. Enterprise-ready with maximum confidence.
+> **Latest Release**: v2.11.0 - **Diamond Tier Achievement**: 3594 comprehensive tests, 80.27% coverage (+4.18% gain from baseline)
+> **Advanced Capabilities**: Architecture Validation, Zustand/React Hook Auditing, Resilient SSE Streaming, Automated Quality Gates
+> **Status**: 3594/3594 tests passing. 80.27% coverage achieved. Quality gate enforced at 80.27%. Enterprise-ready with maximum confidence.
 
-## ✨ What's v2.10.0 (Elite Tier Achievement)
+## 📚 Release History
 
-### 🛡️ Elite Tier: 74.68% Coverage Achievement (+3.64% from baseline)
+For a complete history of releases and detailed changelogs, see [CHANGELOG.md](CHANGELOG.md).
 
-v2.10.0 represents Enterprise-Grade quality - an intensive test coverage optimization pushing the project to its realistic testing ceiling with maximum confidence metrics:
-
-- **Coverage Breakthrough: 71.04% → 74.68%** (+3.64% improvement)
-  - Phase 6.1: Baseline analysis and strategy (71.04%)
-  - Phase 6.2: Zustand store validation + vscode mocks (73.91%)
-  - Phase 6.3: Executor error handling framework (73.96%)
-  - Phase 6.4: Three-wave chaos testing - SSE, timeout, validators (74.68%)
-
-- **2453 Total Tests** (all passing, 100% success rate)
-  - 150+ tests added across Phase 6 targeting high-leverage code paths  
-  - Consolidated test patterns using parameterized testing (test.each)
-  - Consolidated Test Matrix architecture for scalability
-  - Zero flakiness, optimized performance maintained (45% faster from v2.9.0)
-
-- **Advanced Validation Suite**
-  - ✅ Architecture Validation - Detect anti-patterns, coupling, layer violations
-  - ✅ Zustand/React Hook Auditing - Deep validation of store destructuring patterns
-  - ✅ Complex Hook Composition - Support for aliased properties + rest spread operators
-  - ✅ Resilient SSE Streaming - Streaming response buffer management with edge case handling
-
-- **Architectural Insights**
-  - Identified testable ceiling: 74.68-74.78% is maximum without refactoring
-  - Remaining 0.22% consists of transpilation artifacts (TypeScript async/await branches) and runtime-only paths
-  - Coverage thresholds locked in vitest config to prevent regression
-
-**Why This Release Matters:**
-- ✅ **60% higher coverage** than baseline v2.0 (31.76% → 74.78%)
-- ✅ **Elite Tier reliability** - 2453 tests ensure production-critical code quality
-- ✅ **Enterprise validation** - Architecture, React, Zustand patterns fully audited
-- ✅ **Resilient streaming** - SSE edge cases and error paths comprehensively covered
-- ✅ **Testable ceiling identified** - 74.78% is maximum without architectural refactoring
-- ✅ **Confidence for v2.11.0+** - New features built on rock-solid test foundation
+**Recent Releases:**
+- **v2.11.0** (Current) - Diamond Tier: 80.27% coverage, 3594 tests, automated quality gates
+- **v2.10.0** - Elite Tier: 74.68% coverage, 2453 tests, agent skills integration
+- **v2.9.0** - Performance: 45% test optimization, concurrent execution
+- **v2.8.x** - Foundation: 72% coverage, distribution optimization, root directory cleanup
+- **v2.7.0-v2.5.0** - Core features: Validation system, pattern detection, voice narration, Zustand support
 
 ---
 
-## ✨ What's v2.9.0 (Test Performance & Developer Experience)
+## ✨ Key Features & Capabilities (v2.11.0)
 
-### ⚡ Test Performance Optimization: 45% Improvement
+### 🏛️ Architecture & Validation System
 
-v2.9.0 focuses on optimized test infrastructure and developer experience:
+**6-Layer Multi-File Validation**
+- **Layer 1: Syntax Validation** - Valid TypeScript with proper structure
+- **Layer 2: Type Validation** - Correct type inference and safety
+- **Layer 3: Import Validation** - All imports resolve correctly
+- **Layer 4: Cross-File Validation** - Component-store alignment guaranteed
+- **Layer 5: Hook Usage Validation** - Proper React hook patterns
+- **Layer 6: Store Contract Validation** - Zustand property matching ✅
 
-- **Test Runtime Reduction: 45%** (26.89s → 14.79s)
-  - Phase 1: Concurrent test execution using `describe.concurrent()` on 4 CPU cores
-  - Phase 2: Mock reset optimization with improved test isolation patterns
-  - 0% flakiness verified (225 consecutive test runs)
-  - Comprehensive safety audit for concurrent execution
+**Advanced Pattern Detection**
+- ✅ **`/refactor <file>`** - 5-layer semantic code analysis
+- ✅ **`/rate-architecture`** - Score your codebase (0-10)
+- ✅ **`/suggest-patterns`** - Detect & recommend 8 design patterns
+- ✅ **`/context show structure`** - Visualize project organization
+- ✅ **`/context show patterns`** - View detected design patterns
+- ✅ **Zustand store validation** - Property extraction + destructuring validation
+- ✅ **Cross-file contract enforcement** - Component-store alignment guaranteed
 
-- **Enhanced Test Practices**
-  - Added `beforeEach()` / `afterEach()` hooks for proper mock cleanup
-  - Documented optimization roadmap (Phases 1-5) for future improvements
-  - Created Concurrent Safety Audit (251-line comprehensive analysis)
-  - All 45 executor-coverage tests now run in parallel
+### 📝 Code Generation & Analysis
 
-- **What This Means for Developers:**
-  - ✅ **45% faster test iterations** (faster feedback loop during development)
-  - ✅ **Better test isolation** with explicit mock cleanup
-  - ✅ **Zero concurrent safety issues** (verified and documented)
-  - ✅ **Maintained test coverage** (72%) with improved practices
-  - ✅ **Scalable foundation** for future optimization opportunities
+**Multi-Step Planning with Validation**
+- ✅ **`/plan <task>`** - Create multi-step action plans with semantic validation
+- ✅ **`/design-system <feature>`** - Generate full feature architecture
+- ✅ **`/approve`** - Approve and execute generated plans
 
-**Performance Details:**
-```
-Before:  26.89s (sequential execution)
-After:   14.79s (concurrent + optimized setup)
-Savings: 12.10 seconds per test run -45% improvement!
-```
+**File Operations with Confidence**
+- ✅ **`/read <path>`** - Read and display file contents
+- ✅ **`/write <path> <prompt>`** - Generate file content with validation
+- ✅ **`/suggestwrite <path> <prompt>`** - Preview before writing
+- ✅ **`/explain <path>`** - Get detailed code explanations
+- ✅ **Markdown rendering** - Beautifully formatted output with h1-h6 headers, bold, italic, code blocks, lists, blockquotes
 
-**See Also**: [EXECUTOR_COVERAGE_PHASES_1_2_COMPLETE.md](docs/EXECUTOR_COVERAGE_PHASES_1_2_COMPLETE.md) for detailed analysis and future optimization opportunities.
+### 🔊 Voice Narration & Audio
 
----
-
-## ✨ What's v2.8.1 (Optimization & Distribution Polish)
-
-### 🚀 Distribution Optimization
-
-v2.8.1 focuses on lean, efficient distribution:
-
-- **VSIX Size Reduction: 48%** (2.83MB → 1.47MB)
-  - Enhanced `.vscodeignore` to exclude test outputs and coverage artifacts
-  - Removed temporary build folders from distribution
-  - Final package size: **1.47MB** ✨
-
-- **Root Directory Cleanup**
-  - Moved analysis scripts and coverage reports to `/docs/` per documentation standards
-  - Removed test output files from repository root
-  - Deleted old VSIX releases (v2.5.1 - v2.8.0 archives)
-  - Cleaner, more maintainable project structure
-
-**What This Means:**
-- ✅ Faster download and installation for end users
-- ✅ Cleaner project repository with proper directory organization
-- ✅ Better alignment with [documentation standards](docs/ROOT_ORGANIZATION_RULES.md)
-- ✅ Maintained test coverage (72%) and functionality
-
----
-
-## ✨ What's v2.8.0 (Test Coverage Expansion & Quality Milestone)
-
-### 🧪 Major Coverage Achievement: 72% Line Coverage
-
-v2.8.0 represents a focused, intensive test expansion effort achieving production-grade test coverage:
-
-- **400+ New Tests** (2,514 total, 100% passing)
-  - Executor layer: 168 tests covering error recovery, validation, execution control, and contracts
-  - Planner layer: 125 tests for parsing, generation, dependencies, validation, and integration
-  - Services & validation: 95+ tests including smartValidator (64), core modules (79), edge cases (30)
-
-- **Architectural Improvements**
-  - ArchitectureValidator: `generateErrorReport()` method for structured violation reporting
-  - Comprehensive edge case coverage identifying and removing dead code
-  - Enhanced validation pipeline with layer-based architecture support
-
-- **Quality Metrics** - Production-grade reliability
-  - Coverage: 72.18% line coverage, 72.06% statements, 76.93% functions, 65.11% branches
-  - All thresholds exceeded: Lines 72.18% (target 70%), Statements 72.06% (target 70%), Branches 65.11% (target 65%), Functions 76.93%
-  - Tests: 2,514 tests total, 100% passing (zero failures in new code)
-  - Regressions: Zero from existing functionality
-  - CI/CD: Validated on Node 18.x and 20.x
-  - Code quality: TypeScript strict mode, ESLint compliant
-
-- **Strategic Testing Approach**
-  - Layer-by-layer focus: Executor → Planner → Services
-  - Comprehensive categories: Error cases, edge cases, integration points, performance boundaries
-  - Dependency-first: Contracts and dependencies tested before integration
-  - High-velocity execution: 400+ tests in focused session
-
-**What This Means for Development:**
-- ✅ Production-grade test foundation with 72% coverage
-- ✅ High confidence in code reliability and correctness
-- ✅ Comprehensive edge case handling across all layers
-- ✅ Clear patterns for future test expansion
-- ✅ Professional code quality baseline established
-
----
-
-### 📝 NEW: Beautifully Formatted Explanations
-
-Explanations in `/explain` now render as styled HTML with full markdown support:
-
-```
-/explain src/components/Button.tsx
-→ Renders with:
-  • Headers (h1-h6) with proper hierarchy
-  • Bold and italic emphasis
-  • Code blocks with monospace font
-  • Lists and blockquotes
-  • Proper spacing and typography
-→ Special dark background to stand out
-→ Type annotations properly escaped: <ButtonProps> displays as text, not HTML
-→ Audio player displayed alongside formatted text
-```
-
-**Features**:
-- ✅ Full markdown-to-HTML conversion via marked.js
-- ✅ Type-safe angle bracket escaping (no XSS from `<T extends ...>`)
-- ✅ Compact professional spacing (no excessive whitespace)
-- ✅ Debug collapsible section to view original markdown
-- ✅ Works seamlessly with voice narration
-- ✅ Responsive design for all screen sizes
-
-## ✨ What's v2.6.0 (Voice Narration)
-
-### 🔊 NEW: Automatic Audio Narration
-
-**`/explain` command now synthesizes to speech!**
-
-```
-/explain src/components/Button.tsx
-→ Reads file from workspace
-→ Generates LLM explanation
-→ Automatically synthesizes MP3 using edge-tts
-→ Embeds playable audio in chat
-→ Shows duration: "59.3 seconds"
-```
-
-**Features**:
-- ✅ Click-to-play audio player in chat messages
+**Automatic Audio Synthesis (v2.6.0+)**
+- ✅ **`/explain` with audio** - Automatic MP3 synthesis using edge-tts
+- ✅ Click-to-play audio player in chat with playback controls
 - ✅ Multi-chunk synthesis for long explanations
-- ✅ Accurate duration display (MP3 bitrate formula)
+- ✅ Accurate duration display and seek support
 - ✅ Workspace-relative file paths (e.g., `/explain src/main.ts`)
 - ✅ Graceful fallback if TTS unavailable
-- ✅ Diagnostic commands for setup validation
+- ✅ Diagnostic commands: `/test-voice` and `/setup-voice`
 
-**New Commands**:
-- `LLM Assistant: Test LLM Connection` - Validate server connectivity
-- `LLM Assistant: Debug Environment` - Show LLM config, voice status, workspace info
+### 📊 Git Integration & Code Review
 
-## ✨ What's v2.5.1+ (Foundation Features)
+**AI-Powered Git Operations**
+- ✅ **`/git-commit-msg`** - Generate conventional commit messages from staged changes
+- ✅ **`/git-review`** - AI-powered code review of staged changes with issue detection
+- ✅ Integration with workspace staged files
+- ✅ Comprehensive review with suggestions and confidence scoring
 
-### ✅ Zustand Integration Validation (v2.5.1+)
+### 🔐 Quality & Testing Infrastructure
 
-Included in all v2.6+ releases:
-- **Validation After File Write**: Runs AFTER all files written, validates cross-file dependencies
-- **Component-Store Alignment**: Ensures component hooks match store exports
-- **Contract Enforcement**: Fails entire plan if integration is broken
-
-## ✨ What's v2.5.0 (6-Layer Validation System)
-
-### ✅ What Works Great (Keep These)
-
-**6-Layer Validation System** - New in v2.5.0
-- **`/plan` with validation** - Multi-step code generation with semantic validation (NEW)
-- **Cross-file contract enforcement** - Component-store alignment guaranteed
-- **Zustand store validation** - Property extraction and destructuring validation
-- **Hook usage detection** - Semantic validation of actual hook usage
-- **Pre-validation import calculation** - Eliminate import path guessing
-- **Store property extraction** - TypeScript generic support
-
-**Pattern Detection & Analysis** - Reliable, accurate
-- **`/refactor <file>`** - Semantic code analysis (5-layer deep)
-- **`/rate-architecture`** - Score your codebase (0-10)
-- **`/suggest-patterns`** - Pattern recommendations (8 patterns)
-- **`/context show structure`** - See project organization
-- **`/context show patterns`** - View detected patterns
-- **`/git-review`** - AI code review
-
-**File Operations**
-- **`/read <path>`** - Read files
-- **`/write <path> <prompt>`** - Generate file content with validation
-- **`/suggestwrite <path> <prompt>`** - Review before writing
-- **`/explain <path>`** - Explain code
-- **`/git-commit-msg`** - Generate commit messages
-
-### ⚠️ Known Limitations (v2.5.0)
-
-**Cross-File Contract Drift** - See Limitations section
-- Multi-file generation may have interface mismatches between files
-- Validation catches these, manual verification recommended
-- Future: v2.6+ will have persistent contract tracking
+**Automated Quality Assurance (v2.11.0+)**
+- ✅ **Quality Gates** - Enforce 80.27% minimum coverage with automated regression prevention
+- ✅ **Dynamic Metrics Sync** - Real-time coverage extraction from npm run coverage
+- ✅ **3,594 comprehensive tests** - Full test suite with 100% pass rate
+- ✅ **Zero regressions** - All existing functionality verified
+- ✅ **Strict coverage thresholds** - Enforced via vitest.config.mjs
+- ✅ **CI/CD integration** - Automatic quality checks on every PR
 
 ## 🚀 Quick Start (30 seconds)
 
@@ -635,203 +478,6 @@ Show all available commands.
 /help
 ```
 
-## 📸 Visual Guide (v2.6.1)
-
-### ✅ Complete Feature Set (v2.6.1)
-
-All features working with comprehensive validation:
-
-#### Markdown Rendering (NEW in v2.6.1)
-- Beautifully formatted explanations with h1-h6 headers
-- Bold, italic, code blocks, lists, blockquotes
-- Type-safe angle bracket escaping
-- Audio player alongside formatted text
-
-#### 6-Layer Validation System (v2.5.0+)
-
-The validation architecture catches semantic errors across multiple files:
-
-#### Layer 1: Syntax Validation
-- Valid TypeScript code
-- Proper syntax structure
-- No compilation errors
-
-#### Layer 2: Type Validation
-- Correct type inference
-- Type-safe operations
-- No implicit any types
-
-#### Layer 3: Import Validation
-- Files exist at specified paths
-- Relative paths resolve correctly
-- No missing dependencies
-
-#### Layer 4: Cross-File Validation
-- Component imports resolve to stores
-- Store files exist in workspace
-- Import paths calculated pre-generation
-
-#### Layer 5: Hook Usage Validation
-- Hooks imported from correct modules
-- Hooks actually called in code
-- Destructured state actually used
-- No mixed state management
-
-#### Layer 6: Store Contract Validation
-- Store properties extracted (TypeScript generics supported)
-- Component destructuring matches store exports
-- All destructured properties exist in store
-- Property types align correctly
-
-**Example: Zustand Refactoring**
-```typescript
-// Step 1: Store created with validation
-export const useLoginStore = create<LoginFormStore>((set) => ({
-  formData: {},
-  errors: {},
-  setFormData: (data) => set({ formData: data }),
-  setErrors: (errors) => set({ errors }),
-}))  // 4 exports extracted and stored
-
-// Step 2: Component generated with validation
-const { formData, errors, setFormData, setErrors } = useLoginStore();
-// Validation: ✅ All 4 properties exist in store
-```
-
-### ✅ Pattern Detection & Analysis (Proven Reliable)
-
-#### `/refactor <file>` - Semantic Analysis
-
-Shows 5-layer semantic analysis:
-- State management issues
-- Dependency problems  
-- Coupling analysis
-- Data flow inspection
-- Anti-pattern detection
-- Actionable recommendations
-
-**Example Output:**
-```
-🔍 **Semantic Analysis** (hooks/useUser.ts)
-
-[5-Layer Analysis]
-✅ State Management: 3 states, well-organized
-⚠️ Dependencies: Missing useCallback on fetchUser
-⚠️ Coupling: Tight to AuthContext
-⚠️ Anti-patterns: Direct API call (should extract)
-⚠️ Data Flow: Incomplete error handling
-
-[Recommendations]
-1. Extract API logic to service layer (95% confidence)
-2. Add useCallback optimization (88% confidence)
-3. Improve error handling patterns (92% confidence)
-```
-
-#### `/rate-architecture` - Code Quality Scoring
-
-Architecture scoring (0-10):
-- Overall rating with breakdown
-- Layer-by-layer analysis
-- Strengths and weaknesses
-- Specific recommendations
-
-**Example Output:**
-```
-📊 **Architecture Rating: 9/10** ⭐⭐⭐⭐⭐
-
-[Layer Breakdown]
-├─ Schema Layer (types/): 9/10
-├─ Service Layer (services/): 8/10
-├─ Hook Layer (hooks/): 9/10
-└─ Component Layer (components/): 8/10
-
-[Strengths]
-✅ Clear separation of concerns
-✅ Proper error handling
-✅ Type-safe implementation
-
-[Recommendations]
-⚠️ Some hooks are large (150+ lines)
-⚠️ Missing error boundary components
-```
-
-#### `/suggest-patterns` - Pattern Recommendations
-
-8 design patterns:
-- CRUD, Authentication, Forms
-- DataFetching, StateManagement
-- Notifications, SearchFilter, Pagination
-- Shows which patterns are applicable
-- Implementation guidance
-
-**Example Output:**
-```
-🎯 **Available Patterns**
-
-1. CRUD Pattern (95% match) ✅ Already implemented
-   Where: src/services/userService.ts
-   
-2. Forms Pattern (82% match) ⚠️ Partially implemented
-   Gap: Missing form validation framework
-   
-3. DataFetching Pattern (78% match) ✅ Already implemented
-   Where: src/hooks/useUser.ts
-
-[5-8 more patterns...]
-```
-
-#### `/context show structure` - Project Organization
-
-Visualizes project layout:
-- Files organized by purpose
-- Proper separation of concerns
-- Clear architecture view
-
-**Example Output:**
-```
-📁 Project Structure
-
-schemas/
-├─ User.ts
-├─ Post.ts
-└─ Comment.ts
-
-services/
-├─ userService.ts
-├─ postService.ts
-
-hooks/
-├─ useUser.ts
-├─ usePost.ts
-
-components/
-├─ UserProfile.tsx
-├─ PostList.tsx
-
-Overall: 12 files organized in 4 layers
-```
-
-#### `/context show patterns` - Pattern Detection
-
-Shows detected patterns:
-- Pattern type and count
-- Which files implement which patterns
-- Architecture understanding
-
-**Example Output:**
-```
-🎯 Detected Patterns
-
-Zod Schema: 3 files
-React Component: 3 files
-Custom Hook: 3 files
-API Service: 3 files
-```
-
-### ⚠️ Disabled Features (None in v2.5.0)
-
-All planned features are functional. See Limitations section for known constraints.
-
 ## ⚙️ Configuration
 
 
@@ -847,9 +493,58 @@ Open Settings (Cmd+, / Ctrl+,) and search "llm-assistant":
 | `llm-assistant.maxTokens` | `4096` | Max response length |
 | `llm-assistant.timeout` | `60000` | Request timeout (ms) |
 
-### Agent Skills Setup (v2.10.0+)
+### Quality Gates (v2.11.0+)
 
-v2.10.0 introduces **Agent Skills** - automated CI/CD-integrated tools for documentation sync and root directory enforcement.
+v2.11.0 introduces **Automated Quality Gates** - enforced minimum coverage thresholds to prevent regression.
+
+#### Quality Gate Configuration
+
+The quality gate is enforced at **80.27% coverage** (Diamond Tier threshold) via the metrics synchronizer script:
+
+```bash
+# .github/skills/metrics-validator/validate-metrics.sh
+THRESHOLD="80.27"
+
+if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+    echo "❌ ERROR: Coverage ($COVERAGE%) is below the Diamond Tier threshold ($THRESHOLD%)!"
+    exit 1
+fi
+```
+
+**How It Works:**
+1. **Automatic Execution**: Runs on every PR and push to main
+2. **Coverage Check**: Extracts coverage from `npm run coverage` output
+3. **Threshold Validation**: Compares extracted coverage against 80.27% minimum
+4. **Regression Prevention**: Blocks merges if coverage drops below threshold
+5. **Clear Feedback**: Provides detailed error messages with remediation steps
+
+**What Triggers Quality Gate:**
+- ✅ Pull requests targeting `main` branch
+- ✅ Pushes to `feat/**` branches
+- ✅ Pushes to `main` branch
+- ✅ Manual execution: `sh .github/skills/metrics-validator/validate-metrics.sh`
+
+**Success Criteria:**
+- Coverage ≥ 80.27%: ✅ Quality gate PASSED - proceed with merge
+- Coverage < 80.27%: ❌ Quality gate FAILED - add tests and retry
+
+**To Maintain Quality Gate:**
+```bash
+# Run coverage locally before pushing
+npm run coverage
+
+# View detailed coverage report
+open coverage/lcov-report/index.html
+
+# Add tests until you meet 80.27% threshold
+npm test -- --coverage
+```
+
+---
+
+### Agent Skills Setup (v2.10.0+ with v2.11.0 Quality Gates)
+
+Agent Skills are automated CI/CD-integrated tools for documentation sync, root directory enforcement, and quality gate validation.
 
 #### 1. Root Directory Enforcer
 
@@ -875,24 +570,102 @@ sh .github/skills/root-enforcer/enforce.sh
 
 The enforcer automatically runs in CI/CD pipelines on every PR to keep your repository clean.
 
-#### 2. Dynamic README Synchronizer
+#### 2. Metrics Validator (v2.11.0+)
 
-The automated documentation sync workflow (`.github/workflows/readme-sync.yml`) runs on every PR to keep README metrics current:
+The metrics validator skill (`.github/skills/metrics-validator/validate-metrics.sh`) runs on every PR to extract real metrics, enforce quality gates, and keep METRICS.json current:
 
 ```bash
-# The workflow:
+# The script workflow:
 1. Reads version from package.json
-2. Extracts coverage from coverage/coverage-summary.json
-3. Updates README badges with live metrics
-4. Enforces root directory compliance via enforcer skill
-5. Auto-commits changes with [skip ci] to prevent loops
+2. Runs npm run coverage to generate fresh metrics
+3. Extracts test count from "XXXX passed" pattern
+4. Extracts coverage from "All files | XX.XX %" pattern
+5. Validates coverage against 80.27% quality gate threshold
+6. Updates METRICS.json with live metrics
+7. Enforces root directory compliance via enforcer skill
 ```
+
+**Features:**
+- ✅ Dynamic metrics extraction (not hardcoded)
+- ✅ Real-time coverage validation from test output
+- ✅ Quality gate enforcement (80.27% minimum)
+- ✅ Automatic METRICS.json updates
+- ✅ Regression prevention via threshold checks
+- ✅ Clear error messages for failed quality gates
 
 **Trigger Events:**
 - Push to `feat/**` or `main` branches
 - Pull requests targeting `main`
+- Manual execution: `sh .github/skills/metrics-validator/validate-metrics.sh`
 
-#### 3. Copilot Instructions Integration
+**Sample Output:**
+```
+[*] Detected Version: 2.11.0
+[*] Running npm run coverage to generate fresh metrics...
+[*] Parsing coverage output...
+[OK] Extracted Test Count: 3594 tests
+[OK] Extracted Coverage: 80.27%
+[*] Checking Quality Gate: Coverage must be >= 80.27%
+[OK] Quality Gate PASSED: 80.27% >= 80.27%
+[*] Updating METRICS.json...
+[OK] Dynamic Metrics Sync Complete:
+     Version: 2.11.0
+     Tests: 3594
+     Coverage: 80.27%
+```
+
+#### 3. README Auto-Updater (v2.11.0+)
+
+The README Auto-Updater skill automatically updates README.md with latest metrics on every semantic release:
+
+```bash
+# The script workflow:
+1. Reads version from package.json
+2. Extracts metrics from METRICS.json
+3. Updates header badges (test count, coverage)
+4. Updates v2.11.0 section with metrics
+5. Updates Quality & Testing section
+6. Updates footer with release metrics
+7. Commits changes with [skip ci] to prevent loops
+```
+
+**Automatic Trigger:**
+- Version change detected in `package.json` (semantic release)
+- Workflow: `.github/workflows/readme-update-on-release.yml`
+
+**Manual Execution:**
+```bash
+# Update metrics first (required)
+npm run coverage
+sh .github/skills/metrics-validator/validate-metrics.sh
+
+# Then run README updater
+sh .github/skills/readme-updater/update-readme.sh
+
+# Review and push
+git status
+git push origin your-branch
+```
+
+**Features:**
+- ✅ Automatic on semantic release
+- ✅ Extracts metrics from METRICS.json
+- ✅ Updates all version-dependent sections
+- ✅ Commits with `[skip ci]` to prevent loops
+- ✅ Works with GitHub Actions or manual execution
+
+**For Semantic Release Integration:**
+When you bump version in `package.json` and push to main:
+1. GitHub Actions detects version change
+2. Automatically runs README updater
+3. Updates all badges and metrics
+4. Commits to main with [skip ci]
+
+See [.github/skills/readme-updater/README.md](.github/skills/readme-updater/README.md) for detailed documentation.
+
+---
+
+#### 4. Copilot Instructions Integration
 
 The `.github/copilot-instructions.md` file provides context for AI coding agents:
 
@@ -1064,23 +837,32 @@ Your Code
 - Automatic refactoring
 - (These had infinite loop bugs, disabled for safety)
 
-## ✅ Quality & Testing
+## ✅ Quality & Testing (v2.11.0 Diamond Tier)
 
-- **521 tests** - All passing ✅
+- **3,594 tests** - All passing ✅ (100% success rate)
+- **80.27% coverage** - Diamond Tier threshold enforced with automated quality gates ✅
 - **100% TypeScript strict** - Zero type errors
 - **0 compilation errors**
 - **0 linting warnings** - Clean codebase
-- **Production-ready** - Used by real projects
+- **Zero regressions** - All existing functionality verified
+- **Production-ready** - Enterprise-grade test foundation
 
-**Test Coverage:**
-- Markdown rendering: 85+ tests
-- Voice narration: 60+ tests
-- Pattern detection: 50+ tests
-- Architecture analysis: 45+ tests
-- File operations: 40+ tests
-- Error handling: 35+ tests
-- Git integration: 40+ tests
-- All other: 166+ tests
+**Coverage by Module:**
+- smartAutoCorrection.ts: 96.31% statements ⭐⭐⭐
+- architectureValidator.ts: 81.48% statements ⭐⭐
+- refactoringExecutor.ts: 68.87% statements ⭐⭐
+- llmClient.ts: 93.98% statements
+- refiner.ts: 73.43% statements
+- codebaseIndex.ts: 78.42% statements
+
+**Test Distribution:**
+- Phase 10G: SmartAutoCorrection (95 tests) - 96.31% coverage
+- Phase 10F: RefactoringExecutor (64 tests) - 68.87% coverage
+- Phase 10H: Refiner (50 tests) - 73.43% coverage
+- Phase 10E: GitClient (58 tests) - Pragmatic coverage
+- Phase 10D: ArchitectureValidator (46 tests) - 81.48% coverage
+- Phase 10B: CodebaseIndex (40 tests) - 63.88% branch
+- Phase 10A: Utilities (143 tests) - retryContext, validation, leanParser
 
 ## ⚠️ Limitations & Agentic Boundaries
 
@@ -1147,37 +929,45 @@ Until v3.1, **manual verification is recommended** for multi-file state migratio
 
 But it won't prevent the LLM from imagining properties that don't exist. Trust your eyes more than the AI for this pattern.
 
-## 📊 v2.10.0 Elite Tier Achievement
+## 💎 v2.11.0 Diamond Tier Achievement
 
-**What Changed from v2.9.0 → v2.10.0:**
-- ✅ Coverage improvement: 72.18% → 74.78% (+2.60%)
-- ✅ Test expansion: 2,395 → 2453 tests
-- ✅ Consolidated Test Matrix Architecture (parameterized testing with test.each)
-- ✅ Strict Vitest coverage thresholds enforced (lines: 74%, functions: 80%, branches: 67%, statements: 74%)
-- ✅ Agent Skills Integration (root-enforcer, dynamic README sync, copilot-instructions)
-- ✅ Architecture Validation agent skill (comprehensive audit framework)
-- ✅ Zustand/React Hook auditing capabilities
-- ✅ SSE streaming enhancements for real-time token display
-- ✅ Phase 6.4 Testable Ceiling identified and achieved (74.78% without refactoring)
+**What Changed from v2.10.0 → v2.11.0:**
+- ✅ Coverage breakthrough: 74.68% → 80.27% (+5.59% total gain from v2.10.0)
+- ✅ Test expansion: 2,453 → 3,594 tests (+1,141 new tests, +46% growth)
+- ✅ **Automated Quality Gates**: Enforce 80.27% minimum coverage with CI/CD integration
+- ✅ **Dynamic Metrics Synchronizer**: Real-time metrics extraction from npm run coverage
+- ✅ Eight intensive testing phases (Phase 10A-H) targeting lowest-coverage modules
+- ✅ Pragmatic testing strategy: Focus on core logic over edge cases for sustainable gains
+- ✅ Module-specific improvements:
+  - smartAutoCorrection.ts: 77.36% → 96.31% (+18.95%)
+  - refactoringExecutor.ts: 37.24% → 68.87% (+31.63%)
+  - architectureValidator.ts: 62.46% → 81.48% (+19.02%)
+  - refiner.ts: 43.75% → 73.43% (+29.68%)
 
-**Features Inherited from v2.7-v2.9:**
-- Comprehensive test suite with 2453 tests
-- Multi-layer validation system
+**Features Inherited from v2.7-v2.10:**
+- Comprehensive test suite with 3,594 tests across 88 files
+- 6-layer multi-file validation system
 - Cross-file contract enforcement
-- Pattern detection and analysis
-- Semantic code analysis
-- Git integration and review
+- Pattern detection and analysis (8 patterns)
+- Semantic code analysis (5 layers)
+- Git integration and AI-powered review
 - Full TypeScript strict mode enabled
+- Architecture validation with error reporting
+- Zustand/React Hook auditing capabilities
+- Voice narration with audio synthesis
+- Markdown rendering with formatted output
 
 **Metrics:**
-- Tests: 2,500+/2,500+ passing ✅ (100% success rate)
-- Coverage: 74.78% achieved (Elite Tier ceiling) ✅
+- Tests: 3,594/3,594 passing ✅ (100% success rate, zero flakiness)
+- Coverage: 80.27% achieved (Diamond Tier target) ✅
+- Quality Gate: 80.27% minimum enforced with automated regression prevention ✅
+- Branch Coverage: 73% (strong decision path coverage) ✅
 - Compilation: 0 errors ✅
 - Linting: 0 warnings ✅
 - TypeScript strict: Enabled ✅
 - Blockers: 0 ✅
-- Test Infrastructure: Testable ceiling validated ✅
-- Ready for: Production & Marketplace (Enterprise-Grade) ✅
+- Regressions: 0 (from 3,281 pre-v2.11.0 tests) ✅
+- Ready for: Production & Enterprise Deployment ✅
 
 ## 🚀 Development
 
@@ -1236,7 +1026,7 @@ npm run test:watch   # Auto-run on changes
 - **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping documentation clean
 - **[Documentation Organization](docs/DOCS_REORGANIZATION_COMPLETE.md)** - How documentation is structured
 
-### Testing & Development
+### Quality Assurance & Testing
 
 #### Running Tests
 ```bash
@@ -1252,6 +1042,27 @@ npm run test:watch
 # View coverage reports
 # HTML Report: open coverage/lcov-report/index.html
 # Console Output: Shows coverage metrics after test run
+
+# Check quality gate locally
+sh .github/skills/metrics-validator/validate-metrics.sh
+```
+
+#### Quality Gate Enforcement (v2.11.0+)
+
+The quality gate automatically enforces 80.27% minimum coverage:
+
+```bash
+# The quality gate will:
+1. Run npm run coverage to extract real metrics
+2. Compare coverage against 80.27% threshold
+3. Block merge if coverage is below threshold
+4. Provide clear error message with remediation steps
+
+# To pass quality gate:
+- Add tests to increase coverage
+- Ensure all critical code paths are covered
+- Run locally: npm test -- --coverage
+- Verify: coverage ≥ 80.27%
 ```
 
 #### Test Coverage & Quality Goals
@@ -1365,6 +1176,42 @@ Files:
 
 ## 🐛 Troubleshooting
 
+### Quality Gate Issues
+
+#### "Coverage is below the Diamond Tier threshold (80.27%)"
+**Error:** Quality gate failed because coverage dropped below 80.27%
+
+**Solutions:**
+1. Run coverage locally to verify: `npm test -- --coverage`
+2. Review the coverage report: `open coverage/lcov-report/index.html`
+3. Add tests for uncovered code paths
+4. Focus on core logic and error handling
+5. Run: `npm test` to verify tests pass
+6. Re-run quality gate: `sh .github/skills/metrics-validator/validate-metrics.sh`
+
+#### "Failed to extract metrics from coverage output"
+**Error:** The script couldn't parse test count or coverage percentage
+
+**Solutions:**
+1. Verify npm run coverage works locally: `npm run coverage`
+2. Check that vitest is installed: `npm list vitest`
+3. Ensure coverage script runs successfully without errors
+4. Try running manually: `sh .github/skills/metrics-validator/validate-metrics.sh`
+
+#### "Coverage extraction returned wrong number"
+**Error:** The script extracted incorrect metrics
+
+**Solutions:**
+1. Check test output format matches expected pattern
+2. Verify "XXXX passed" appears in test output
+3. Verify "All files | XX.XX %" appears in coverage output
+4. Check file permissions: `ls -la .github/skills/metrics-validator/validate-metrics.sh`
+5. Ensure script is executable: `chmod +x .github/skills/metrics-validator/validate-metrics.sh`
+
+---
+
+### LLM Server Issues
+
 ### "Cannot connect to endpoint"
 - Make sure LLM server is running
 - Check endpoint URL in settings
@@ -1386,6 +1233,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**✨ v2.10.0 - Enterprise-Grade Local AI Orchestrator | 🧪 2453 Tests Passing | 📊 % Coverage (Elite Tier) | 🎯 Production Ready | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Testable Ceiling Achieved
+**💎 v2.11.0 - Enterprise-Grade Local AI Orchestrator | 🧪 3,594 Tests Passing | 📊 80.27% Coverage (Diamond Tier) | 🎯 Quality Gates Enforced | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Production Ready
 
 Created by [@odanree](https://github.com/odanree)
