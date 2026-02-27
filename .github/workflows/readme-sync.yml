@@ -29,7 +29,7 @@ jobs:
 
       - name: 🧪 Generate Coverage Summary
         # We run tests to get the most recent coverage-summary.json
-        run: npm run coverage -- --reporter=json-summary
+        run: npm run coverage
 
       - name: ⚡ Run Synchronization Skill
         # This executes the logic we defined in your dynamic shell script
