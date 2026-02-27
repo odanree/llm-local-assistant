@@ -84,10 +84,37 @@ else
     echo "[OK] Quality Gate PASSED: $COVERAGE% >= $THRESHOLD%"
 fi
 
-# 6. Update METRICS.json with extracted values
-echo "[*] Updating METRICS.json..."
+# 6. Check if METRICS.json needs updating (only update if metrics changed, not timestamp)
+echo "[*] Checking if METRICS.json needs updating..."
 
-cat > METRICS.json << EOF
+METRICS_CHANGED=false
+
+if [ ! -f METRICS.json ]; then
+    echo "[*] METRICS.json does not exist - will create new file"
+    METRICS_CHANGED=true
+else
+    # Extract current metrics from METRICS.json (ignore timestamp)
+    OLD_VERSION=$(grep '"version":' METRICS.json | grep -o '[0-9.]*')
+    OLD_TESTS=$(grep '"tests":' METRICS.json | grep -o '[0-9]\+')
+    OLD_COVERAGE=$(grep '"coverage":' METRICS.json | grep -o '[0-9.]*')
+
+    # Compare with new metrics
+    if [ "$VERSION" != "$OLD_VERSION" ] || [ "$TEST_COUNT" != "$OLD_TESTS" ] || [ "$COVERAGE" != "$OLD_COVERAGE" ]; then
+        echo "[*] Metrics changed:"
+        [ "$VERSION" != "$OLD_VERSION" ] && echo "     Version: $OLD_VERSION → $VERSION"
+        [ "$TEST_COUNT" != "$OLD_TESTS" ] && echo "     Tests: $OLD_TESTS → $TEST_COUNT"
+        [ "$COVERAGE" != "$OLD_COVERAGE" ] && echo "     Coverage: $OLD_COVERAGE% → $COVERAGE%"
+        METRICS_CHANGED=true
+    else
+        echo "[OK] Metrics unchanged - skipping METRICS.json update"
+    fi
+fi
+
+# 7. Update METRICS.json only if metrics changed
+if [ "$METRICS_CHANGED" = true ]; then
+    echo "[*] Updating METRICS.json..."
+
+    cat > METRICS.json << EOF
 {
   "version": "$VERSION",
   "tests": ${TEST_COUNT},
@@ -96,14 +123,18 @@ cat > METRICS.json << EOF
 }
 EOF
 
-echo ""
-echo "[OK] Dynamic Metrics Sync Complete:"
-echo "     Version: $VERSION"
-echo "     Tests: $TEST_COUNT"
-echo "     Coverage: $COVERAGE%"
-echo ""
-echo "[*] METRICS.json content:"
-cat METRICS.json
+    echo ""
+    echo "[OK] METRICS.json updated:"
+    echo "     Version: $VERSION"
+    echo "     Tests: $TEST_COUNT"
+    echo "     Coverage: $COVERAGE%"
+    echo ""
+    echo "[*] METRICS.json content:"
+    cat METRICS.json
+else
+    echo ""
+    echo "[OK] No metric changes - METRICS.json unchanged"
+fi
 
 # Cleanup
 rm -f /tmp/coverage-output.txt
