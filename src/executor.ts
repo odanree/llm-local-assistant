@@ -13,6 +13,7 @@ import { ValidationReport, formatValidationReportForLLM } from './types/validati
 import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 import { GOLDEN_TEMPLATES } from './constants/templates';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
+import { matchFormPatterns } from './utils/codePatternMatcher';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -826,24 +827,28 @@ export class Executor {
    */
   private validateFormComponentPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
-    
+
     // Only validate if this is a form component
     if (!filePath.includes('Form') || !filePath.endsWith('.tsx')) {
       return errors;
     }
 
-    // Pattern 1: State Interface - Must have interface for form state
-    const hasStateInterface = /interface\s+\w+State\s*{/.test(content) || 
-                            /type\s+\w+State\s*=\s*{/.test(content);
-    if (!hasStateInterface) {
+    // Orchestration: Call the utility to extract all form patterns
+    const patterns = matchFormPatterns(content);
+
+    // Map results to error messages - keeping the orchestration logic
+    const patternMap = new Map(patterns.map(p => [p.type, p.found]));
+
+    // Pattern 1: State Interface
+    if (!patternMap.get('stateInterface')) {
       errors.push(
         `❌ Pattern 1 violation: Missing state interface. ` +
         `Forms require: interface LoginFormState { email: string; password: string; }`
       );
     }
 
-    // Pattern 2: Handler Typing - FormEventHandler must be used, not any
-    const hasFormEventHandler = /FormEventHandler\s*<\s*HTMLFormElement\s*>/.test(content);
+    // Pattern 2: Handler Typing - needs additional checks beyond the pattern
+    const hasFormEventHandler = patternMap.get('formEventHandler');
     const hasInlineHandler = /const\s+handle\w+\s*=\s*\(\s*e\s*:\s*any\s*\)/.test(content);
     if (hasInlineHandler) {
       errors.push(
@@ -857,15 +862,10 @@ export class Executor {
       );
     }
 
-    // Pattern 3: Consolidator Pattern - Single handleChange function for multi-field forms
-    // KEY: Only count field-change handlers (not submit handlers)
-    // A form legitimately needs: handleChange (field updates) + handleSubmit (form submission)
+    // Pattern 3: Consolidator Pattern
     const fieldChangeHandlers = (content.match(/const\s+(handle(?:Change|Input|Update|Form(?!Submit))\w*)\s*=/gi) || []).length;
     const hasConsolidator = /\[name,\s*value\]\s*=\s*.*currentTarget/.test(content) ||
                            /currentTarget.*name.*value/.test(content);
-    
-    // Only fail if there are MULTIPLE field-change handlers without consolidator
-    // (handleChange + handleSubmit is OK - submit handler is allowed)
     if (fieldChangeHandlers > 1 && !hasConsolidator) {
       errors.push(
         `❌ Pattern 3 violation: Multiple field handlers instead of consolidator. ` +
@@ -874,11 +874,11 @@ export class Executor {
       );
     }
 
-    // Pattern 4: Submit Handler - onSubmit must be on <form>, not button click
+    // Pattern 4: Submit Handler
     const hasFormElement = /<form/.test(content);
     const hasFormOnSubmit = /onSubmit\s*=\s*{?\s*handleSubmit/.test(content);
     const hasButtonOnClick = /<button[^>]*onClick\s*=\s*{?\s*handle/.test(content);
-    
+
     if (!hasFormOnSubmit && hasFormElement) {
       errors.push(
         `❌ Pattern 4 violation: Missing form onSubmit handler. ` +
@@ -893,13 +893,10 @@ export class Executor {
       );
     }
 
-    // Pattern 5: Validation Logic - Must have some form of input validation
-    // NOTE: Simple inline validation is preferred (NOT Zod). Zod was removed from form requirements.
-    // Validation can be done with simple if-checks in handlers: if (!email.includes('@')) { ... }
-    const hasValidationLogic = /if\s*\(\s*!/.test(content) || 
+    // Pattern 5: Validation Logic
+    const hasValidationLogic = /if\s*\(\s*!/.test(content) ||
                                /setErrors\s*\(/.test(content) ||
                                /validate/.test(content);
-    
     if (!hasValidationLogic && content.includes('email')) {
       errors.push(
         `⚠️ Pattern 5 info: Consider adding basic validation. ` +
@@ -907,10 +904,8 @@ export class Executor {
       );
     }
 
-    // Pattern 6: Error State Tracking - Must track field-level errors
+    // Pattern 6: Error State Tracking
     const hasErrorState = /useState\s*<\s*Record\s*<\s*string\s*,\s*string\s*>\s*>\s*\(\s*{}/.test(content);
-    const hasErrorDisplay = /\{errors\.\w+/.test(content) || /errors\[\w+\]/.test(content);
-    
     if (!hasErrorState && (content.includes('validation') || content.includes('error'))) {
       errors.push(
         `⚠️ Pattern 6 warning: Consider tracking field-level errors. ` +
@@ -918,11 +913,9 @@ export class Executor {
       );
     }
 
-    // Pattern 7: Semantic Form Markup - Input elements must have name attributes
+    // Pattern 7: Semantic Form Markup
     const hasNamedInputs = /name\s*=\s*['"]\w+['"]/.test(content);
     const hasInputElements = /<input|<textarea|<select/.test(content);
-    const hasMissingName = /<input[^>]*\/?>/.test(content) && !hasNamedInputs;
-    
     if (hasInputElements && !hasNamedInputs) {
       errors.push(
         `❌ Pattern 7 violation: Input elements missing name attributes. ` +
