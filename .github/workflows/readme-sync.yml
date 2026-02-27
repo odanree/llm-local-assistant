@@ -33,7 +33,7 @@ jobs:
 
       - name: ⚡ Run Synchronization Skill
         # This executes the logic we defined in your dynamic shell script
-        run: sh .github/skills/readme-sychronizer/sync-dynamic.sh
+        run: sh .github/skills/readme-synchronizer/sync-dynamic.sh
 
       - name: 🏛️ Enforce Root Directory Rules
         # Optional: Run your root-enforcer here to ensure no ghost files sneak into the PR
