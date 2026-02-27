@@ -13,7 +13,7 @@ import { ValidationReport, formatValidationReportForLLM } from './types/validati
 import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 import { GOLDEN_TEMPLATES } from './constants/templates';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
-import { matchFormPatterns } from './utils/codePatternMatcher';
+import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
 import { validateArchitectureRulePure } from './utils/architectureRuleValidator';
 
 /**
@@ -836,194 +836,13 @@ export class Executor {
       errors.push(...formErrors);
     }
 
-    // Extract all imported items and namespaces
-    const importedItems = new Set<string>();
-    const importedNamespaces = new Set<string>();
-
-    // ✅ FIX: Handle mixed imports like "import React, { useState } from 'react'"
-    // Pattern: import [DefaultName] [, { NamedImports }] from 'module'
-    
-    // First, extract named imports (destructured)
-    content.replace(/import\s+(?:\w+\s*,\s*)?{([^}]+)}/g, (_, items) => {
-      items.split(',').forEach((item: string) => {
-        importedItems.add(item.trim());
-      });
-      return '';
+    // Phase 2C: Map and Wrap - Use pure utility to detect import/syntax issues
+    const issues = findImportAndSyntaxIssuesPure(content, filePath || '');
+    issues.forEach(issue => {
+      // Wrap pure utility results into error message format
+      const prefix = issue.severity === 'error' ? '❌' : '⚠️';
+      errors.push(`${prefix} ${issue.message}`);
     });
-
-    // Also capture namespace imports (import * as X)
-    content.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
-      importedNamespaces.add(namespace.trim());
-      return '';
-    });
-
-    // And default imports (import React from 'react')
-    content.replace(/import\s+(\w+)\s+from/g, (_, name) => {
-      importedNamespaces.add(name.trim());
-      return '';
-    });
-
-    // GENERIC NAMESPACE PATTERN DETECTOR
-    // Find all namespace.method() patterns and verify namespaces are imported
-    const namespaceUsages = new Set<string>();
-    
-    // First, collect all local variable definitions and function parameters
-    const localVariables = new Set<string>();
-    
-    // Collect function parameters: (e) => or (e, f) =>
-    content.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
-      params.split(',').forEach((param: string) => {
-        const cleaned = param.trim().split(/[:\s=]/)[0].trim();
-        if (cleaned) {localVariables.add(cleaned);}
-      });
-      return '';
-    });
-    
-    // Collect variable definitions: const x = or let x = or var x =
-    content.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
-      localVariables.add(varName.trim());
-      return '';
-    });
-    
-    // Collect destructured variables: const { x, y } =
-    content.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
-      vars.split(',').forEach((v: string) => {
-        const cleaned = v.trim().split(/[:=]/)[0].trim();
-        if (cleaned) {localVariables.add(cleaned);}
-      });
-      return '';
-    });
-    
-    // Now find namespace usages, excluding local variables
-    content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
-      // Skip common JavaScript globals
-      const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
-      // Skip single-letter params like 'e' (event parameters)
-      const isSingleLetter = namespace.length === 1;
-      // Skip if it's a local variable
-      const isLocal = localVariables.has(namespace);
-      
-      if (!globalKeywords.includes(namespace) && !isSingleLetter && !isLocal) {
-        namespaceUsages.add(namespace);
-      }
-      return '';
-    });
-
-    // Check if all used namespaces are imported
-    Array.from(namespaceUsages).forEach((namespace) => {
-      if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
-        // This namespace is used but not imported
-        errors.push(
-          `❌ Missing import: '${namespace}' is used (${namespace}.something) but never imported. ` +
-          `Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`
-        );
-      }
-    });
-
-    // Pattern: React/useState without import
-    if ((content.includes('useState') || content.includes('useEffect')) && !importedItems.has('useState') && !importedItems.has('useEffect')) {
-      // Check if useState is actually used in the code (not just mentioned in comments)
-      const useStateUsage = /\b(useState|useEffect)\s*\(/.test(content);
-      if (useStateUsage && !importedItems.has('useState')) {
-        errors.push(
-          `❌ Missing import: useState is used but not imported. ` +
-          `Add: import { useState } from 'react'`
-        );
-      }
-    }
-
-    // Pattern: Missing closing tags/braces
-    const openBraces = (content.match(/{/g) || []).length;
-    const closeBraces = (content.match(/}/g) || []).length;
-    if (openBraces > closeBraces) {
-      errors.push(`❌ Syntax error: ${openBraces - closeBraces} unclosed brace(s)`);
-    }
-
-    // Pattern: JSX without React import
-    if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && content.includes('<')) {
-      // React can be imported as default import or named import
-      if (!importedItems.has('React') && !importedNamespaces.has('React')) {
-        // In newer React versions, this is optional, so just warn
-        errors.push(
-          `⚠️ Possible issue: JSX detected but no React import. ` +
-          `Modern React (17+) doesn't require this, but check your tsconfig.json`
-        );
-      }
-    }
-
-    // TYPO CHECK: @hookform/resolve vs @hookform/resolvers (common mistake)
-    if (content.includes('@hookform/resolve') && !content.includes('@hookform/resolvers')) {
-      errors.push(
-        `❌ Typo detected: '@hookform/resolve' is not a valid package. ` +
-        `Did you mean '@hookform/resolvers'? ` +
-        `Correct usage: import { zodResolver } from '@hookform/resolvers/zod'`
-      );
-    }
-
-    // IMPORT PATTERN: TanStack Query imports
-    if (content.includes('useQuery') || content.includes('useMutation')) {
-      if (!content.includes('@tanstack/react-query')) {
-        errors.push(
-          `❌ TanStack Query used but not imported correctly. ` +
-          `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
-        );
-      }
-    }
-
-    // IMPORT PATTERN: Zod imports
-    if (content.includes('z.') && !content.includes("import { z }") && !content.includes("import * as z")) {
-      errors.push(
-        `❌ Zod used (z.object, z.string, etc) but not imported. ` +
-        `Add: import { z } from 'zod'`
-      );
-    }
-
-    // UNUSED IMPORTS: Check for imported items that are never used
-    const unusedImports: string[] = [];
-    importedItems.forEach((item) => {
-      // Skip common React hooks that might be used indirectly
-      if (['React', 'Component'].includes(item)) {return;}
-
-      // Check if this import is actually used in the code
-      // Pattern 1: Used as value/identifier: Item.x or Item(...) or Item[...]
-      const valueUsagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
-      const valueMatches = content.match(valueUsagePattern) || [];
-      
-      // Pattern 2: Used as type annotation (e.g., : ClassValue or ClassValue[])
-      const typeUsagePattern = new RegExp(`[:\\s<]${item}[\\s\\[,>]`, 'g');
-      const typeMatches = content.match(typeUsagePattern) || [];
-
-      // If used in either value or type position, it's not unused
-      if (valueMatches.length === 0 && typeMatches.length === 0) {
-        unusedImports.push(item);
-      }
-    });
-
-    if (unusedImports.length > 0) {
-      unusedImports.forEach((unused) => {
-        errors.push(
-          `⚠️ Unused import: '${unused}' is imported but never used. ` +
-          `Remove: import { ${unused} } from '...'`
-        );
-      });
-    }
-
-    // RETURN TYPE CHECK: Detect common functions with wrong return types
-    // JSON.stringify() always returns string, never null
-    if (content.includes('JSON.stringify') && content.includes(': string | null')) {
-      errors.push(
-        `⚠️ Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. ` +
-        `Fix: Change return type to just 'string'`
-      );
-    }
-
-    // JSON.parse() can throw, but return type should reflect actual object type
-    if (content.includes('JSON.parse') && content.includes(': any')) {
-      errors.push(
-        `⚠️ Type issue: JSON.parse() result should not be 'any'. ` +
-        `Use a Zod schema or specific type instead of 'any'`
-      );
-    }
 
     return errors;
   }

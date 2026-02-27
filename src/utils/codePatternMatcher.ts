@@ -315,3 +315,215 @@ export function matchImportPatterns(
 
   return { declared, used, missing };
 }
+
+/**
+ * Detect import and syntax issues in code
+ * Pure function: finds missing imports, syntax errors, library-specific issues
+ */
+export function findImportAndSyntaxIssuesPure(
+  code: string,
+  filePath: string = ''
+): Array<{
+  type: 'missing_import' | 'syntax_error' | 'library_issue' | 'jsx_issue';
+  severity: 'error' | 'warning';
+  message: string;
+}> {
+  const issues: Array<{
+    type: 'missing_import' | 'syntax_error' | 'library_issue' | 'jsx_issue';
+    severity: 'error' | 'warning';
+    message: string;
+  }> = [];
+
+  // Extract imported items and namespaces
+  const importedItems = new Set<string>();
+  const importedNamespaces = new Set<string>();
+
+  // Named imports: { x, y }
+  code.replace(/import\s+(?:\w+\s*,\s*)?{([^}]+)}/g, (_, items) => {
+    items.split(',').forEach((item: string) => {
+      importedItems.add(item.trim());
+    });
+    return '';
+  });
+
+  // Namespace imports: * as X
+  code.replace(/import\s+\*\s+as\s+(\w+)/g, (_, namespace) => {
+    importedNamespaces.add(namespace.trim());
+    return '';
+  });
+
+  // Default imports: import React from 'react'
+  code.replace(/import\s+(\w+)\s+from/g, (_, name) => {
+    importedNamespaces.add(name.trim());
+    return '';
+  });
+
+  // Collect local variables to exclude from analysis
+  const localVariables = new Set<string>();
+
+  // Function parameters
+  code.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
+    params.split(',').forEach((param: string) => {
+      const cleaned = param.trim().split(/[:\s=]/)[0].trim();
+      if (cleaned) {
+        localVariables.add(cleaned);
+      }
+    });
+    return '';
+  });
+
+  // Variable definitions
+  code.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
+    localVariables.add(varName.trim());
+    return '';
+  });
+
+  // Destructured variables
+  code.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
+    vars.split(',').forEach((v: string) => {
+      const cleaned = v.trim().split(/[:=]/)[0].trim();
+      if (cleaned) {
+        localVariables.add(cleaned);
+      }
+    });
+    return '';
+  });
+
+  // Find namespace usages
+  const namespaceUsages = new Set<string>();
+  code.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
+    const isSingleLetter = namespace.length === 1;
+    const isLocal = localVariables.has(namespace);
+
+    if (!globalKeywords.includes(namespace) && !isSingleLetter && !isLocal) {
+      namespaceUsages.add(namespace);
+    }
+    return '';
+  });
+
+  // Check if all used namespaces are imported
+  Array.from(namespaceUsages).forEach((namespace) => {
+    if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
+      issues.push({
+        type: 'missing_import',
+        severity: 'error',
+        message: `Missing import: '${namespace}' is used but never imported. Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`,
+      });
+    }
+  });
+
+  // Check for useState/useEffect without import
+  if ((code.includes('useState') || code.includes('useEffect')) && !importedItems.has('useState') && !importedItems.has('useEffect')) {
+    const useStateUsage = /\b(useState|useEffect)\s*\(/.test(code);
+    if (useStateUsage && !importedItems.has('useState')) {
+      issues.push({
+        type: 'missing_import',
+        severity: 'error',
+        message: `Missing import: useState is used but not imported. Add: import { useState } from 'react'`,
+      });
+    }
+  }
+
+  // Check for unclosed braces
+  const openBraces = (code.match(/{/g) || []).length;
+  const closeBraces = (code.match(/}/g) || []).length;
+  if (openBraces > closeBraces) {
+    issues.push({
+      type: 'syntax_error',
+      severity: 'error',
+      message: `Syntax error: ${openBraces - closeBraces} unclosed brace(s)`,
+    });
+  }
+
+  // Check for JSX without React import
+  if ((filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) && code.includes('<')) {
+    if (!importedItems.has('React') && !importedNamespaces.has('React')) {
+      issues.push({
+        type: 'jsx_issue',
+        severity: 'warning',
+        message: `Possible issue: JSX detected but no React import. Modern React (17+) doesn't require this, but check your tsconfig.json`,
+      });
+    }
+  }
+
+  // Check for typo in @hookform/resolvers
+  if (code.includes('@hookform/resolve') && !code.includes('@hookform/resolvers')) {
+    issues.push({
+      type: 'library_issue',
+      severity: 'error',
+      message: `Typo detected: '@hookform/resolve' is not a valid package. Did you mean '@hookform/resolvers'?`,
+    });
+  }
+
+  // Check for TanStack Query without proper import
+  if (code.includes('useQuery') || code.includes('useMutation')) {
+    if (!code.includes('@tanstack/react-query')) {
+      issues.push({
+        type: 'library_issue',
+        severity: 'error',
+        message: `TanStack Query used but not imported correctly. Add: import { useQuery, useMutation } from '@tanstack/react-query'`,
+      });
+    }
+  }
+
+  // Check for Zod imports
+  if (code.includes('z.') && !code.includes("import { z }") && !code.includes("import * as z")) {
+    issues.push({
+      type: 'library_issue',
+      severity: 'error',
+      message: `Zod used (z.object, z.string, etc) but not imported. Add: import { z } from 'zod'`,
+    });
+  }
+
+  // Check for unused imports (sophisticated dual-pattern matching)
+  const unusedImports: string[] = [];
+  importedItems.forEach((item) => {
+    // Skip common React hooks that might be used indirectly
+    if (['React', 'Component'].includes(item)) {
+      return;
+    }
+
+    // Pattern 1: Used as value/identifier: Item.x or Item(...) or Item[...]
+    const valueUsagePattern = new RegExp(`\\b${item}\\s*[\\.(\\[]`, 'g');
+    const valueMatches = code.match(valueUsagePattern) || [];
+
+    // Pattern 2: Used as type annotation (e.g., : ClassValue or ClassValue[])
+    const typeUsagePattern = new RegExp(`[:\\s<]${item}[\\s\\[,>]`, 'g');
+    const typeMatches = code.match(typeUsagePattern) || [];
+
+    // If used in either value or type position, it's not unused
+    if (valueMatches.length === 0 && typeMatches.length === 0) {
+      unusedImports.push(item);
+    }
+  });
+
+  if (unusedImports.length > 0) {
+    unusedImports.forEach((unused) => {
+      issues.push({
+        type: 'missing_import',
+        severity: 'warning',
+        message: `Unused import: '${unused}' is imported but never used. Remove: import { ${unused} } from '...'`,
+      });
+    });
+  }
+
+  // Return type checks
+  if (code.includes('JSON.stringify') && code.includes(': string | null')) {
+    issues.push({
+      type: 'library_issue',
+      severity: 'warning',
+      message: `Return type mismatch: JSON.stringify() returns 'string', not 'string | null'. Fix: Change return type to just 'string'`,
+    });
+  }
+
+  if (code.includes('JSON.parse') && code.includes(': any')) {
+    issues.push({
+      type: 'library_issue',
+      severity: 'warning',
+      message: `Type issue: JSON.parse() result should not be 'any'. Use a Zod schema or specific type instead of 'any'`,
+    });
+  }
+
+  return issues;
+}
