@@ -478,203 +478,6 @@ Show all available commands.
 /help
 ```
 
-## 📸 Visual Guide (v2.6.1)
-
-### ✅ Complete Feature Set (v2.6.1)
-
-All features working with comprehensive validation:
-
-#### Markdown Rendering (NEW in v2.6.1)
-- Beautifully formatted explanations with h1-h6 headers
-- Bold, italic, code blocks, lists, blockquotes
-- Type-safe angle bracket escaping
-- Audio player alongside formatted text
-
-#### 6-Layer Validation System (v2.5.0+)
-
-The validation architecture catches semantic errors across multiple files:
-
-#### Layer 1: Syntax Validation
-- Valid TypeScript code
-- Proper syntax structure
-- No compilation errors
-
-#### Layer 2: Type Validation
-- Correct type inference
-- Type-safe operations
-- No implicit any types
-
-#### Layer 3: Import Validation
-- Files exist at specified paths
-- Relative paths resolve correctly
-- No missing dependencies
-
-#### Layer 4: Cross-File Validation
-- Component imports resolve to stores
-- Store files exist in workspace
-- Import paths calculated pre-generation
-
-#### Layer 5: Hook Usage Validation
-- Hooks imported from correct modules
-- Hooks actually called in code
-- Destructured state actually used
-- No mixed state management
-
-#### Layer 6: Store Contract Validation
-- Store properties extracted (TypeScript generics supported)
-- Component destructuring matches store exports
-- All destructured properties exist in store
-- Property types align correctly
-
-**Example: Zustand Refactoring**
-```typescript
-// Step 1: Store created with validation
-export const useLoginStore = create<LoginFormStore>((set) => ({
-  formData: {},
-  errors: {},
-  setFormData: (data) => set({ formData: data }),
-  setErrors: (errors) => set({ errors }),
-}))  // 4 exports extracted and stored
-
-// Step 2: Component generated with validation
-const { formData, errors, setFormData, setErrors } = useLoginStore();
-// Validation: ✅ All 4 properties exist in store
-```
-
-### ✅ Pattern Detection & Analysis (Proven Reliable)
-
-#### `/refactor <file>` - Semantic Analysis
-
-Shows 5-layer semantic analysis:
-- State management issues
-- Dependency problems  
-- Coupling analysis
-- Data flow inspection
-- Anti-pattern detection
-- Actionable recommendations
-
-**Example Output:**
-```
-🔍 **Semantic Analysis** (hooks/useUser.ts)
-
-[5-Layer Analysis]
-✅ State Management: 3 states, well-organized
-⚠️ Dependencies: Missing useCallback on fetchUser
-⚠️ Coupling: Tight to AuthContext
-⚠️ Anti-patterns: Direct API call (should extract)
-⚠️ Data Flow: Incomplete error handling
-
-[Recommendations]
-1. Extract API logic to service layer (95% confidence)
-2. Add useCallback optimization (88% confidence)
-3. Improve error handling patterns (92% confidence)
-```
-
-#### `/rate-architecture` - Code Quality Scoring
-
-Architecture scoring (0-10):
-- Overall rating with breakdown
-- Layer-by-layer analysis
-- Strengths and weaknesses
-- Specific recommendations
-
-**Example Output:**
-```
-📊 **Architecture Rating: 9/10** ⭐⭐⭐⭐⭐
-
-[Layer Breakdown]
-├─ Schema Layer (types/): 9/10
-├─ Service Layer (services/): 8/10
-├─ Hook Layer (hooks/): 9/10
-└─ Component Layer (components/): 8/10
-
-[Strengths]
-✅ Clear separation of concerns
-✅ Proper error handling
-✅ Type-safe implementation
-
-[Recommendations]
-⚠️ Some hooks are large (150+ lines)
-⚠️ Missing error boundary components
-```
-
-#### `/suggest-patterns` - Pattern Recommendations
-
-8 design patterns:
-- CRUD, Authentication, Forms
-- DataFetching, StateManagement
-- Notifications, SearchFilter, Pagination
-- Shows which patterns are applicable
-- Implementation guidance
-
-**Example Output:**
-```
-🎯 **Available Patterns**
-
-1. CRUD Pattern (95% match) ✅ Already implemented
-   Where: src/services/userService.ts
-   
-2. Forms Pattern (82% match) ⚠️ Partially implemented
-   Gap: Missing form validation framework
-   
-3. DataFetching Pattern (78% match) ✅ Already implemented
-   Where: src/hooks/useUser.ts
-
-[5-8 more patterns...]
-```
-
-#### `/context show structure` - Project Organization
-
-Visualizes project layout:
-- Files organized by purpose
-- Proper separation of concerns
-- Clear architecture view
-
-**Example Output:**
-```
-📁 Project Structure
-
-schemas/
-├─ User.ts
-├─ Post.ts
-└─ Comment.ts
-
-services/
-├─ userService.ts
-├─ postService.ts
-
-hooks/
-├─ useUser.ts
-├─ usePost.ts
-
-components/
-├─ UserProfile.tsx
-├─ PostList.tsx
-
-Overall: 12 files organized in 4 layers
-```
-
-#### `/context show patterns` - Pattern Detection
-
-Shows detected patterns:
-- Pattern type and count
-- Which files implement which patterns
-- Architecture understanding
-
-**Example Output:**
-```
-🎯 Detected Patterns
-
-Zod Schema: 3 files
-React Component: 3 files
-Custom Hook: 3 files
-API Service: 3 files
-```
-
-### ⚠️ Disabled Features (None in v2.5.0)
-
-All planned features are functional. See Limitations section for known constraints.
-
 ## ⚙️ Configuration
 
 
@@ -811,7 +614,58 @@ The automated metrics sync script (`.github/skills/readme-synchronizer/sync-dyna
      Coverage: 80.27%
 ```
 
-#### 3. Copilot Instructions Integration
+#### 3. README Auto-Updater (v2.11.0+)
+
+The README Auto-Updater skill automatically updates README.md with latest metrics on every semantic release:
+
+```bash
+# The script workflow:
+1. Reads version from package.json
+2. Extracts metrics from METRICS.json
+3. Updates header badges (test count, coverage)
+4. Updates v2.11.0 section with metrics
+5. Updates Quality & Testing section
+6. Updates footer with release metrics
+7. Commits changes with [skip ci] to prevent loops
+```
+
+**Automatic Trigger:**
+- Version change detected in `package.json` (semantic release)
+- Workflow: `.github/workflows/readme-update-on-release.yml`
+
+**Manual Execution:**
+```bash
+# Update metrics first (required)
+npm run coverage
+sh .github/skills/readme-synchronizer/sync-dynamic.sh
+
+# Then run README updater
+sh .github/skills/readme-updater/update-readme.sh
+
+# Review and push
+git status
+git push origin your-branch
+```
+
+**Features:**
+- ✅ Automatic on semantic release
+- ✅ Extracts metrics from METRICS.json
+- ✅ Updates all version-dependent sections
+- ✅ Commits with `[skip ci]` to prevent loops
+- ✅ Works with GitHub Actions or manual execution
+
+**For Semantic Release Integration:**
+When you bump version in `package.json` and push to main:
+1. GitHub Actions detects version change
+2. Automatically runs README updater
+3. Updates all badges and metrics
+4. Commits to main with [skip ci]
+
+See [.github/skills/readme-updater/README.md](.github/skills/readme-updater/README.md) for detailed documentation.
+
+---
+
+#### 4. Copilot Instructions Integration
 
 The `.github/copilot-instructions.md` file provides context for AI coding agents:
 

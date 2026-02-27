@@ -1,0 +1,68 @@
+name: Auto-Update README on Semantic Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'METRICS.json'
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    name: Update README Metrics
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if version changed
+        id: version-check
+        run: |
+          # Get current version from package.json
+          CURRENT_VERSION=$(grep '"version":' package.json | head -1 | grep -o '[0-9.]*')
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Get previous version from git
+          PREVIOUS_VERSION=$(git show HEAD~1:package.json 2>/dev/null | grep '"version":' | head -1 | grep -o '[0-9.]*' || echo "")
+          echo "previous_version=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+
+          if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "VERSION CHANGED: $PREVIOUS_VERSION -> $CURRENT_VERSION"
+          else
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+            echo "No version change detected"
+          fi
+
+      - name: Run README updater skill
+        if: steps.version-check.outputs.version_changed == 'true'
+        run: |
+          chmod +x .github/skills/readme-updater/update-readme.sh
+          sh .github/skills/readme-updater/update-readme.sh
+
+      - name: Push updated README
+        if: steps.version-check.outputs.version_changed == 'true' && github.event_name == 'push'
+        run: |
+          if git diff --quiet; then
+            echo "No changes to push"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git push origin main
+            echo "✅ Updated README pushed to main"
+          fi
+
+      - name: Manual trigger notice
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "✅ Workflow triggered manually"
+          echo "README has been updated if version changed"
