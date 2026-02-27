@@ -2762,33 +2762,45 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       console.log(`[Executor] Platform: ${process.platform}`);
       console.log(`[Executor] Using shell: ${process.platform === 'win32' ? 'cmd.exe' : 'bash'}`);
 
+      // CRITICAL FIX: Detect package managers and use 'inherit' stdio
+      // npm/yarn/pnpm install commands need access to stdin/stdout for progress display
+      // and interactive confirmations. Other commands use 'pipe' to capture output.
+      const isPackageManagerCommand = /^(npm|yarn|pnpm)\s+(install|add|remove|ci)\b/i.test(command);
+      const stdio = isPackageManagerCommand ? 'inherit' : 'pipe';
+
+      console.log(`[Executor] stdio mode: ${stdio} (package manager: ${isPackageManagerCommand})`);
+
       const child = process.platform === 'win32'
         ? cp.spawn('cmd.exe', ['/c', command], {
             cwd: workspaceUri.fsPath,
             env: env,
-            stdio: 'pipe',
+            stdio: stdio,
             shell: false, // Don't double-shell on Windows
           })
         : cp.spawn('bash', ['-l', '-c', command], {
             cwd: workspaceUri.fsPath,
             env: env,
-            stdio: 'pipe',
+            stdio: stdio,
             shell: false, // Don't double-shell on Unix
           });
 
       let stdout = '';
       let stderr = '';
 
-      if (child.stdout) {
-        child.stdout.on('data', (data: any) => {
-          stdout += data.toString();
-        });
-      }
+      // Only collect output if stdio is 'pipe' (for non-package-manager commands)
+      // Package managers with 'inherit' stdio won't have stdout/stderr streams
+      if (stdio === 'pipe') {
+        if (child.stdout) {
+          child.stdout.on('data', (data: any) => {
+            stdout += data.toString();
+          });
+        }
 
-      if (child.stderr) {
-        child.stderr.on('data', (data: any) => {
-          stderr += data.toString();
-        });
+        if (child.stderr) {
+          child.stderr.on('data', (data: any) => {
+            stderr += data.toString();
+          });
+        }
       }
 
       const timeout = setTimeout(() => {
