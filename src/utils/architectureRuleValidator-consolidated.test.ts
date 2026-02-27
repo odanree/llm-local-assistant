@@ -65,7 +65,7 @@ describe('architectureRuleValidator - Pure Validation', () => {
       ({ content, rules, expectedError }) => {
         const result = validateArchitectureRulePure(content, rules, 'src/test.ts');
         if (expectedError) {
-          expect(result.some(e => e.includes(expectedError))).toBe(true);
+          expect(result.some(v => v.message.includes(expectedError))).toBe(true);
         } else {
           expect(result.length).toBe(0);
         }

@@ -14,6 +14,7 @@ import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSum
 import { GOLDEN_TEMPLATES } from './constants/templates';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns } from './utils/codePatternMatcher';
+import { validateArchitectureRulePure } from './utils/architectureRuleValidator';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -705,119 +706,16 @@ export class Executor {
       return errors; // No rules to validate against
     }
 
-    // CRITICAL FIX: Check if this is a UI component
-    // Per .lla-rules: Components should NOT use Zod for props, only for form data
-    const isComponent = filePath && filePath.includes('src/components/');
-    const isFormComponent = filePath && filePath.includes('Form');
+    // Orchestration: Call the pure validator to extract all violations
+    const violations = validateArchitectureRulePure(content, rules, filePath || '');
 
-    // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
-    if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
-      errors.push(
-        `❌ Rule violation: Using direct fetch() instead of TanStack Query. ` +
-        `Use: const { data } = useQuery(...) or useMutation(...)`
-      );
-    }
-
-    // Check Rule: No Redux (should use Zustand)
-    if (rules.includes('Zustand') && content.includes('useSelector')) {
-      errors.push(
-        `❌ Rule violation: Using Redux (useSelector) instead of Zustand. ` +
-        `Use: const store = useStore() from your Zustand store`
-      );
-    }
-
-    // Check Rule: No class components
-    if (rules.includes('functional components') && content.includes('extends React.Component')) {
-      errors.push(
-        `❌ Rule violation: Using class component instead of functional component. ` +
-        `Convert to: export function ComponentName() { ... }`
-      );
-    }
-
-    // Check Rule: TypeScript strict mode - return types required
-    if (rules.includes('strict TypeScript') || rules.includes('Never use implicit types')) {
-      // Check for arrow functions without return type annotation
-      // Pattern: const funcName = (...) => { ... } without : Type
-      const arrowFunctionsWithoutReturnType = content.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
-      if (arrowFunctionsWithoutReturnType) {
-        errors.push(
-          `⚠️ Rule: TypeScript strict mode requires return type annotations. ` +
-          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
-        );
-      }
-
-      // Check for function declarations without return type
-      const functionsWithoutReturnType = content.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
-      if (functionsWithoutReturnType) {
-        functionsWithoutReturnType.forEach((func) => {
-          // Check if this specific function has a return type annotation
-          const funcName = func.match(/function\s+(\w+)/)?.[1];
-          if (funcName) {
-            const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*:\\s*\\w+`);
-            if (!funcRegex.test(content)) {
-              errors.push(
-                `⚠️ Function '${funcName}' missing return type annotation. ` +
-                `Use: function ${funcName}(...): ReturnType { ... }`
-              );
-            }
-          }
-        });
-      }
-    }
-
-    // Check Rule: Runtime validation with Zod for utility functions
-    if (rules.includes('Zod for all runtime validation')) {
-      // If file has function parameters that accept objects but no Zod validation
-      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(content);
-      const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
-
-      if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
-        errors.push(
-          `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
-          `Example: const schema = z.object({ ... }); ` +
-          `Then: const validated = schema.parse(input);`
-        );
-      }
-    }
-
-    // Check Rule: Validation with Zod
-    // CRITICAL: Do NOT suggest Zod for UI components or simple utilities (per .lla-rules)
-    // Exception: Allow Zod for Form components (form data validation) and domain logic
-    // Utilities like cn.ts, helpers.ts are exempt - they're simple transforms, not validators
-    const isUtilityFile = filePath.includes('/utils/') || filePath.match(/\.(util|helper)\.ts$/);
-    if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
-      // Skip Zod suggestion for utility files - they don't need runtime validation
-      if (isUtilityFile) {
-        // Silently skip for utilities
-      } else if (!isComponent || (isComponent && isFormComponent)) {
-        // Only suggest for non-component/non-utility code or form components
-        errors.push(
-          `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-          `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-        );
-      }
-      // Silently skip for non-form UI components (they use TypeScript interfaces for props)
-    }
-
-    // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
-    if ((content.includes('useForm') || content.includes('react-hook-form')) && content.includes('z.')) {
-      if (content.includes('async') && content.includes('validate')) {
-        errors.push(
-          `❌ Incorrect resolver pattern: Using manual async validation instead of zodResolver. ` +
-          `Correct: import { zodResolver } from '@hookform/resolvers/zod'` +
-          `Then: useForm({ resolver: zodResolver(schema) })`
-        );
-      }
-    }
-
-    // PATTERN: Check for mixed resolver libraries
-    if ((content.includes('yupResolver') && content.includes('z.object')) ||
-        (content.includes('yupResolver') && content.includes('zod'))) {
-      errors.push(
-        `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
-        `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
-      );
-    }
+    // Map and Wrap: Convert violations to error messages
+    // This keeps the orchestration layer thin while using the pure logic
+    violations.forEach(violation => {
+      const message = violation.message +
+        (violation.suggestion ? ` ${violation.suggestion}` : '');
+      errors.push(message);
+    });
 
     return errors;
   }

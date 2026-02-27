@@ -4,48 +4,61 @@
  * Only imports from types/, no service classes
  */
 
+import type { ArchitectureViolation } from '../types/validation';
+
 /**
  * Validate architecture rules for code
  * Pure function: checks fetch/Redux/class components/TypeScript strict mode/Zod patterns
+ * Returns structured violation objects for orchestration layer to map to errors
  */
 export function validateArchitectureRulePure(
   content: string,
   rules: string[],
   filePath: string = ''
-): string[] {
-  const errors: string[] = [];
+): ArchitectureViolation[] {
+  const violations: ArchitectureViolation[] = [];
 
-  if (!rules || rules.length === 0) {
-    return errors; // No rules to validate against
-  }
+  // IMPORTANT: Don't return early - pattern-based checks should always run
+  // Only rule-based checks depend on the rules array being non-empty
 
   // CRITICAL FIX: Check if this is a UI component
   const isComponent = filePath.includes('src/components/');
   const isFormComponent = filePath.includes('Form');
   const isUtilityFile = filePath.includes('/utils/') || filePath.match(/\.(util|helper)\.ts$/);
 
-  // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
-  if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
-    errors.push(
-      `❌ Rule violation: Using direct fetch() instead of TanStack Query. ` +
-        `Use: const { data } = useQuery(...) or useMutation(...)`
-    );
+  // Rule-based checks - only run if rules are provided
+  if (rules && rules.length > 0) {
+    // Check Rule: No direct fetch calls (should use TanStack Query or API hooks)
+    if (rules.includes('TanStack Query') && /fetch\s*\(/.test(content)) {
+    violations.push({
+      type: 'fetch_rule',
+      severity: 'error',
+      message: `❌ Rule violation: Using direct fetch() instead of TanStack Query.`,
+      rule: 'TanStack Query',
+      suggestion: `Use: const { data } = useQuery(...) or useMutation(...)`
+    });
   }
 
   // Check Rule: No Redux (should use Zustand)
   if (rules.includes('Zustand') && content.includes('useSelector')) {
-    errors.push(
-      `❌ Rule violation: Using Redux (useSelector) instead of Zustand. ` +
-        `Use: const store = useStore() from your Zustand store`
-    );
+    violations.push({
+      type: 'redux_rule',
+      severity: 'error',
+      message: `❌ Rule violation: Using Redux (useSelector) instead of Zustand.`,
+      rule: 'Zustand',
+      suggestion: `Use: const store = useStore() from your Zustand store`
+    });
   }
 
   // Check Rule: No class components
   if (rules.includes('functional components') && content.includes('extends React.Component')) {
-    errors.push(
-      `❌ Rule violation: Using class component instead of functional component. ` +
-        `Convert to: export function ComponentName() { ... }`
-    );
+    violations.push({
+      type: 'class_component_rule',
+      severity: 'error',
+      message: `❌ Rule violation: Using class component instead of functional component.`,
+      rule: 'functional components',
+      suggestion: `Convert to: export function ComponentName() { ... }`
+    });
   }
 
   // Check Rule: TypeScript strict mode - return types required
@@ -53,10 +66,13 @@ export function validateArchitectureRulePure(
     // Check for arrow functions without return type annotation
     const arrowFunctionsWithoutReturnType = content.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
     if (arrowFunctionsWithoutReturnType) {
-      errors.push(
-        `⚠️ Rule: TypeScript strict mode requires return type annotations. ` +
-          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
-      );
+      violations.push({
+        type: 'typescript_strict',
+        severity: 'warning',
+        message: `⚠️ Rule: TypeScript strict mode requires return type annotations.`,
+        rule: 'strict TypeScript',
+        suggestion: `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
+      });
     }
 
     // Check for function declarations without return type
@@ -67,10 +83,13 @@ export function validateArchitectureRulePure(
         if (funcName) {
           const funcRegex = new RegExp(`function\\s+${funcName}\\s*\\([^)]*\\)\\s*:\\s*\\w+`);
           if (!funcRegex.test(content)) {
-            errors.push(
-              `⚠️ Function '${funcName}' missing return type annotation. ` +
-                `Use: function ${funcName}(...): ReturnType { ... }`
-            );
+            violations.push({
+              type: 'typescript_strict',
+              severity: 'warning',
+              message: `⚠️ Function '${funcName}' missing return type annotation.`,
+              rule: 'strict TypeScript',
+              suggestion: `Use: function ${funcName}(...): ReturnType { ... }`
+            });
           }
         }
       });
@@ -83,11 +102,13 @@ export function validateArchitectureRulePure(
     const hasZodValidation = content.includes('z.parse') || content.includes('z.parseAsync');
 
     if (hasObjectParams && !hasZodValidation && !content.includes('z.object')) {
-      errors.push(
-        `⚠️ Rule: Functions accepting objects should validate input with Zod. ` +
-          `Example: const schema = z.object({ ... }); ` +
-          `Then: const validated = schema.parse(input);`
-      );
+      violations.push({
+        type: 'zod_runtime_validation',
+        severity: 'warning',
+        message: `⚠️ Rule: Functions accepting objects should validate input with Zod.`,
+        rule: 'Zod for all runtime validation',
+        suggestion: `Example: const schema = z.object({ ... }); Then: const validated = schema.parse(input);`
+      });
     }
   }
 
@@ -96,24 +117,31 @@ export function validateArchitectureRulePure(
   if (rules.includes('Zod') && content.includes('type ') && !content.includes('z.')) {
     // Skip Zod suggestion for utility files
     if (!isUtilityFile && (!isComponent || (isComponent && isFormComponent))) {
-      errors.push(
-        `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-          `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-      );
+      violations.push({
+        type: 'zod_validation',
+        severity: 'info',
+        message: `⚠️ Rule suggestion: Define validation schemas with Zod instead of just TypeScript types.`,
+        rule: 'Zod',
+        suggestion: `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
+      });
     }
   }
+  } // End of rule-based checks
 
+  // PATTERN-BASED CHECKS: These always run regardless of rules
   // PATTERN: React Hook Form + Zod must use zodResolver, not manual async
   if (
     (content.includes('useForm') || content.includes('react-hook-form')) &&
     content.includes('z.')
   ) {
     if (content.includes('async') && content.includes('validate')) {
-      errors.push(
-        `❌ Incorrect resolver pattern: Using manual async validation instead of zodResolver. ` +
-          `Correct: import { zodResolver } from '@hookform/resolvers/zod'` +
-          `Then: useForm({ resolver: zodResolver(schema) })`
-      );
+      violations.push({
+        type: 'zod_resolver',
+        severity: 'error',
+        message: `❌ Incorrect resolver pattern: Using manual async validation instead of zodResolver.`,
+        rule: 'React Hook Form + Zod',
+        suggestion: `Use: import { zodResolver } from '@hookform/resolvers/zod'; Then: useForm({ resolver: zodResolver(schema) })`
+      });
     }
   }
 
@@ -122,13 +150,16 @@ export function validateArchitectureRulePure(
     (content.includes('yupResolver') && content.includes('z.object')) ||
     (content.includes('yupResolver') && content.includes('zod'))
   ) {
-    errors.push(
-      `❌ Mixed validation libraries: yupResolver with Zod schema. ` +
-        `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
-    );
+    violations.push({
+      type: 'mixed_validators',
+      severity: 'error',
+      message: `❌ Mixed validation libraries: yupResolver with Zod schema.`,
+      rule: 'Mixed validator consistency',
+      suggestion: `Use zodResolver for Zod schemas: import { zodResolver } from '@hookform/resolvers/zod'`
+    });
   }
 
-  return errors;
+  return violations;
 }
 
 /**
