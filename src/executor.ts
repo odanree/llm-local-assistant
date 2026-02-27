@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
+import { IFileSystem } from './providers/IFileSystem';
+import { ICommandRunner } from './providers/ICommandRunner';
+import { FileSystemProvider } from './providers/FileSystemProvider';
+import { CommandRunnerProvider } from './providers/CommandRunnerProvider';
 import SmartAutoCorrection from './smartAutoCorrection';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
@@ -33,6 +37,9 @@ export interface ExecutorConfig {
   onMessage?: (message: string, type: 'info' | 'error') => void;
   onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;  // Stream step output
   onQuestion?: (question: string, options: string[]) => Promise<string | undefined>;  // Ask clarification question (Priority 2.2)
+  // Phase 3A: Dependency Injection for side effects
+  fs?: IFileSystem;         // Default: FileSystemProvider (production)
+  commandRunner?: ICommandRunner;  // Default: CommandRunnerProvider (production)
 }
 
 export interface ExecutionResult {
@@ -54,12 +61,21 @@ export class Executor {
   private cancelled: boolean = false;
   private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
 
+  // Phase 3A: Dependency Injection for side effects
+  private fs: IFileSystem;
+  private commandRunner: ICommandRunner;
+
   constructor(config: ExecutorConfig) {
     this.config = {
       maxRetries: 2,
       timeout: 30000,
       ...config,
     };
+
+    // Phase 3A: Default to production providers if not injected
+    // Tests can inject mocks via ExecutorConfig.fs and ExecutorConfig.commandRunner
+    this.fs = config.fs || new FileSystemProvider();
+    this.commandRunner = config.commandRunner || new CommandRunnerProvider();
   }
 
   /**
