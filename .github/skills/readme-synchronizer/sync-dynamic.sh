@@ -19,17 +19,33 @@ if [ -f coverage/coverage-summary.json ]; then
     echo "🧪 Detected Tests: $TEST_COUNT"
 fi
 
-# 4. Update README.md dynamic metrics
-echo "🔄 Updating README.md metrics..."
+# 4. Update README.md badge header with dynamic metrics
+echo "🔄 Updating README.md badges header..."
 
-# Update coverage metric in v2.10.0 section
-if [ ! -z "$COVERAGE" ]; then
-    sed -i "s/\*\*Elite Tier Coverage:\*\* [0-9.]*%/\*\*Elite Tier Coverage:\*\* ${COVERAGE}%/g" README.md
+# Update Version badge
+sed -i "s/\[\!\[\[Version\]\(.*\)version-[0-9.]*-blue/[![Version](https:\/\/img.shields.io\/badge\/version-${VERSION}-blue/" README.md
+
+# Update Tests badge with dynamic count
+if [ ! -z "$TEST_COUNT" ]; then
+    sed -i "s/\[\!\[\[Tests\]\(.*\)tests-[0-9]*%2F[0-9]*%20passing/[![Tests](https:\/\/img.shields.io\/badge\/tests-${TEST_COUNT}%2F${TEST_COUNT}%20passing/" README.md
 fi
 
-# 5. Update README.md footer with version and metrics
+# Update Code Coverage badge with dynamic coverage
+if [ ! -z "$COVERAGE" ]; then
+    sed -i "s/\[\!\[\[Code Coverage\]\(.*\)coverage-[0-9.]*%25/[![Code Coverage](https:\/\/img.shields.io\/badge\/coverage-${COVERAGE}%25/" README.md
+fi
+
+# 5. Update README.md tagline/description with dynamic metrics
+echo "🔄 Updating README.md description..."
+if [ ! -z "$TEST_COUNT" ] && [ ! -z "$COVERAGE" ]; then
+    sed -i "s/with [0-9]* tests and [0-9.]*% coverage/with ${TEST_COUNT} tests and ${COVERAGE}% coverage/" README.md
+fi
+
+# 6. Update README.md footer with version and metrics
 echo "🔄 Updating README.md footer..."
-sed -i "s/✨ v[0-9.]* - .*/✨ v$VERSION - Enterprise-Grade Local AI Orchestrator | 🧪 2453 Tests Passing | 📊 ${COVERAGE}% Coverage (Elite Tier) | 🎯 Production Ready | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Testable Ceiling Achieved/g" README.md
+if [ ! -z "$TEST_COUNT" ] && [ ! -z "$COVERAGE" ]; then
+    sed -i "s/✨ v[0-9.]* - .*/✨ v${VERSION} - Enterprise-Grade Local AI Orchestrator | 🧪 ${TEST_COUNT} Tests Passing | 📊 ${COVERAGE}% Coverage (Elite Tier) | 🎯 Production Ready | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Testable Ceiling Achieved/" README.md
+fi
 
 echo ""
 echo "✅ Dynamic Sync Complete:"
@@ -37,4 +53,7 @@ echo "   Version: v$VERSION"
 if [ ! -z "$COVERAGE" ]; then
     echo "   Coverage: $COVERAGE%"
 fi
-echo "   Files Updated: README.md (metrics + footer)"
+if [ ! -z "$TEST_COUNT" ]; then
+    echo "   Tests: $TEST_COUNT"
+fi
+echo "   Files Updated: README.md (badges, description, metrics, footer)"
