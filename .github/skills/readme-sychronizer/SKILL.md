@@ -14,23 +14,30 @@ Keep all project documentation in sync with actual metrics and versioning across
 
 ## What It Does
 
-1. **Version Detection**
-   - Extracts version from `package.json`
-   - Updates version references in:
-     * `copilot-instructions.md` header
-     * `copilot-instructions.md` Current Release Status
-     * `README.md` Elite Tier Achievement section
+1. **Version Detection & Sync**
+   - Extracts version from `package.json` (e.g., v2.10.0)
+   - Synchronizes version across all documentation:
+     * `copilot-instructions.md` header tagline (✨ v{VERSION})
+     * `README.md` footer (✨ v{VERSION} - Enterprise-Grade...)
+     * `copilot-instructions.md` Current Release Status field
 
-2. **Coverage Metric Extraction**
-   - Reads `coverage-summary.json` for line coverage percentage
-   - Updates coverage references in:
-     * `copilot-instructions.md` header tagline
+2. **Coverage Metric Extraction & Sync**
+   - Reads `coverage-summary.json` for authoritative coverage percentage
+   - Extracts line coverage metric and updates all references dynamically:
+     * `copilot-instructions.md` header tagline (📊 {COVERAGE}% Coverage)
      * `copilot-instructions.md` Test Coverage field
-     * `README.md` Elite Tier Coverage field
+     * `README.md` Status line
+     * `README.md` Elite Tier Coverage section
+     * `README.md` footer (Elite Tier branding)
 
-3. **Test Count Tracking**
-   - Detects test count from coverage reports
-   - Updates test references in documentation
+3. **Test Count Tracking & Sync**
+   - Detects exact test count from coverage reports (uses {TEST_COUNT} variable)
+   - Updates test references across:
+     * `copilot-instructions.md` header (🧪 {TEST_COUNT} Tests Passing)
+     * `copilot-instructions.md` Test Suite field
+     * `README.md` header tagline ({TEST_COUNT} tests)
+     * `README.md` status section ({TEST_COUNT}/{TEST_COUNT} tests)
+     * `README.md` footer ({TEST_COUNT} Tests Passing)
 
 ## Command
 ```bash

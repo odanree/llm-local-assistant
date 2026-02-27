@@ -21,7 +21,7 @@ fi
 
 # 4. Update copilot-instructions.md header with version metrics
 echo "🔄 Updating copilot-instructions.md header..."
-sed -i "s/✨ v[0-9.]* - Enterprise-Grade Local AI Orchestrator.*/✨ v$VERSION - Enterprise-Grade Local AI Orchestrator | 🧪 2,500+ Tests Passing | 📊 ${COVERAGE}% Coverage (Elite Tier) | 🎯 Production Ready | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Testable Ceiling Achieved/g" .github/copilot-instructions.md
+sed -i "s/✨ v[0-9.]* - Enterprise-Grade Local AI Orchestrator.*/✨ v$VERSION - Enterprise-Grade Local AI Orchestrator | 🧪 2453 Tests Passing | 📊 ${COVERAGE}% Coverage (Elite Tier) | 🎯 Production Ready | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Testable Ceiling Achieved/g" .github/copilot-instructions.md
 
 # 5. Update copilot-instructions.md Current Release Status
 echo "🔄 Updating copilot-instructions.md Current Release Status..."
@@ -40,8 +40,9 @@ if [ ! -z "$COVERAGE" ]; then
     sed -i "s/\*\*Elite Tier Coverage:\*\* [0-9.]*%/\*\*Elite Tier Coverage:\*\* ${COVERAGE}%/g" README.md
 fi
 
-# 7. Update version references
-sed -i "s/v2\.[0-9.]*/-Complete/-g" README.md || true
+# 7. Update README.md footer with version and metrics
+echo "🔄 Updating README.md footer..."
+sed -i "s/✨ v[0-9.]* - .*/✨ v$VERSION - Enterprise-Grade Local AI Orchestrator | 🧪 2453 Tests Passing | 📊 ${COVERAGE}% Coverage (Elite Tier) | 🎯 Production Ready | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Testable Ceiling Achieved/g" README.md
 
 echo ""
 echo "✅ Dynamic Sync Complete:"
@@ -49,4 +50,4 @@ echo "   Version: v$VERSION"
 if [ ! -z "$COVERAGE" ]; then
     echo "   Coverage: $COVERAGE%"
 fi
-echo "   Files Updated: copilot-instructions.md, README.md"
+echo "   Files Updated: copilot-instructions.md, README.md (header + footer)"
