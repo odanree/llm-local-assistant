@@ -63,7 +63,28 @@ if [ -z "$COVERAGE" ] || [ -z "$TEST_COUNT" ]; then
     exit 1
 fi
 
-# 5. Update METRICS.json with extracted values
+# 5. QUALITY GATE: Regression Check (The Quality Gate)
+# Diamond Tier threshold: 80.27% (v2.11.0 achievement)
+THRESHOLD="80.27"
+echo "[*] Checking Quality Gate: Coverage must be >= $THRESHOLD%"
+
+if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+    echo ""
+    echo "❌ ERROR: Coverage ($COVERAGE%) is below the Diamond Tier threshold ($THRESHOLD%)!"
+    echo "This is a regression in code quality."
+    echo ""
+    echo "Please add tests for your changes before merging:"
+    echo "  - Run: npm run test"
+    echo "  - Coverage must meet or exceed $THRESHOLD%"
+    echo "  - Update CHANGELOG.md with improvements"
+    echo ""
+    rm -f /tmp/coverage-output.txt
+    exit 1
+else
+    echo "[OK] Quality Gate PASSED: $COVERAGE% >= $THRESHOLD%"
+fi
+
+# 6. Update METRICS.json with extracted values
 echo "[*] Updating METRICS.json..."
 
 cat > METRICS.json << EOF
