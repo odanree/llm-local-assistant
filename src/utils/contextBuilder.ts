@@ -8,8 +8,9 @@
  * Inject into system prompt so LLM respects existing dependencies
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
+import { IFileSystem } from '../providers/IFileSystem';
+import { FileSystemProvider } from '../providers/FileSystemProvider';
 
 export interface ProjectContext {
   dependencies: Map<string, string>;
@@ -31,10 +32,12 @@ export interface ProjectContext {
 }
 
 export class ContextBuilder {
+  constructor(private fs: IFileSystem = new FileSystemProvider()) {}
+
   /**
    * Build full project context from workspace
    */
-  static buildContext(projectPath: string): ProjectContext {
+  buildContext(projectPath: string): ProjectContext {
     const context: ProjectContext = {
       dependencies: new Map(),
       devDependencies: new Map(),
@@ -56,10 +59,14 @@ export class ContextBuilder {
 
     // Step 1: Read package.json
     const packageJsonPath = path.join(projectPath, 'package.json');
-    context.hasPackageJson = fs.existsSync(packageJsonPath);
+    try {
+      context.hasPackageJson = this.fs.existsSync(packageJsonPath);
+    } catch {
+      context.hasPackageJson = false;
+    }
     if (context.hasPackageJson) {
       try {
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+        const packageJson = JSON.parse(this.fs.readFileSync(packageJsonPath, 'utf-8'));
 
         // Extract dependencies
         if (packageJson.dependencies) {
@@ -95,8 +102,8 @@ export class ContextBuilder {
         console.warn('Failed to parse package.json:', error);
       }
 
-      // CONTEXT-AWARE PLANNING: Detect test files
-      context.hasTestFiles = this.detectTestFiles(projectPath);
+    // CONTEXT-AWARE PLANNING: Detect test files
+    context.hasTestFiles = this.detectTestFiles(projectPath);
       if (context.hasTestFiles && !context.hasTests) {
         // Has test files but no framework configured
         context.testFramework = 'unknown';
@@ -129,7 +136,7 @@ export class ContextBuilder {
   /**
    * Detect frameworks from dependencies
    */
-  private static detectFrameworks(dependencies: Map<string, string>): string[] {
+  private detectFrameworks(dependencies: Map<string, string>): string[] {
     const frameworks: string[] = [];
 
     const frameworkMap: Record<string, string[]> = {
@@ -160,7 +167,7 @@ export class ContextBuilder {
   /**
    * Scan source files for common import patterns
    */
-  private static scanCommonImports(projectPath: string): string[] {
+  private scanCommonImports(projectPath: string): string[] {
     const imports = new Set<string>();
 
     const sourceExtensions = ['.ts', '.tsx', '.js', '.jsx'];
@@ -168,7 +175,11 @@ export class ContextBuilder {
 
     for (const dir of sourceDirs) {
       const dirPath = path.join(projectPath, dir);
-      if (!fs.existsSync(dirPath)) {continue;}
+      try {
+        if (!this.fs.existsSync(dirPath)) {continue;}
+      } catch {
+        continue;
+      }
 
       try {
         const files = this.walkDir(dirPath, sourceExtensions);
@@ -176,7 +187,7 @@ export class ContextBuilder {
         for (const file of files.slice(0, 20)) {
           // Sample first 20 files to avoid slowdown
           try {
-            const content = fs.readFileSync(file, 'utf-8');
+            const content = this.fs.readFileSync(file, 'utf-8');
             const importMatches = content.match(/import\s+.*?\s+from\s+['"]([^'"]+)['"]/g) || [];
 
             for (const match of importMatches) {
@@ -203,13 +214,17 @@ export class ContextBuilder {
   /**
    * Detect patterns (TypeScript, Testing, etc.)
    */
-  private static detectPatterns(projectPath: string, context: ProjectContext): string[] {
+  private detectPatterns(projectPath: string, context: ProjectContext): string[] {
     const patterns: string[] = [];
 
     // Check for TypeScript
     const tsConfigPath = path.join(projectPath, 'tsconfig.json');
-    if (fs.existsSync(tsConfigPath)) {
-      patterns.push('TypeScript');
+    try {
+      if (this.fs.existsSync(tsConfigPath)) {
+        patterns.push('TypeScript');
+      }
+    } catch {
+      // Ignore errors
     }
 
     // Check for Jest/Vitest
@@ -251,7 +266,7 @@ export class ContextBuilder {
    * Minimal context (test-like structure) → Scaffold Mode
    * Insufficient context → Warn user, suggest explicit file paths
    */
-  private static assessContextQuality(
+  private assessContextQuality(
     context: ProjectContext,
   ): { quality: 'rich' | 'minimal' | 'insufficient'; generationMode: 'diff-mode' | 'scaffold-mode'; suggestedStrategy: string } {
     const depCount = context.dependencies.size + context.devDependencies.size;
@@ -287,7 +302,7 @@ export class ContextBuilder {
   /**
    * Generate AI-friendly summary for system prompt injection
    */
-  private static generateSummary(context: ProjectContext): string {
+  private generateSummary(context: ProjectContext): string {
     const parts: string[] = [];
 
     // Frameworks
@@ -321,11 +336,11 @@ export class ContextBuilder {
   /**
    * Recursively walk directory and return files matching extensions
    */
-  private static walkDir(dir: string, extensions: string[]): string[] {
+  private walkDir(dir: string, extensions: string[]): string[] {
     const files: string[] = [];
 
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = this.fs.readdirSync(dir, { withFileTypes: true });
 
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
@@ -350,7 +365,7 @@ export class ContextBuilder {
    * CONTEXT-AWARE PLANNING: Detect test files in project
    * Looks for common test patterns: *.test.ts, *.test.tsx, *.spec.ts, etc.
    */
-  private static detectTestFiles(projectPath: string): boolean {
+  private detectTestFiles(projectPath: string): boolean {
     const testPatterns = [
       '**/*.test.ts',
       '**/*.test.tsx',
@@ -372,27 +387,39 @@ export class ContextBuilder {
       const testDirs = ['test', 'tests', '__tests__', 'src/__tests__', 'src/tests'];
       for (const dir of testDirs) {
         const testPath = path.join(projectPath, dir);
-        if (fs.existsSync(testPath) && fs.statSync(testPath).isDirectory()) {
-          const files = fs.readdirSync(testPath);
-          if (files.length > 0) {
-            return true; // Has test directory with files
+        try {
+          if (this.fs.existsSync(testPath) && this.fs.statSync(testPath).isDirectory()) {
+            const files = this.fs.readdirSync(testPath);
+            if (files.length > 0) {
+              return true; // Has test directory with files
+            }
           }
+        } catch {
+          // Skip this directory if can't access
         }
       }
 
       // Check for test files in src directory
       const srcPath = path.join(projectPath, 'src');
-      if (fs.existsSync(srcPath)) {
-        const files = this.walkDir(srcPath, extensions);
-        if (files.length > 0) {
-          return true; // Found test files
+      try {
+        if (this.fs.existsSync(srcPath)) {
+          const files = this.walkDir(srcPath, extensions);
+          if (files.length > 0) {
+            return true; // Found test files
+          }
         }
+      } catch {
+        // Skip if can't access src
       }
 
       // Check project root for test files
-      const rootFiles = fs.readdirSync(projectPath);
-      if (rootFiles.some(f => extensions.some(ext => f.endsWith(ext)))) {
-        return true;
+      try {
+        const rootFiles = this.fs.readdirSync(projectPath);
+        if (rootFiles.some(f => extensions.some(ext => f.endsWith(ext)))) {
+          return true;
+        }
+      } catch {
+        // Skip if can't access root
       }
 
       return false;
@@ -407,7 +434,8 @@ export class ContextBuilder {
  * Export convenience function for typical use
  */
 export function buildProjectContext(projectPath: string): ProjectContext {
-  return ContextBuilder.buildContext(projectPath);
+  const builder = new ContextBuilder();
+  return builder.buildContext(projectPath);
 }
 
 /**

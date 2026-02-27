@@ -63,7 +63,8 @@ export class Refiner {
 
     // **Phase 1: Build Context**
     this.config.onProgress?.('Building Project Context', 'Scanning dependencies and imports...');
-    const projectContext = ContextBuilder.buildContext(this.config.projectRoot);
+    const contextBuilder = new ContextBuilder();
+    const projectContext = contextBuilder.buildContext(this.config.projectRoot);
 
     // **CRITICAL FIX (Issue #3): Force generation mode for minimal projects IMMEDIATELY**
     // Don't even try DIFF-MODE if the project lacks structure

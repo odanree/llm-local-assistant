@@ -387,8 +387,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   });
 
                   // CONTEXT-AWARE PLANNING: Build project context and pass to Planner
-                  const projectContext = ContextBuilder.buildContext(selectedFolder.uri.fsPath);
-                  
+                  const contextBuilder = new ContextBuilder();
+                  const projectContext = contextBuilder.buildContext(selectedFolder.uri.fsPath);
+
                   const plan = await planner.generatePlan(
                     userRequest,
                     selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
@@ -2311,7 +2312,8 @@ ${fileContent}
                 });
 
                 // CONTEXT-AWARE PLANNING: Build project context and pass to Planner
-                const projectContext = ContextBuilder.buildContext(selectedFolder.uri.fsPath);
+                const contextBuilder = new ContextBuilder();
+                const projectContext = contextBuilder.buildContext(selectedFolder.uri.fsPath);
 
                 const plan = await planner.generatePlan(
                   pendingPlanRequest,
