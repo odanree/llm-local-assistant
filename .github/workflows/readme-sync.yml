@@ -1,0 +1,46 @@
+name: 🚀 Dynamic README Synchronizer
+
+on:
+  push:
+    branches: [ main, 'feat/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push changes back to the PR branch
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🧪 Generate Coverage Summary
+        # We run tests to get the most recent coverage-summary.json
+        run: npm run coverage
+
+      - name: ⚡ Run Synchronization Skill
+        # This executes the logic we defined in your dynamic shell script
+        run: sh .github/skills/readme-sychronizer/sync-dynamic.sh
+
+      - name: 🏛️ Enforce Root Directory Rules
+        # Optional: Run your root-enforcer here to ensure no ghost files sneak into the PR
+        run: sh .github/skills/root-enforcer/enforce.sh
+
+      - name: 📤 Commit and Push Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(docs): dynamic sync version and coverage metrics [skip ci]"
+          file_pattern: 'README.md docs/**/*.md'

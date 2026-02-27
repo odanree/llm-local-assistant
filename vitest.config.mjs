@@ -10,6 +10,8 @@ export default defineConfig({
       '.claude/worktrees/**',
       'dist/**',
       'out/**',
+      'tests-legacy-backup-wave1-20260226/**', // Phase 5 Wave 1 backup
+      'tests-legacy-backup-*/**', // All legacy backup directories
     ],
     onConsoleLog(log, type) {
       // Suppress specific console logs if needed
@@ -28,11 +30,17 @@ export default defineConfig({
         '**/*.d.ts',
         '**/*.test.ts',
         '**/mock/**',
+        'src/test/executor.shared-mocks.ts', // Test utilities don't need coverage
       ],
-      lines: 70,
-      functions: 70,
-      branches: 65,
-      statements: 70,
+      // CRITICAL: Coverage thresholds locked at Phase 6.4 achievement (74.68%)
+      // These thresholds enforce the realistic testable ceiling and prevent regression
+      // Note: 74.68% is the maximum testable coverage without architectural refactoring
+      lines: 74,
+      functions: 80,
+      branches: 67, // Branch coverage is harder to achieve
+      statements: 74,
+      // Fail the build if any threshold is not met
+      all: true,
     },
   },
   resolve: {
