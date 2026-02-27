@@ -11,8 +11,9 @@
  * - .git folder (git repository)
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
+import { IFileSystem } from '../providers/IFileSystem';
+import { FileSystemProvider } from '../providers/FileSystemProvider';
 
 export interface DetectedWorkspace {
   path: string; // Absolute path
@@ -23,11 +24,13 @@ export interface DetectedWorkspace {
 }
 
 export class WorkspaceDetector {
+  constructor(private fs: IFileSystem = new FileSystemProvider()) {}
+
   /**
    * Scan parent folder for multiple workspaces
    * Returns array of detected workspaces sorted by confidence
    */
-  static findWorkspaces(startPath: string, maxDepth: number = 2): DetectedWorkspace[] {
+  findWorkspaces(startPath: string, maxDepth: number = 2): DetectedWorkspace[] {
     const workspaces: DetectedWorkspace[] = [];
     const root = this.findProjectRoot(startPath);
 
@@ -36,7 +39,7 @@ export class WorkspaceDetector {
 
     // Check immediate children
     try {
-      const entries = fs.readdirSync(root, { withFileTypes: true });
+      const entries = this.fs.readdirSync(root, { withFileTypes: true });
       console.log('[WorkspaceDetector] Found entries:', entries.map(e => e.name));
 
       for (const entry of entries) {
@@ -78,38 +81,58 @@ export class WorkspaceDetector {
   /**
    * Analyze a folder to determine if it's a workspace
    */
-  private static analyzeFolder(folderPath: string, folderName: string): DetectedWorkspace | null {
+  private analyzeFolder(folderPath: string, folderName: string): DetectedWorkspace | null {
     const indicators: string[] = [];
     let confidence = 0;
 
     // Check for package.json (node project)
-    if (fs.existsSync(path.join(folderPath, 'package.json'))) {
-      indicators.push('package.json');
-      confidence += 0.4;
+    try {
+      if (this.fs.existsSync(path.join(folderPath, 'package.json'))) {
+        indicators.push('package.json');
+        confidence += 0.4;
+      }
+    } catch {
+      // Ignore errors during existence checks
     }
 
     // Check for tsconfig.json (TypeScript project)
-    if (fs.existsSync(path.join(folderPath, 'tsconfig.json'))) {
-      indicators.push('tsconfig.json');
-      confidence += 0.3;
+    try {
+      if (this.fs.existsSync(path.join(folderPath, 'tsconfig.json'))) {
+        indicators.push('tsconfig.json');
+        confidence += 0.3;
+      }
+    } catch {
+      // Ignore errors during existence checks
     }
 
     // Check for .vscode/settings.json (VS Code workspace)
-    if (fs.existsSync(path.join(folderPath, '.vscode/settings.json'))) {
-      indicators.push('.vscode/settings.json');
-      confidence += 0.2;
+    try {
+      if (this.fs.existsSync(path.join(folderPath, '.vscode/settings.json'))) {
+        indicators.push('.vscode/settings.json');
+        confidence += 0.2;
+      }
+    } catch {
+      // Ignore errors during existence checks
     }
 
     // Check for src folder (project structure)
-    if (fs.existsSync(path.join(folderPath, 'src'))) {
-      indicators.push('src/');
-      confidence += 0.1;
+    try {
+      if (this.fs.existsSync(path.join(folderPath, 'src'))) {
+        indicators.push('src/');
+        confidence += 0.1;
+      }
+    } catch {
+      // Ignore errors during existence checks
     }
 
     // Check for .git folder (git repository)
-    if (fs.existsSync(path.join(folderPath, '.git'))) {
-      indicators.push('.git/');
-      confidence += 0.2;
+    try {
+      if (this.fs.existsSync(path.join(folderPath, '.git'))) {
+        indicators.push('.git/');
+        confidence += 0.2;
+      }
+    } catch {
+      // Ignore errors during existence checks
     }
 
     // Check for common source file patterns
@@ -144,11 +167,11 @@ export class WorkspaceDetector {
   /**
    * Check if folder has source files (.ts, .tsx, .js, .jsx)
    */
-  private static hasSourceFiles(folderPath: string): boolean {
+  private hasSourceFiles(folderPath: string): boolean {
     const sourceExtensions = ['.ts', '.tsx', '.js', '.jsx'];
 
     try {
-      const entries = fs.readdirSync(folderPath);
+      const entries = this.fs.readdirSync(folderPath);
 
       for (const entry of entries) {
         const ext = path.extname(entry);
@@ -161,7 +184,7 @@ export class WorkspaceDetector {
       const subdirs = entries
         .filter((e) => {
           try {
-            return fs.statSync(path.join(folderPath, e)).isDirectory();
+            return this.fs.statSync(path.join(folderPath, e)).isDirectory();
           } catch {
             return false;
           }
@@ -170,7 +193,7 @@ export class WorkspaceDetector {
 
       for (const subdir of subdirs) {
         const subPath = path.join(folderPath, subdir);
-        const subEntries = fs.readdirSync(subPath);
+        const subEntries = this.fs.readdirSync(subPath);
         for (const entry of subEntries) {
           const ext = path.extname(entry);
           if (sourceExtensions.includes(ext)) {
@@ -189,7 +212,7 @@ export class WorkspaceDetector {
    * Find the root folder to start scanning from
    * (walk up until we find a folder with multiple subfolders)
    */
-  private static findProjectRoot(startPath: string): string {
+  private findProjectRoot(startPath: string): string {
     let current = startPath;
 
     // Walk up to find a folder with multiple projects
@@ -213,9 +236,9 @@ export class WorkspaceDetector {
   /**
    * Count how many child folders look like projects
    */
-  private static countProjectChildren(folderPath: string): number {
+  private countProjectChildren(folderPath: string): number {
     try {
-      const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+      const entries = this.fs.readdirSync(folderPath, { withFileTypes: true });
       let count = 0;
 
       for (const entry of entries) {
@@ -238,7 +261,7 @@ export class WorkspaceDetector {
   /**
    * Format workspaces for display (chat UI)
    */
-  static formatForDisplay(workspaces: DetectedWorkspace[]): string {
+  formatForDisplay(workspaces: DetectedWorkspace[]): string {
     if (workspaces.length === 0) {
       return 'No existing workspaces detected. Create a new one with `./src`?';
     }
@@ -263,7 +286,7 @@ export class WorkspaceDetector {
   /**
    * Get workspace by index
    */
-  static getWorkspaceByIndex(workspaces: DetectedWorkspace[], index: number): DetectedWorkspace | null {
+  getWorkspaceByIndex(workspaces: DetectedWorkspace[], index: number): DetectedWorkspace | null {
     if (index < 1 || index > workspaces.length) {
       return null;
     }
