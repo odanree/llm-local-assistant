@@ -22,7 +22,7 @@ export default defineConfig({
     hookTimeout: 30000,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html', 'lcov'],
+      reporter: ['text', 'json-summary', 'json', 'html', 'lcov'],
       exclude: [
         'node_modules/',
         '.claude/worktrees/',
