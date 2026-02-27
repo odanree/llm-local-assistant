@@ -1,4 +1,4 @@
-name: 🚀 Dynamic Metrics Synchronizer
+name: 🚀 Metrics Validator & Quality Gate
 
 on:
   push:
@@ -31,9 +31,10 @@ jobs:
         # We run tests to get the most recent coverage-summary.json
         run: npm run coverage
 
-      - name: ⚡ Run Metrics Synchronization Skill
+      - name: ⚡ Run Metrics Validator Skill
         # This creates/updates METRICS.json with version, tests, and coverage
-        run: sh .github/skills/readme-synchronizer/sync-dynamic.sh
+        # Validates quality gate threshold (80.27% coverage)
+        run: sh .github/skills/metrics-validator/validate-metrics.sh
 
       - name: 🏛️ Enforce Root Directory Rules
         # Optional: Run your root-enforcer here to ensure no ghost files sneak into the PR
