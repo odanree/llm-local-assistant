@@ -34,7 +34,8 @@
       "Bash(find:*)",
       "Bash(wc:*)",
       "Bash(npx tsc:*)",
-      "Bash(gh pr close:*)"
+      "Bash(gh pr close:*)",
+      "Bash(git branch:*)"
     ]
   }
 }
