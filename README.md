@@ -502,7 +502,7 @@ v2.11.0 introduces **Automated Quality Gates** - enforced minimum coverage thres
 The quality gate is enforced at **80.27% coverage** (Diamond Tier threshold) via the metrics synchronizer script:
 
 ```bash
-# .github/skills/readme-synchronizer/sync-dynamic.sh
+# .github/skills/metrics-validator/validate-metrics.sh
 THRESHOLD="80.27"
 
 if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
@@ -522,7 +522,7 @@ fi
 - ✅ Pull requests targeting `main` branch
 - ✅ Pushes to `feat/**` branches
 - ✅ Pushes to `main` branch
-- ✅ Manual execution: `sh .github/skills/readme-synchronizer/sync-dynamic.sh`
+- ✅ Manual execution: `sh .github/skills/metrics-validator/validate-metrics.sh`
 
 **Success Criteria:**
 - Coverage ≥ 80.27%: ✅ Quality gate PASSED - proceed with merge
@@ -570,9 +570,9 @@ sh .github/skills/root-enforcer/enforce.sh
 
 The enforcer automatically runs in CI/CD pipelines on every PR to keep your repository clean.
 
-#### 2. Dynamic Metrics Synchronizer (v2.11.0+)
+#### 2. Metrics Validator (v2.11.0+)
 
-The automated metrics sync script (`.github/skills/readme-synchronizer/sync-dynamic.sh`) runs on every PR to keep METRICS.json and coverage data current with real test results:
+The metrics validator skill (`.github/skills/metrics-validator/validate-metrics.sh`) runs on every PR to extract real metrics, enforce quality gates, and keep METRICS.json current:
 
 ```bash
 # The script workflow:
@@ -596,7 +596,7 @@ The automated metrics sync script (`.github/skills/readme-synchronizer/sync-dyna
 **Trigger Events:**
 - Push to `feat/**` or `main` branches
 - Pull requests targeting `main`
-- Manual execution: `sh .github/skills/readme-synchronizer/sync-dynamic.sh`
+- Manual execution: `sh .github/skills/metrics-validator/validate-metrics.sh`
 
 **Sample Output:**
 ```
@@ -637,7 +637,7 @@ The README Auto-Updater skill automatically updates README.md with latest metric
 ```bash
 # Update metrics first (required)
 npm run coverage
-sh .github/skills/readme-synchronizer/sync-dynamic.sh
+sh .github/skills/metrics-validator/validate-metrics.sh
 
 # Then run README updater
 sh .github/skills/readme-updater/update-readme.sh
@@ -1044,7 +1044,7 @@ npm run test:watch
 # Console Output: Shows coverage metrics after test run
 
 # Check quality gate locally
-sh .github/skills/readme-synchronizer/sync-dynamic.sh
+sh .github/skills/metrics-validator/validate-metrics.sh
 ```
 
 #### Quality Gate Enforcement (v2.11.0+)
@@ -1187,7 +1187,7 @@ Files:
 3. Add tests for uncovered code paths
 4. Focus on core logic and error handling
 5. Run: `npm test` to verify tests pass
-6. Re-run quality gate: `sh .github/skills/readme-synchronizer/sync-dynamic.sh`
+6. Re-run quality gate: `sh .github/skills/metrics-validator/validate-metrics.sh`
 
 #### "Failed to extract metrics from coverage output"
 **Error:** The script couldn't parse test count or coverage percentage
@@ -1196,7 +1196,7 @@ Files:
 1. Verify npm run coverage works locally: `npm run coverage`
 2. Check that vitest is installed: `npm list vitest`
 3. Ensure coverage script runs successfully without errors
-4. Try running manually: `sh .github/skills/readme-synchronizer/sync-dynamic.sh`
+4. Try running manually: `sh .github/skills/metrics-validator/validate-metrics.sh`
 
 #### "Coverage extraction returned wrong number"
 **Error:** The script extracted incorrect metrics
@@ -1205,8 +1205,8 @@ Files:
 1. Check test output format matches expected pattern
 2. Verify "XXXX passed" appears in test output
 3. Verify "All files | XX.XX %" appears in coverage output
-4. Check file permissions: `ls -la .github/skills/readme-synchronizer/sync-dynamic.sh`
-5. Ensure script is executable: `chmod +x .github/skills/readme-synchronizer/sync-dynamic.sh`
+4. Check file permissions: `ls -la .github/skills/metrics-validator/validate-metrics.sh`
+5. Ensure script is executable: `chmod +x .github/skills/metrics-validator/validate-metrics.sh`
 
 ---
 

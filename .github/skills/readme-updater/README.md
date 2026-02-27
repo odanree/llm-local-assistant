@@ -43,7 +43,7 @@ Run the skill directly from your local machine:
 npm run coverage
 
 # Update METRICS.json with current metrics
-sh .github/skills/readme-synchronizer/sync-dynamic.sh
+sh .github/skills/metrics-validator/validate-metrics.sh
 
 # Run README updater
 sh .github/skills/readme-updater/update-readme.sh
@@ -96,7 +96,7 @@ git push origin main
 ```bash
 # Update metrics locally
 npm run coverage
-sh .github/skills/readme-synchronizer/sync-dynamic.sh
+sh .github/skills/metrics-validator/validate-metrics.sh
 
 # Update README
 sh .github/skills/readme-updater/update-readme.sh
@@ -123,11 +123,11 @@ The updater reads metrics from:
 
 | Metric | Source | Updated By |
 |--------|--------|-----------|
-| **Version** | `METRICS.json` → `version` | Dynamic Metrics Synchronizer |
-| **Test Count** | `METRICS.json` → `tests` | Dynamic Metrics Synchronizer |
-| **Coverage** | `METRICS.json` → `coverage` | Dynamic Metrics Synchronizer |
+| **Version** | `METRICS.json` → `version` | Metrics Validator |
+| **Test Count** | `METRICS.json` → `tests` | Metrics Validator |
+| **Coverage** | `METRICS.json` → `coverage` | Metrics Validator |
 
-All metrics are extracted from npm run coverage via the **Dynamic Metrics Synchronizer** skill.
+All metrics are extracted from npm run coverage via the **Metrics Validator** skill.
 
 ## Workflow Diagram
 
@@ -155,7 +155,7 @@ Commit & Push to main
 ```bash
 # Update metrics first
 npm run coverage
-sh .github/skills/readme-synchronizer/sync-dynamic.sh
+sh .github/skills/metrics-validator/validate-metrics.sh
 
 # Verify METRICS.json
 cat METRICS.json
@@ -179,7 +179,7 @@ cat METRICS.json
 
 ## Related Skills
 
-- **Dynamic Metrics Synchronizer** (`.github/skills/readme-synchronizer/sync-dynamic.sh`)
+- **Metrics Validator** (`.github/skills/metrics-validator/validate-metrics.sh`)
   - Extracts metrics from npm run coverage
   - Updates METRICS.json
   - Enforces quality gates
@@ -213,6 +213,6 @@ echo "[OK] Updated new section"
 
 ## Questions?
 
-- See [.github/skills/readme-synchronizer/README.md]() for Dynamic Metrics Synchronizer docs
+- See `.github/skills/metrics-validator/SKILL.md` documentation
 - Check GitHub Actions logs in Actions tab for execution details
 - Review README.md for current structure
