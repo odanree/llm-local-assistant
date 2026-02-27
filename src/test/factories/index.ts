@@ -11,6 +11,10 @@
  *   } from '@test/factories';
  */
 
+// Phase 1: Global Mock Factory (State Injection) - NEW
+export * from './stateInjectionFactory';
+
+// Legacy factories (still available for backward compatibility)
 export * from './plannerFactory';
 export * from './executorFactory';
 export * from './mockFactory';
