@@ -49,7 +49,9 @@ export interface IFileSystem {
    * Read directory contents
    * @throws Error if not a directory, permission denied, etc.
    */
-  readdirSync(path: string): string[];
+  readdirSync(path: string, options?: { withFileTypes?: false }): string[];
+  readdirSync(path: string, options: { withFileTypes: true }): Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  readdirSync(path: string, options?: { withFileTypes?: boolean }): string[] | Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
 
   /**
    * Get file stats

@@ -35,13 +35,31 @@ export class MockFileSystem implements IFileSystem {
 
   constructor(config: MockFileSystemConfig = {}) {
     this.config = config;
-    this.files = new Map(Object.entries(config.files || {}));
-    this.directories = config.directories || new Set(['/', '/tmp', '/home']);
+    // Normalize all paths to use forward slashes for consistency across platforms
+    this.files = new Map(
+      Object.entries(config.files || {}).map(([path, content]) => [
+        this.normalizePath(path),
+        content,
+      ])
+    );
+    this.directories = new Set(
+      Array.from(config.directories || new Set(['/', '/tmp', '/home'])).map(
+        (path) => this.normalizePath(path)
+      )
+    );
+  }
+
+  /**
+   * Normalize path to use forward slashes (for cross-platform compatibility)
+   */
+  private normalizePath(path: string): string {
+    return path.replace(/\\/g, '/');
   }
 
   readFileSync(filePath: string, encoding: string = 'utf-8'): string {
+    const normalizedPath = this.normalizePath(filePath);
     // Check if should fail
-    if (this.config.failOnRead?.includes(filePath)) {
+    if (this.config.failOnRead?.some(p => this.normalizePath(p) === normalizedPath)) {
       throw new FileSystemError(
         this.config.readErrorCode || 'ENOENT',
         `Cannot read file: ${filePath}`,
@@ -50,16 +68,17 @@ export class MockFileSystem implements IFileSystem {
     }
 
     // Check if file exists in mock
-    if (!this.files.has(filePath)) {
+    if (!this.files.has(normalizedPath)) {
       throw new FileSystemError('ENOENT', `File not found: ${filePath}`, filePath);
     }
 
-    return this.files.get(filePath)!;
+    return this.files.get(normalizedPath)!;
   }
 
   writeFileSync(filePath: string, content: string, encoding: string = 'utf-8'): void {
+    const normalizedPath = this.normalizePath(filePath);
     // Check if should fail
-    if (this.config.failOnWrite?.includes(filePath)) {
+    if (this.config.failOnWrite?.some(p => this.normalizePath(p) === normalizedPath)) {
       throw new FileSystemError(
         this.config.writeErrorCode || 'ENOSPC',
         `Cannot write file: ${filePath}`,
@@ -68,16 +87,17 @@ export class MockFileSystem implements IFileSystem {
     }
 
     // Check parent directory exists
-    const parentDir = this.dirname(filePath);
+    const parentDir = this.dirname(normalizedPath);
     if (!this.directories.has(parentDir)) {
       throw new FileSystemError('ENOENT', `Parent directory not found: ${parentDir}`, filePath);
     }
 
-    this.files.set(filePath, content);
+    this.files.set(normalizedPath, content);
   }
 
   appendFileSync(filePath: string, content: string, encoding: string = 'utf-8'): void {
-    if (this.config.failOnWrite?.includes(filePath)) {
+    const normalizedPath = this.normalizePath(filePath);
+    if (this.config.failOnWrite?.some(p => this.normalizePath(p) === normalizedPath)) {
       throw new FileSystemError(
         this.config.writeErrorCode || 'ENOSPC',
         `Cannot append to file: ${filePath}`,
@@ -85,32 +105,35 @@ export class MockFileSystem implements IFileSystem {
       );
     }
 
-    const existing = this.files.get(filePath) || '';
-    this.files.set(filePath, existing + content);
+    const existing = this.files.get(normalizedPath) || '';
+    this.files.set(normalizedPath, existing + content);
   }
 
   deleteFileSync(filePath: string): void {
-    if (this.config.failOnDelete?.includes(filePath)) {
+    const normalizedPath = this.normalizePath(filePath);
+    if (this.config.failOnDelete?.some(p => this.normalizePath(p) === normalizedPath)) {
       throw new FileSystemError('EACCES', `Cannot delete file: ${filePath}`, filePath);
     }
 
-    if (!this.files.has(filePath)) {
+    if (!this.files.has(normalizedPath)) {
       throw new FileSystemError('ENOENT', `File not found: ${filePath}`, filePath);
     }
 
-    this.files.delete(filePath);
+    this.files.delete(normalizedPath);
   }
 
   existsSync(filePath: string): boolean {
-    return this.files.has(filePath) || this.directories.has(filePath);
+    const normalizedPath = this.normalizePath(filePath);
+    return this.files.has(normalizedPath) || this.directories.has(normalizedPath);
   }
 
   mkdirSync(dirPath: string, options?: { recursive?: boolean }): void {
-    if (this.config.failOnMkdir?.includes(dirPath)) {
+    const normalizedPath = this.normalizePath(dirPath);
+    if (this.config.failOnMkdir?.some(p => this.normalizePath(p) === normalizedPath)) {
       throw new FileSystemError('EACCES', `Cannot create directory: ${dirPath}`, dirPath);
     }
 
-    if (this.directories.has(dirPath)) {
+    if (this.directories.has(normalizedPath)) {
       if (!options?.recursive) {
         throw new FileSystemError('EEXIST', `Directory already exists: ${dirPath}`, dirPath);
       }
@@ -119,7 +142,7 @@ export class MockFileSystem implements IFileSystem {
 
     if (options?.recursive) {
       // Create all parent directories
-      const parts = dirPath.split('/');
+      const parts = normalizedPath.split('/');
       let current = '';
       for (const part of parts) {
         if (!part) continue;
@@ -127,42 +150,53 @@ export class MockFileSystem implements IFileSystem {
         this.directories.add(current);
       }
     } else {
-      const parentDir = this.dirname(dirPath);
+      const parentDir = this.dirname(normalizedPath);
       if (!this.directories.has(parentDir)) {
         throw new FileSystemError('ENOENT', `Parent directory not found: ${parentDir}`, dirPath);
       }
     }
 
-    this.directories.add(dirPath);
+    this.directories.add(normalizedPath);
   }
 
-  readdirSync(dirPath: string): string[] {
-    if (!this.directories.has(dirPath)) {
+  readdirSync(dirPath: string, options?: { withFileTypes?: false }): string[];
+  readdirSync(dirPath: string, options: { withFileTypes: true }): Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  readdirSync(dirPath: string, options?: { withFileTypes?: boolean }): string[] | Array<{ name: string; isDirectory(): boolean; isFile(): boolean }> {
+    const normalizedDir = this.normalizePath(dirPath);
+    if (!this.directories.has(normalizedDir)) {
       throw new FileSystemError('ENOENT', `Directory not found: ${dirPath}`, dirPath);
     }
 
-    const prefix = dirPath.endsWith('/') ? dirPath : dirPath + '/';
-    const entries = new Set<string>();
+    const prefix = normalizedDir.endsWith('/') ? normalizedDir : normalizedDir + '/';
+    const entries = new Map<string, { isDir: boolean }>();
 
     // Find files in this directory
     for (const filePath of this.files.keys()) {
       if (filePath.startsWith(prefix)) {
         const relative = filePath.substring(prefix.length);
         const firstPart = relative.split('/')[0];
-        entries.add(firstPart);
+        entries.set(firstPart, { isDir: false });
       }
     }
 
     // Find subdirectories
     for (const dir of this.directories) {
-      if (dir.startsWith(prefix) && dir !== dirPath) {
+      if (dir.startsWith(prefix) && dir !== normalizedDir) {
         const relative = dir.substring(prefix.length);
         const firstPart = relative.split('/')[0];
-        entries.add(firstPart);
+        entries.set(firstPart, { isDir: true });
       }
     }
 
-    return Array.from(entries);
+    if (options?.withFileTypes) {
+      return Array.from(entries.entries()).map(([name, info]) => ({
+        name,
+        isDirectory: () => info.isDir,
+        isFile: () => !info.isDir,
+      }));
+    }
+
+    return Array.from(entries.keys());
   }
 
   statSync(filePath: string): {
@@ -171,7 +205,8 @@ export class MockFileSystem implements IFileSystem {
     size: number;
     mtime: Date;
   } {
-    if (this.directories.has(filePath)) {
+    const normalizedPath = this.normalizePath(filePath);
+    if (this.directories.has(normalizedPath)) {
       return {
         isDirectory: () => true,
         isFile: () => false,
@@ -180,8 +215,8 @@ export class MockFileSystem implements IFileSystem {
       };
     }
 
-    if (this.files.has(filePath)) {
-      const content = this.files.get(filePath)!;
+    if (this.files.has(normalizedPath)) {
+      const content = this.files.get(normalizedPath)!;
       return {
         isDirectory: () => false,
         isFile: () => true,
@@ -194,11 +229,12 @@ export class MockFileSystem implements IFileSystem {
   }
 
   copyFileSync(src: string, dest: string): void {
-    if (!this.files.has(src)) {
+    const normalizedSrc = this.normalizePath(src);
+    if (!this.files.has(normalizedSrc)) {
       throw new FileSystemError('ENOENT', `Source file not found: ${src}`, src);
     }
 
-    const content = this.files.get(src)!;
+    const content = this.files.get(normalizedSrc)!;
     this.writeFileSync(dest, content);
   }
 
@@ -251,9 +287,10 @@ export class MockFileSystem implements IFileSystem {
    * Helper: Add file to mock
    */
   addFile(path: string, content: string): void {
-    const parentDir = this.dirname(path);
+    const normalizedPath = this.normalizePath(path);
+    const parentDir = this.dirname(normalizedPath);
     this.mkdirSync(parentDir, { recursive: true });
-    this.files.set(path, content);
+    this.files.set(normalizedPath, content);
   }
 
   /**

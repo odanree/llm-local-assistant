@@ -36,12 +36,14 @@ export interface RefinerResult {
 export class Refiner {
   private config: RefinerConfig;
   private context: RetryContext | null = null;
+  private generationModeDetector: GenerationModeDetector;
 
   constructor(config: RefinerConfig) {
     this.config = {
       maxRetries: 3,
       ...config,
     };
+    this.generationModeDetector = new GenerationModeDetector();
   }
 
   /**
@@ -123,7 +125,7 @@ export class Refiner {
         
         // **NEW: Check if this is a minimal project where diffs won't work**
         // Before retrying, detect if we should switch to scaffold mode
-        const hasSrc = GenerationModeDetector.hasSourceDirectory(this.config.projectRoot);
+        const hasSrc = this.generationModeDetector.hasSourceDirectory(this.config.projectRoot);
         const isMinimalProject = !projectContext.hasPackageJson || projectContext.frameworks.length === 0;
         
         console.log(`[Refiner] Diff parse failed. Minimal project: ${isMinimalProject}, has src: ${hasSrc}`);
@@ -133,7 +135,7 @@ export class Refiner {
           console.log('[Refiner] Minimal project detected. Switching to SCAFFOLD-MODE immediately.');
           this.config.onProgress?.('Mode Switch', 'Minimal project detected. Switching to scaffold mode...');
 
-          const scaffoldPrompt = GenerationModeDetector.generateModePrompt('scaffold-mode');
+          const scaffoldPrompt = this.generationModeDetector.generateModePrompt('scaffold-mode');
           const scaffoldRequest = userRequest + scaffoldPrompt + this.context.generateAvoidancePrompt();
 
           this.context.recordAttempt(
@@ -184,7 +186,7 @@ export class Refiner {
           console.log('[Refiner] All diff attempts failed. Last-chance: trying scaffold mode...');
           this.config.onProgress?.('Final Attempt', 'Trying scaffolding as last-chance fallback...');
 
-          const scaffoldPrompt = GenerationModeDetector.generateModePrompt('scaffold-mode');
+          const scaffoldPrompt = this.generationModeDetector.generateModePrompt('scaffold-mode');
           const lastChanceRequest = userRequest + scaffoldPrompt + 
             '\n\nFINAL ATTEMPT: Generate complete, self-contained code. Do not use Search/Replace patterns.';
 
@@ -218,8 +220,8 @@ export class Refiner {
 
       // **Phase 4.5: Runtime mode detection (NEW - Danh's smart fallback)**
       this.config.onProgress?.('Detecting Generation Mode', 'Checking file existence...');
-      const hasSrc = GenerationModeDetector.hasSourceDirectory(this.config.projectRoot);
-      const modeDetection = GenerationModeDetector.detectMode(this.config.projectRoot, diffResult.diffs, hasSrc);
+      const hasSrc = this.generationModeDetector.hasSourceDirectory(this.config.projectRoot);
+      const modeDetection = this.generationModeDetector.detectMode(this.config.projectRoot, diffResult.diffs, hasSrc);
       console.log('[Refiner] Generation mode:', modeDetection.mode, '—', modeDetection.reason);
 
       // If we should retry with different mode, do that
@@ -231,7 +233,7 @@ export class Refiner {
           console.log(`[Refiner] Mode switch: ${currentMode} → ${newMode}`);
           this.config.onProgress?.('Mode Switch', `Switching from ${currentMode} to ${newMode}...`);
 
-          const modePrompt = GenerationModeDetector.generateModePrompt(newMode);
+          const modePrompt = this.generationModeDetector.generateModePrompt(newMode);
           const updatedRequest = userRequest + modePrompt + this.context.generateAvoidancePrompt();
 
           this.context.recordAttempt(

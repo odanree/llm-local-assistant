@@ -55,8 +55,18 @@ export class FileSystemProvider implements IFileSystem {
     }
   }
 
-  readdirSync(dirPath: string): string[] {
+  readdirSync(dirPath: string, options?: { withFileTypes?: false }): string[];
+  readdirSync(dirPath: string, options: { withFileTypes: true }): Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  readdirSync(dirPath: string, options?: { withFileTypes?: boolean }): string[] | Array<{ name: string; isDirectory(): boolean; isFile(): boolean }> {
     try {
+      if (options?.withFileTypes) {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        return entries.map(entry => ({
+          name: entry.name,
+          isDirectory: () => entry.isDirectory(),
+          isFile: () => entry.isFile(),
+        }));
+      }
       return fs.readdirSync(dirPath);
     } catch (error) {
       this.throwFileSystemError(error as NodeJS.ErrnoException, dirPath);
