@@ -9,6 +9,7 @@
  */
 
 import { ICommandRunner, ExecOptions, ExecResult, CommandError, CommandTimeoutError } from '../../providers/ICommandRunner';
+import { ProcessHandle, SpawnOptions } from '../../types';
 
 export interface MockCommandConfig {
   // Commands that should fail
@@ -153,5 +154,35 @@ export class MockCommandRunner implements ICommandRunner {
    */
   getFailingCommands(): string[] {
     return this.config.failingCommands || [];
+  }
+
+  /**
+   * v2.12.0: Spawn a process with real-time streaming
+   * Mock implementation - returns a stub ProcessHandle
+   */
+  spawn(command: string, options?: SpawnOptions): ProcessHandle {
+    // Mock implementation - return a stub handle
+    // In real scenarios, this would spawn an actual process
+    const callbacks: Record<string, Function[]> = {
+      onData: [],
+      onError: [],
+      onExit: [],
+      onPrompt: [],
+    };
+
+    return {
+      onData: (callback) => callbacks.onData.push(callback),
+      onError: (callback) => callbacks.onError.push(callback),
+      onExit: (callback) => callbacks.onExit.push(callback),
+      onPrompt: (callback) => callbacks.onPrompt.push(callback),
+      sendInput: () => {}, // Mock implementation
+      kill: () => {
+        // Emit exit event for any registered listeners
+        callbacks.onExit.forEach((cb) => cb(137));
+      },
+      isRunning: () => false,
+      getExitCode: () => 0,
+      getPID: () => undefined,
+    };
   }
 }

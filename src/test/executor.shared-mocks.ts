@@ -55,14 +55,17 @@ export function createTestPlan(
   return {
     taskId: 'test_task_' + Math.random().toString(36).substr(2, 9),
     userRequest: 'Test request',
+    reasoning: 'Test reasoning for plan',
     generatedAt: new Date(),
     steps: steps.map((step, idx) => ({
       stepId: idx + 1,
+      stepNumber: idx + 1,
       action: 'write' as const,
       path: 'test.ts',
       description: 'Test step',
+      expectedOutcome: 'Step completed successfully',
       ...step,
-    })),
+    })) as PlanStep[],
     status: 'pending' as const,
     currentStep: 0,
     results: new Map(),
@@ -233,10 +236,12 @@ export function createPlanStep(
 ): PlanStep {
   const defaults: PlanStep = {
     stepId: 1,
+    stepNumber: 1,
     action,
     path: action === 'run' ? undefined : 'test.ts',
     command: action === 'run' ? 'npm test' : undefined,
     description: `${action} step`,
+    expectedOutcome: `Successfully ${action} the step`,
   };
 
   return { ...defaults, ...overrides } as PlanStep;

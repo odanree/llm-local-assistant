@@ -4,7 +4,8 @@
  * Only imports from types/, no service classes
  */
 
-import type { ValidationResult, ImpactAssessment, RefactoringPlan } from '../refactoringExecutor';
+import type { RefactoringPlan } from '../serviceExtractor';
+import type { ValidationResult, ImpactAssessment } from '../refactoringExecutor';
 
 /**
  * Validate syntax of code

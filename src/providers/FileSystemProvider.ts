@@ -13,7 +13,7 @@ import { IFileSystem, FileSystemError } from './IFileSystem';
 export class FileSystemProvider implements IFileSystem {
   readFileSync(filePath: string, encoding: string = 'utf-8'): string {
     try {
-      return fs.readFileSync(filePath, encoding);
+      return fs.readFileSync(filePath, { encoding: encoding as BufferEncoding });
     } catch (error) {
       this.throwFileSystemError(error as NodeJS.ErrnoException, filePath);
     }
@@ -21,7 +21,7 @@ export class FileSystemProvider implements IFileSystem {
 
   writeFileSync(filePath: string, content: string, encoding: string = 'utf-8'): void {
     try {
-      fs.writeFileSync(filePath, content, encoding);
+      fs.writeFileSync(filePath, content, { encoding: encoding as BufferEncoding });
     } catch (error) {
       this.throwFileSystemError(error as NodeJS.ErrnoException, filePath);
     }
@@ -29,7 +29,7 @@ export class FileSystemProvider implements IFileSystem {
 
   appendFileSync(filePath: string, content: string, encoding: string = 'utf-8'): void {
     try {
-      fs.appendFileSync(filePath, content, encoding);
+      fs.appendFileSync(filePath, content, { encoding: encoding as BufferEncoding });
     } catch (error) {
       this.throwFileSystemError(error as NodeJS.ErrnoException, filePath);
     }

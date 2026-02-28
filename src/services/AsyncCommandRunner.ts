@@ -57,7 +57,8 @@ export class AsyncCommandRunner {
     const cwd = options.cwd || process.cwd();
     const shell = options.shell ?? true;
     const timeout = options.timeout ?? 30000;
-    const maxBuffer = options.maxBuffer ?? 10 * 1024 * 1024;
+    // Note: maxBuffer is stored for reference but not passed to spawn
+    // (spawn doesn't support it; only exec does)
     const echo = options.echo ?? false;
 
     // Parse command into [executable, ...args]
@@ -68,8 +69,8 @@ export class AsyncCommandRunner {
       cwd,
       shell: typeof shell === 'boolean' ? shell : false,
       stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
-      maxBuffer, // Prevent buffer overflow
-      // Note: timeout option in cp.spawn is not standard, we'll handle it manually
+      // Note: maxBuffer option is not standard for spawn(), only for exec()
+      // Buffer overflow is managed by stream handling, not by this option
     });
 
     // Create ProcessHandle implementation
