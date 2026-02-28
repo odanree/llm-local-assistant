@@ -367,16 +367,19 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
     });
 
     it('should handle concurrent handles', async () => {
-      const handle1 = runner.spawn('echo "first"');
-      const handle2 = runner.spawn('echo "second"');
-
       let output1 = '';
       let output2 = '';
 
+      const handle1 = runner.spawn('echo "first"');
+      // Register callbacks IMMEDIATELY after spawn, before spawning the
+      // next handle. On fast Linux CI both processes can complete before
+      // any callback is registered; waitForExit's onExit replay then
+      // resolves the Promise before onData replay runs.
       handle1.onData((chunk) => {
         output1 += chunk;
       });
 
+      const handle2 = runner.spawn('echo "second"');
       handle2.onData((chunk) => {
         output2 += chunk;
       });
