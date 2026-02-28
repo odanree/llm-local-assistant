@@ -2858,13 +2858,17 @@ export async function activate(context: vscode.ExtensionContext) {
         });
       }
     },
-    onQuestion: (question: string, options: string[]) => {
+    onQuestion: (question: string, options: string[], timeoutMs?: number) => {
       // Display question and wait for response
+      // v2.12.2: Support adaptive timeout for package manager commands (60s) vs standard (30s)
+      const effectiveTimeout = timeoutMs || 30000;
+
       return new Promise((resolve) => {
         console.log('[Extension] onQuestion callback invoked:', question);
         console.log('[Extension] Current chatPanel:', !!chatPanel);
         console.log('[Extension] Options:', options);
-        
+        console.log(`[Extension] v2.12.2 timeout setting: timeoutMs=${timeoutMs}, effective=${effectiveTimeout}ms`);
+
         if (chatPanel) {
           console.log('[Extension] Posting question to webview');
           pendingQuestionResolve = resolve;
@@ -2875,19 +2879,20 @@ export async function activate(context: vscode.ExtensionContext) {
           };
           console.log('[Extension] Message to send:', JSON.stringify(messageToSend));
           chatPanel.webview.postMessage(messageToSend);
-          
+
           // DIAGNOSTIC: Log that we're waiting for response
           console.log('[Extension] Waiting for user response... pendingQuestionResolve is set');
-          
-          // SAFETY: If no response within 30 seconds, auto-proceed with first option
+
+          // SAFETY: If no response within timeout, auto-proceed with first option
           // This prevents the executor from hanging forever
+          // v2.12.2: Adaptive timeout - 60s for package managers, 30s for others
           const timeoutId = setTimeout(() => {
-            console.log('[Extension] TIMEOUT: No user response to question after 30s, auto-proceeding with:', options[0]);
+            console.log(`[Extension] TIMEOUT: No user response to question after ${effectiveTimeout/1000}s, auto-proceeding with:`, options[0]);
             if (pendingQuestionResolve) {
               pendingQuestionResolve(options[0]);
               pendingQuestionResolve = null;
             }
-          }, 30000);
+          }, effectiveTimeout);
           
           // Store timeout so we can clear it when answer arrives
           (resolve as any)._timeoutId = timeoutId;
