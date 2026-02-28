@@ -1144,7 +1144,8 @@ export class Executor {
           if (files.length > 0) {
             const answer = await this.config.onQuestion?.(
               `Multiple files exist in ${parentDir}. Which should I modify?\n\nCurrent target: ${step.path}`,
-              [step.path, ...files, 'Skip this step']
+              [step.path, ...files, 'Skip this step'],
+              30000 // Standard timeout for file selection
             );
 
             if (answer && answer !== 'Skip this step') {
@@ -1196,10 +1197,19 @@ export class Executor {
       if (shouldAsk) {
         console.log(`[Executor] Detected command needing confirmation: ${step.command}`);
         console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
-        
+
+        // v2.12.2: Detect package managers and use longer timeout
+        // Package managers (npm, yarn, pnpm, pip, maven, gradle) often take longer to respond
+        const packageManagerPattern = /npm|yarn|pnpm|pip|maven|gradle/i;
+        const isPackageManager = packageManagerPattern.test(command);
+        const timeoutMs = isPackageManager ? 60000 : 30000; // 60s for package managers, 30s for others
+
+        console.log(`[Executor] v2.12.2 timeout detection: isPackageManager=${isPackageManager}, timeoutMs=${timeoutMs}`);
+
         const answer = await this.config.onQuestion?.(
           `About to run: \`${step.command}\`\n\nThis might take a while. Should I proceed?`,
-          ['Yes, proceed', 'No, skip this step', 'Cancel execution']
+          ['Yes, proceed', 'No, skip this step', 'Cancel execution'],
+          timeoutMs
         );
         console.log(`[Executor] User answered: ${answer}`);
 
@@ -2076,7 +2086,8 @@ export class Executor {
 
       const answer = await this.config.onQuestion?.(
         `About to write to important file: \`${step.path}\`\n\nThis is a critical configuration or data file. Should I proceed with writing?`,
-        ['Yes, write the file', 'No, skip this step', 'Cancel execution']
+        ['Yes, write the file', 'No, skip this step', 'Cancel execution'],
+        30000 // Standard timeout for write confirmation
       );
       console.log(`[Executor] User answered for write: ${answer}`);
 

@@ -532,10 +532,12 @@ describe('Executor', () => {
       // Call askClarification directly to verify it triggers the question
       const result = await (executor2 as any).askClarification(runStep, '');
       
-      // Verify onQuestion was called
+      // Verify onQuestion was called with timeout parameter for npm commands
+      // v2.12.2: npm commands get 60000ms timeout instead of 30000ms
       expect(onQuestionMock).toHaveBeenCalledWith(
         expect.stringContaining('npm test'),
-        expect.arrayContaining(['Yes, proceed', 'No, skip this step', 'Cancel execution'])
+        expect.arrayContaining(['Yes, proceed', 'No, skip this step', 'Cancel execution']),
+        60000 // Package managers get longer timeout
       );
       
       // When user answers "Yes, proceed", askClarification returns the step to continue execution
@@ -665,9 +667,11 @@ describe('Executor', () => {
       await executor2.executeStep(plan, 1);
 
       // Question should be triggered for package.json
+      // v2.12.2: Write confirmations use standard 30000ms timeout
       expect(onQuestionMock).toHaveBeenCalledWith(
         expect.stringContaining('package.json'),
-        expect.arrayContaining(['Yes, write the file', 'No, skip this step', 'Cancel execution'])
+        expect.arrayContaining(['Yes, write the file', 'No, skip this step', 'Cancel execution']),
+        30000 // Standard timeout for write confirmation
       );
     });
 
@@ -715,9 +719,11 @@ describe('Executor', () => {
 
       await executor2.executeStep(plan, 1);
 
+      // v2.12.2: Write confirmations use standard 30000ms timeout
       expect(onQuestionMock).toHaveBeenCalledWith(
         expect.stringContaining('.env'),
-        expect.any(Array)
+        expect.any(Array),
+        30000 // Standard timeout for write confirmation
       );
     });
 
@@ -862,9 +868,11 @@ describe('Executor', () => {
 
       await executor2.executeStep(plan, 1);
 
+      // v2.12.2: Write confirmations use standard 30000ms timeout
       expect(onQuestionMock).toHaveBeenCalledWith(
         expect.stringContaining('Dockerfile'),
-        expect.any(Array)
+        expect.any(Array),
+        30000 // Standard timeout for write confirmation
       );
     });
   });

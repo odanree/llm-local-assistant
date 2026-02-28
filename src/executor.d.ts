@@ -16,7 +16,7 @@ export interface ExecutorConfig {
     onProgress?: (step: number, total: number, description: string) => void;
     onMessage?: (message: string, type: 'info' | 'error') => void;
     onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;
-    onQuestion?: (question: string, options: string[]) => Promise<string | undefined>;
+    onQuestion?: (question: string, options: string[], timeoutMs?: number) => Promise<string | undefined>;
 }
 export interface ExecutionResult {
     success: boolean;
