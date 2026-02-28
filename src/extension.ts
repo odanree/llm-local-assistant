@@ -255,9 +255,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**LLM Local Assistant - v2.11.0** 💎 Diamond Tier\n` +
-          `⚡ **Latest Achievement:** 80.27% code coverage with 3,594 comprehensive tests\n` +
-          `📊 Quality metrics: 88 test files, 73% branch coverage, 36.4s test execution\n\n` +
+        text: `**LLM Local Assistant - v2.13.0** 💎 Diamond Tier\n` +
+          `⚡ **Latest Achievement:** 81.61% code coverage with 3,637 comprehensive tests\n` +
+          `📊 Quality metrics: 102 test files, 74.22% branch coverage, ~61s test execution\n\n` +
           `📋 **Planning & Execution:**\n` +
           `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
@@ -288,7 +288,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `🧪 **Diagnostics & Quality Assurance:**\n` +
           `- /check-model → Verify LLM server connection\n` +
           `- Run: npm test -- --coverage (for test coverage reports)\n` +
-          `- Quality gate enforced at 80.27% coverage threshold`,
+          `- Quality gate enforced at 81.61% coverage threshold\n\n` +
+          `📖 **Documentation:**\n` +
+          `- See /docs/MAINTENANCE.md for deployment, troubleshooting, and production operations`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
