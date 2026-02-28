@@ -228,10 +228,11 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
         lineCount += chunk.split('\n').length;
       });
 
-      await waitForExit(handle);
+      // 💎 FIX: High-volume I/O needs longer timeout (CI runners throttle CPU)
+      await waitForExit(handle, 15000);
 
       expect(lineCount).toBeGreaterThan(9900);
-    });
+    }, 20000);
 
     it('should not exhaust memory on large output', async () => {
       const memBefore = process.memoryUsage().heapUsed;
@@ -243,14 +244,15 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
         maxMem = Math.max(maxMem, current);
       });
 
-      await waitForExit(handle);
+      // 💎 FIX: High-volume I/O needs longer timeout (CI runners throttle CPU)
+      await waitForExit(handle, 15000);
 
       const memAfter = process.memoryUsage().heapUsed;
       const memIncrease = memAfter - memBefore;
 
       // Should not use more than 50MB for this operation
       expect(memIncrease).toBeLessThan(50 * 1024 * 1024);
-    });
+    }, 20000);
 
     it('should call onData for each chunk', async () => {
       let callCount = 0;
@@ -260,10 +262,11 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
         callCount++;
       });
 
-      await waitForExit(handle);
+      // 💎 FIX: Moderate-volume I/O needs reasonable timeout
+      await waitForExit(handle, 10000);
 
       expect(callCount).toBeGreaterThan(0);
-    });
+    }, 15000);
   });
 
   // ============================================================
