@@ -241,7 +241,11 @@ export class AsyncCommandRunner {
     }
 
     // ================== Process Exit Handler ==================
-    child.on('exit', (code) => {
+    // IMPORTANT: Use 'close' not 'exit' here.
+    // 'exit' fires before stdout/stderr streams are fully flushed on Linux CI.
+    // 'close' fires AFTER all I/O is done, preventing the race condition where
+    // data callbacks are blocked by `if (exited) return` before data arrives.
+    child.on('close', (code) => {
       exited = true;
       exitCode = code ?? 1;
 
