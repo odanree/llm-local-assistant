@@ -66,6 +66,9 @@ export class Executor {
   private commandRunner: ICommandRunner;
   private codebaseIndex: CodebaseIndex;
 
+  // v2.12.0 M2: StreamingIO for prompt detection
+  private streamingIO: any; // Type: StreamingIO from types/StreamingIO.ts
+
   constructor(config: ExecutorConfig) {
     this.config = {
       maxRetries: 2,
@@ -78,6 +81,20 @@ export class Executor {
     this.fs = config.fs || new FileSystemProvider();
     this.commandRunner = config.commandRunner || new CommandRunnerProvider();
     this.codebaseIndex = config.codebaseIndex || new CodebaseIndex();
+
+    // v2.12.0 M2: Initialize StreamingIO for prompt detection
+    // This enables the Circuit Breaker pattern for interactive commands
+    try {
+      const { DEFAULT_PROMPT_PATTERNS, detectPrompt, getSuggestedInputs } = require('./types/StreamingIO');
+      this.streamingIO = {
+        detectPrompt,
+        getSuggestedInputs,
+        patterns: DEFAULT_PROMPT_PATTERNS,
+      };
+    } catch (error) {
+      console.warn('[Executor] StreamingIO not available, prompt detection disabled');
+      this.streamingIO = null;
+    }
   }
 
   /**
@@ -2708,146 +2725,130 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
     const workspaceUri = workspace || this.config.workspace;
 
-    return new Promise<StepResult>((resolve) => {
-      // Build environment: Start with full copy of process.env, then enhance
-      // This ensures all inherited environment variables are available
-      const env: { [key: string]: string } = { ...process.env };
+    console.log(`[Executor] Executing command: ${command}`);
+    console.log(`[Executor] Platform: ${process.platform}`);
 
-      // Ensure PATH includes homebrew and common locations
-      // macOS homebrew is typically at /opt/homebrew/bin
-      // Windows uses ; separator, Unix uses :
-      const pathSeparator = process.platform === 'win32' ? ';' : ':';
-      const existingPath = env.PATH || '';
-      
-      const pathParts = process.platform === 'win32'
-        ? [
-            'C:\\Program Files\\nodejs',
-            'C:\\Program Files (x86)\\nodejs',
-            'C:\\Users\\odanree\\AppData\\Roaming\\npm',
-            existingPath,
-          ]
-        : [
-            '/opt/homebrew/bin',
-            '/usr/local/bin',
-            '/usr/bin',
-            '/bin',
-            '/usr/sbin',
-            '/sbin',
-            existingPath,
-          ];
+    try {
+      // ============================================================
+      // v2.13.0 STREAMING HOOK: Replace synchronous blocking with async streaming
+      // ============================================================
 
-      env.PATH = pathParts.filter(p => p).join(pathSeparator);
-
-      // CRITICAL: On Windows, ensure SystemRoot is set (required to find cmd.exe)
-      // Windows relies on SystemRoot (usually C:\Windows) to locate system commands
-      if (process.platform === 'win32' && !env.SystemRoot) {
-        env.SystemRoot = 'C:\\Windows';
-      }
-
-      // CRITICAL: On Windows, ensure ComSpec is set (command interpreter specification)
-      // Some shells require this to find cmd.exe
-      if (process.platform === 'win32' && !env.ComSpec) {
-        env.ComSpec = 'cmd.exe';
-      }
-
-      // Log environment setup for debugging
-      console.log(`[Executor] Environment PATH: ${env.PATH?.substring(0, 100)}...`);
-      console.log(`[Executor] SystemRoot: ${env.SystemRoot}`);
-      console.log(`[Executor] ComSpec: ${env.ComSpec}`);
-      console.log(`[Executor] Platform: ${process.platform}`);
-
-      // CRITICAL FIX: Use platform-aware shell selection
-      // On Windows with shell: true, spawn uses default shell (cmd.exe)
-      // On Unix with shell: true, spawn uses /bin/sh
-      
-      console.log(`[Executor] Executing command: ${command}`);
-      console.log(`[Executor] Platform: ${process.platform}`);
-      console.log(`[Executor] Using shell: ${process.platform === 'win32' ? 'cmd.exe' : 'bash'}`);
-
-      // CRITICAL FIX: Detect package managers and use 'inherit' stdio
-      // npm/yarn/pnpm install commands need access to stdin/stdout for progress display
-      // and interactive confirmations. Other commands use 'pipe' to capture output.
-      const isPackageManagerCommand = /^(npm|yarn|pnpm)\s+(install|add|remove|ci)\b/i.test(command);
-      const stdio = isPackageManagerCommand ? 'inherit' : 'pipe';
-
-      console.log(`[Executor] stdio mode: ${stdio} (package manager: ${isPackageManagerCommand})`);
-
-      const child = process.platform === 'win32'
-        ? cp.spawn('cmd.exe', ['/c', command], {
-            cwd: workspaceUri.fsPath,
-            env: env,
-            stdio: stdio,
-            shell: false, // Don't double-shell on Windows
-          })
-        : cp.spawn('bash', ['-l', '-c', command], {
-            cwd: workspaceUri.fsPath,
-            env: env,
-            stdio: stdio,
-            shell: false, // Don't double-shell on Unix
-          });
-
-      let stdout = '';
-      let stderr = '';
-
-      // Only collect output if stdio is 'pipe' (for non-package-manager commands)
-      // Package managers with 'inherit' stdio won't have stdout/stderr streams
-      if (stdio === 'pipe') {
-        if (child.stdout) {
-          child.stdout.on('data', (data: any) => {
-            stdout += data.toString();
-          });
-        }
-
-        if (child.stderr) {
-          child.stderr.on('data', (data: any) => {
-            stderr += data.toString();
-          });
-        }
-      }
-
-      const timeout = setTimeout(() => {
-        (child as any).kill();
-        resolve({
-          stepId: step.stepId,
-          success: false,
-          error: `Command timed out after ${this.config.timeout}ms`,
-          duration: Date.now() - startTime,
-        });
-      }, this.config.timeout);
-
-      child.on('close', (code: any) => {
-        clearTimeout(timeout);
-        if (code === 0) {
-          resolve({
-            stepId: step.stepId,
-            success: true,
-            output: stdout || '(no output)',
-            duration: Date.now() - startTime,
-          });
-        } else {
-          const errorMsg = stderr || stdout || `Command failed with exit code ${code}`;
-          const suggestion = this.suggestErrorFix('run', command, errorMsg);
-          resolve({
-            stepId: step.stepId,
-            success: false,
-            error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
-            duration: Date.now() - startTime,
-          });
-        }
+      // Use the new AsyncCommandRunner with ProcessHandle callbacks
+      const handle = (this.commandRunner as any).spawn(command, {
+        cwd: workspaceUri.fsPath,
+        timeout: this.config.timeout,
       });
 
-      child.on('error', (error: any) => {
-        clearTimeout(timeout);
-        const errorMsg = error.message;
-        const suggestion = this.suggestErrorFix('run', command, errorMsg);
-        resolve({
-          stepId: step.stepId,
-          success: false,
-          error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
-          duration: Date.now() - startTime,
+      // Flag to track if prompt was detected (Circuit Breaker)
+      let promptDetected = false;
+      let suspendedPromptText = '';
+      let output = '';
+
+      return new Promise<StepResult>((resolve, reject) => {
+        // 1. Stream data and check for prompts (Circuit Breaker)
+        handle.onData?.((chunk: string) => {
+          output += chunk;
+
+          // Pass output to UI in real-time
+          this.config.onStepOutput?.(step.stepId || 0, chunk, false);
+
+          // THE CIRCUIT BREAKER: Check for prompts mid-stream
+          // If prompt detected, don't trigger retry - just transition state
+          if (!promptDetected && this.streamingIO) {
+            const detectedPrompt = this.streamingIO.detectPrompt(chunk);
+            if (detectedPrompt) {
+              promptDetected = true;
+              suspendedPromptText = chunk;
+
+              console.log(`[Executor] 🚨 Mid-stream prompt detected: "${chunk.substring(0, 50)}..."`);
+              console.log(`[Executor] Circuit Breaker activated - suspending execution`);
+
+              // Transition to SUSPENDED_FOR_PERMISSION state
+              if (this.plan) {
+                this.plan.status = (PlanState as any).SUSPENDED_FOR_PERMISSION;
+              }
+
+              // Save suspended state to codebaseIndex
+              if (this.codebaseIndex && this.plan) {
+                const suspendedState = {
+                  planId: this.plan.id,
+                  stepIndex: this.plan.steps.indexOf(step),
+                  currentStep: step,
+                  remainingSteps: this.plan.steps.slice(
+                    this.plan.steps.indexOf(step) + 1
+                  ),
+                  fileSnapshot: this.captureFileSnapshot(),
+                  context: {
+                    promptText: suspendedPromptText,
+                    suggestedInputs: this.streamingIO?.getSuggestedInputs?.(suspendedPromptText) || [],
+                  },
+                };
+                this.codebaseIndex.setSuspendedState(this.plan.id, suspendedState);
+              }
+            }
+          }
         });
+
+        // 2. Handle error stream
+        handle.onError?.((chunk: string) => {
+          output += chunk;
+          this.config.onStepOutput?.(step.stepId || 0, chunk, false);
+        });
+
+        // 3. Handle process exit - THE KEY FIX
+        // Check if suspended BEFORE treating as failure
+        handle.onExit?.((code: number) => {
+          // If suspended, return suspended status (not failure!)
+          if (promptDetected || this.plan?.status === (PlanState as any).SUSPENDED_FOR_PERMISSION) {
+            console.log(`[Executor] Process paused at prompt - returning SUSPENDED status`);
+            resolve({
+              stepId: step.stepId,
+              success: false, // Technically not "success" but intentionally paused
+              output: output || '(awaiting user input)',
+              duration: Date.now() - startTime,
+              // Add custom property to indicate suspension vs failure
+              ...(promptDetected && { suspended: true, promptText: suspendedPromptText }),
+            });
+            return;
+          }
+
+          // Normal exit handling (not suspended)
+          if (code === 0) {
+            resolve({
+              stepId: step.stepId,
+              success: true,
+              output: output || '(no output)',
+              duration: Date.now() - startTime,
+            });
+          } else {
+            const errorMsg = output || `Command failed with exit code ${code}`;
+            const suggestion = this.suggestErrorFix('run', command, errorMsg);
+            resolve({
+              stepId: step.stepId,
+              success: false,
+              error: `${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`,
+              duration: Date.now() - startTime,
+            });
+          }
+        });
+
+        // 4. Log streaming start
+        console.log(`[Executor] Streaming started - event loop is free for prompts`);
       });
-    });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[Executor] executeRun error: ${errorMsg}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Capture current file hashes for integrity verification on resume
+   */
+  private captureFileSnapshot(): Record<string, string> {
+    // TODO: Implement file hash capture
+    // For now, return empty snapshot - will be enhanced in M4 integration
+    return {};
   }
 
   /**
