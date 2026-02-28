@@ -2786,7 +2786,14 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       return new Promise<StepResult>((resolve, reject) => {
         // 1. Stream data and check for prompts (Circuit Breaker)
-        handle.onData?.((chunk: string) => {
+        handle.onData?.((data: any) => {
+          // ✅ v2.12.1 FIX: Handle both string and ProcessStream object data
+          const chunk = typeof data === 'string'
+            ? data
+            : (typeof data === 'object' && data.chunk
+              ? data.chunk
+              : JSON.stringify(data));
+
           output += chunk;
 
           // Pass output to UI in real-time
@@ -2830,9 +2837,28 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         });
 
         // 2. Handle error stream
-        handle.onError?.((chunk: string) => {
+        handle.onError?.((data: any) => {
+          // ✅ v2.12.1 FIX: Handle both string and object, classify warnings vs errors
+          const chunk = typeof data === 'string'
+            ? data
+            : (typeof data === 'object' && data.chunk
+              ? data.chunk
+              : JSON.stringify(data));
+
           output += chunk;
-          this.config.onStepOutput?.(step.stepId || 0, chunk, false);
+
+          // Classify stderr: is this a warning or a real error?
+          const classification = this.classifyStderr(chunk);
+          const displayChunk = classification.isWarning
+            ? `⚠️ ${classification.message}`
+            : `❌ ${chunk}`;
+
+          // Only pass real errors to output; warnings go to console
+          if (!classification.isWarning) {
+            this.config.onStepOutput?.(step.stepId || 0, displayChunk, false);
+          } else {
+            console.log(`[Executor] Warning: ${classification.message}`);
+          }
         });
 
         // 3. Handle process exit - THE KEY FIX
@@ -2937,6 +2963,35 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       hash = hash & hash; // Convert to 32bit integer
     }
     return hash.toString(16);
+  }
+
+  /**
+   * ✅ v2.12.1 POLISH: Classify stderr output as warning or error
+   * Separates npm warnings/deprecations from fatal errors
+   */
+  private classifyStderr(chunk: string): { isWarning: boolean; message: string } {
+    // Non-fatal warning keywords (npm, yarn, node output)
+    const warningPatterns = [
+      /npm\s+warn/i,
+      /deprecated/i,
+      /vulnerability|vulnerabilities/i,
+      /funding/i,
+      /optional dependency/i,
+      /peer dependency/i,
+      /will not be installed/i,
+      /WARN/i,
+    ];
+
+    // Check if this is a known non-fatal warning
+    const isWarning = warningPatterns.some(pattern => pattern.test(chunk));
+
+    // Extract clean message
+    const message = chunk
+      .replace(/^\s*[❌✔️⚠️]+\s*/, '') // Remove emoji prefix
+      .replace(/^Error:\s*/i, '') // Remove 'Error:' prefix
+      .trim();
+
+    return { isWarning, message };
   }
 
   /**
