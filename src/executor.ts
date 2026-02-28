@@ -2851,26 +2851,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
         // 2. Handle error stream
         handle.onError?.((data: any) => {
-          // ✅ v2.12.1 FIX: Handle both string and object, classify warnings vs errors
-          const chunk = typeof data === 'string'
-            ? data
-            : (typeof data === 'object' && data.chunk
-              ? data.chunk
-              : JSON.stringify(data));
+          // ✅ v2.12.1 ROBUST FIX: Use the type-safe classifier directly
+          const classification = this.classifyStderr(data);
 
-          output += chunk;
+          // Skip empty messages (prevents {} and blank lines)
+          if (!classification.message) {
+            return;
+          }
 
-          // Classify stderr: is this a warning or a real error?
-          const classification = this.classifyStderr(chunk);
-          const displayChunk = classification.isWarning
-            ? `⚠️ ${classification.message}`
-            : `❌ ${chunk}`;
+          output += classification.message;
 
-          // Only pass real errors to output; warnings go to console
+          // Only pass real errors to output with ❌ prefix
+          // Warnings get ⚠️ prefix and go to console instead
           if (!classification.isWarning) {
-            this.config.onStepOutput?.(step.stepId || 0, displayChunk, false);
+            const errorOutput = `❌ ${classification.message}`;
+            this.config.onStepOutput?.(step.stepId || 0, errorOutput, false);
           } else {
-            console.log(`[Executor] Warning: ${classification.message}`);
+            // Warnings: just log to console, don't clutter the UI with error icons
+            console.log(`[Executor] ℹ️  ${classification.message}`);
           }
         });
 
@@ -2982,30 +2980,57 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
    * ✅ v2.12.1 POLISH: Classify stderr output as warning or error
    * Separates npm warnings/deprecations from fatal errors
    */
-  private classifyStderr(chunk: string): { isWarning: boolean; message: string } {
-    // Non-fatal warning keywords (npm, yarn, node output)
+  /**
+   * ✅ v2.12.1 ROBUST CLASSIFIER: Pre-processor for stream data
+   * Handles type conversion, null filtering, and pattern matching
+   * Prevents {} serialization and filters npm noise
+   */
+  private classifyStderr(data: any): { isWarning: boolean; message: string } {
+    // 1. TYPE GUARD: Ensure we have a string
+    // This is the key fix for preventing {} serialization
+    let message: string;
+    if (typeof data === 'string') {
+      message = data;
+    } else if (data?.chunk) {
+      message = String(data.chunk);
+    } else if (data?.message) {
+      message = String(data.message);
+    } else if (typeof data === 'object') {
+      // Don't stringify - return empty to skip this chunk
+      return { isWarning: true, message: '' };
+    } else {
+      message = String(data);
+    }
+
+    // 2. NULL FILTER: Skip empty messages to prevent blank lines and {}
+    if (!message || message.trim() === '' || message === '{}') {
+      return { isWarning: true, message: '' };
+    }
+
+    // 3. REGEX PATTERNS: Comprehensive warning detection
     const warningPatterns = [
       /^npm\s+(warn|notice|deprecated)/i,  // npm WARN, npm notice, npm deprecated
       /deprecated/i,
-      /vulnerability|vulnerabilities/i,
-      /looking for funding/i,              // npm funding message
-      /funding/i,
-      /optional dependency/i,
-      /peer dependency/i,
-      /will not be installed/i,
+      /vulnerabilities/i,
+      /looking for funding/i,               // npm funding message
+      /peer\s?dependency/i,
+      /optional\s+dependency/i,
+      /will\s+not\s+be\s+installed/i,
+      /(\d+)\s+(moderate|low|high)\s+severity/i,  // Audit summary
+      /run\s+`npm\s+audit\s+fix`/i,         // Audit fix suggestion
       /WARN/i,
     ];
 
     // Check if this is a known non-fatal warning
-    const isWarning = warningPatterns.some(pattern => pattern.test(chunk));
+    const isWarning = warningPatterns.some(pattern => pattern.test(message));
 
-    // Extract clean message
-    const message = chunk
-      .replace(/^\s*[❌✔️⚠️]+\s*/, '') // Remove emoji prefix
-      .replace(/^Error:\s*/i, '') // Remove 'Error:' prefix
+    // Clean up the message
+    const cleanMessage = message
+      .replace(/^\s*[❌✔️⚠️]+\s*/, '')  // Remove emoji prefix
+      .replace(/^Error:\s*/i, '')        // Remove 'Error:' prefix
       .trim();
 
-    return { isWarning, message };
+    return { isWarning, message: cleanMessage };
   }
 
   /**
