@@ -175,9 +175,11 @@ export class AsyncCommandRunner {
 
     // Register callback methods with replay support
     handle.onData = (cb) => {
+      // Synchronously replay all buffered data in the same tick
       for (const chunk of dataReplayBuffer) {
         try { cb(chunk); } catch (err) { console.error('Error in onData replay:', err); }
       }
+      // Add callback to receive future data (happens in same tick, before process yields)
       dataCallbacks.push(cb);
     };
     handle.onError = (cb) => {
