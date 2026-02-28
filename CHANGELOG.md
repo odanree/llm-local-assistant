@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Five Critical CI Hardening Fixes** - Exit event + replay buffers, no double-shelling, cross-platform stdin, pragmatic thresholds, data polling
 
 ### 📊 Quality Metrics
-- **81.21% Statement Coverage** - Diamond Tier achieved and maintained
-- **3,600 Total Tests** (3,597 passing, 3 skipped) - 100% pass rate
-- **101 Test Files** - Comprehensive modular test suite
+- **81.61% Statement Coverage** - Diamond Tier achieved and maintained
+- **3,640 Total Tests** (3,637 passing, 3 skipped) - 100% pass rate
+- **102 Test Files** - Comprehensive modular test suite
 - **Zero CI Flakiness** - Deterministic on Node 18.x and 20.x
 - **Five Root-Cause Fixes** - Resolved all intermittent CI failures
 
