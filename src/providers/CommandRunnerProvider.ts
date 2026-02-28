@@ -9,8 +9,12 @@
 import * as cp from 'child_process';
 import * as os from 'os';
 import { ICommandRunner, ExecOptions, ExecResult, CommandError, CommandTimeoutError } from './ICommandRunner';
+import { ProcessHandle, SpawnOptions } from '../types';
+import { AsyncCommandRunner } from '../services/AsyncCommandRunner';
 
 export class CommandRunnerProvider implements ICommandRunner {
+  private asyncRunner = new AsyncCommandRunner();
+
   execSync(command: string, options?: ExecOptions): string {
     try {
       return cp.execSync(command, {
@@ -93,6 +97,16 @@ export class CommandRunnerProvider implements ICommandRunner {
 
   getShell(): string {
     return process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+  }
+
+  /**
+   * NEW v2.12.0: Spawn a process with real-time streaming
+   *
+   * Delegates to AsyncCommandRunner for streaming I/O support.
+   * Enables interactive commands (npm, yarn, git, etc.)
+   */
+  spawn(command: string, options?: SpawnOptions): ProcessHandle {
+    return this.asyncRunner.spawn(command, options);
   }
 
   /**

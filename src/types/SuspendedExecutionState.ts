@@ -30,7 +30,7 @@ import { ExecutionStep, StepResult } from './executor';
  *     "description": "Install dependencies"
  *   },
  *   "timestamp": 1708956234000,
- *   "remainingSteps": [ /* steps 5-8 */ ],
+ *   "remainingSteps": [
  *   "context": {
  *     "lastStdout": "npm WARN: ...\nproceed? (y/n) ",
  *     "lastStderr": "",
