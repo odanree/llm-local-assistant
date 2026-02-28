@@ -37,7 +37,6 @@ describe('Phase 11: Executor Form Pattern & Terminal Testing', () => {
   let executor: Executor;
   let mockLLMClient: any;
   let mockConfig: any;
-  const { workspace } = require('vscode');
 
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -87,8 +86,6 @@ Forms require:
 - Named input elements with name attributes
 - Semantic HTML markup
 `;
-
-      workspace.fs.readFile.mockResolvedValue(new TextEncoder().encode(customRules));
 
       // Mock validateGeneratedCode to use custom rules
       vi.spyOn(executor as any, 'validateGeneratedCode').mockResolvedValue({
