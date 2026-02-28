@@ -398,7 +398,11 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
 
 /**
  * Wait for a process to exit
- * Returns immediately when process exits or after timeout
+ * Uses setImmediate to yield one event loop tick after 'exit', ensuring
+ * pending stdout/stderr 'data' events have been delivered. On Linux,
+ * 'exit' fires from the process object before stream I/O events flush.
+ * setImmediate runs in the "check" phase, AFTER the "poll" phase where
+ * I/O events are processed, guaranteeing all data callbacks have fired.
  */
 function waitForExit(
   handle: ProcessHandle,
@@ -415,7 +419,8 @@ function waitForExit(
 
     handle.onExit(() => {
       clearTimeout(timer);
-      resolve();
+      // Yield one tick so pending I/O events (data/error) flush first
+      setImmediate(resolve);
     });
   });
 }

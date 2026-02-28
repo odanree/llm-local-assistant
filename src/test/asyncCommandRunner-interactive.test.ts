@@ -314,7 +314,8 @@ function waitForExit(
 
     handle.onExit(() => {
       clearTimeout(timer);
-      resolve();
+      // Yield one tick so pending I/O events (data/error) flush first
+      setImmediate(resolve);
     });
   });
 }
