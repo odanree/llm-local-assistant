@@ -274,11 +274,17 @@ export class AsyncCommandRunner {
     }
 
     // ================== Process Exit Handler ==================
-    // IMPORTANT: Use 'close' not 'exit' here.
-    // 'exit' fires before stdout/stderr streams are fully flushed on Linux CI.
-    // 'close' fires AFTER all I/O is done, preventing the race condition where
-    // data callbacks are blocked by `if (exited) return` before data arrives.
-    child.on('close', (code) => {
+    // Use 'exit' (not 'close'): 'close' waits for ALL stdio streams to end,
+    // which hangs when kill() sends SIGTERM to a shell — the shell dies but
+    // its child process (e.g., sleep) inherits the pipes and holds them open.
+    // 'exit' fires reliably when the process itself terminates.
+    //
+    // Data integrity is handled separately by replay buffers: stdout/stderr
+    // handlers have NO `if (exited) return` guard, so late-arriving data is
+    // still captured in dataReplayBuffer and replayed to late-registered
+    // callbacks. This eliminates the original race condition without needing
+    // 'close'.
+    child.on('exit', (code) => {
       exited = true;
       exitCode = code ?? 1;
 

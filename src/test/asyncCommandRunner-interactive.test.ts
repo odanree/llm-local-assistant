@@ -100,18 +100,26 @@ describe('AsyncCommandRunner - Interactive Input (M2)', () => {
 
   describe('sendInput: Interactive Response', () => {
     it('should send input to process stdin', async () => {
-      let receivedPrompt = false;
-      const handle = runner.spawn('read -p "Enter something: " var; echo $var');
+      // Cross-platform: use node to read from stdin and echo it back.
+      // 'read -p' is bash-specific and writes prompts to stderr,
+      // which our prompt detector doesn't check — causing hangs on Linux CI.
+      let output = '';
+      const handle = runner.spawn(
+        'node -e "process.stdin.once(\'data\', d => { process.stdout.write(d); process.exit(0); })"'
+      );
 
-      handle.onPrompt((text) => {
-        receivedPrompt = true;
-        handle.sendInput('test_input\n');
+      handle.onData((chunk) => {
+        output += chunk;
       });
+
+      // Give the node process a moment to start, then send input
+      setTimeout(() => handle.sendInput('test_input\n'), 200);
 
       await waitForExit(handle);
 
-      // Just verify process ran and exited
+      // Verify process received and echoed our input
       expect(handle.isRunning()).toBe(false);
+      expect(output).toContain('test_input');
     });
 
     it('should handle input before process ready', async () => {
