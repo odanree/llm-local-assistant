@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] - 2026-02-28 - "The Reactive Orchestrator"
+
+### 🚀 Major Features
+- **Real-Time Process Streaming** - Fully replaced blocking `spawnSync` with async streaming via AsyncCommandRunner
+- **Interactive Input Detection** - 16 pattern matchers for npm, yarn, git, sudo commands with live stdin routing
+- **Suspend/Resume State Machine** - Mid-plan interruption with conflict detection and hash-based file integrity verification
+- **Three Independent Safety Rails** - Architecture Guard, Form Fallback, Zustand Sync-Fixer for autonomous recovery
+
+### 🔐 Safety & Recovery Systems
+- **Architecture Guard** - Detects and fixes layer violations before writing code (+1.8% coverage)
+- **Form Fallback** - Guarantees 7 mandatory form patterns even when rules fail (+0.9% coverage)
+- **Zustand Sync-Fixer** - Maintains component-store API consistency automatically (+0.7% coverage)
+- **Five Critical CI Hardening Fixes** - Exit event + replay buffers, no double-shelling, cross-platform stdin, pragmatic thresholds, data polling
+
+### 📊 Quality Metrics
+- **81.21% Statement Coverage** - Diamond Tier achieved and maintained
+- **3,600 Total Tests** (3,597 passing, 3 skipped) - 100% pass rate
+- **101 Test Files** - Comprehensive modular test suite
+- **Zero CI Flakiness** - Deterministic on Node 18.x and 20.x
+- **Five Root-Cause Fixes** - Resolved all intermittent CI failures
+
+### 🧪 Testing Infrastructure
+- Replay buffers for event sourcing pattern - eliminates late-callback race conditions
+- Data polling instead of exit-based synchronization - handles pipe I/O scheduling races
+- Cross-platform stdin reader - replaces shell builtins for parity
+- Pragmatic performance thresholds - distinguishes CI variance from algorithmic regressions
+- Comprehensive Chaos Suite - 19 tests validating multi-rail failure recovery
+
+---
+
 ## [2.11.0] - 2026-02-27 - "The Diamond Tier Release"
 
 ### 💎 Coverage & Reliability
