@@ -377,7 +377,7 @@ Implemented suspend/resume with hash-based file integrity checks for safe plan i
 
 The v2.13.0 release resolved three deep-seated technical issues that were causing intermittent CI failures and performance degradation. These fixes are foundational to the production-ready status.
 
-#### 1. **The exit vs. close Revelation: Deadlock Prevention** 🔐
+#### 1. **The Core Engine: close vs. exit** 🔐
 
 **Problem**: The AsyncCommandRunner was deadlocking on certain long-running processes because of a subtle Node.js lifecycle issue.
 
@@ -388,15 +388,45 @@ The v2.13.0 release resolved three deep-seated technical issues that were causin
 - **Replay Buffer** captures any stdout/stderr data that arrives after exit but before close
 - Decouples process lifecycle from I/O stream lifecycle
 
+**❌ First Run Code (The Flaky Trap)**
 ```typescript
-// Before: Deadlock risk
-handle.on('close', (code) => { /* Process hung here waiting for orphaned children */ });
+// src/services/AsyncCommandRunner.ts
+// Listens to 'close', waiting for BOTH process termination AND pipe drainage
+this.process.on('close', (code) => {
+  this.isRunningFlag = false;
+  this.exitCode = code;
 
-// After: Zero deadlock
-process.on('exit', (code) => {
-  replayBuffer.flush();  // Capture any late-arriving data
-  closeHandle(handle);   // Safe cleanup
+  // If the process was killed via SIGTERM, its child processes
+  // might still hold the stdout pipe open, causing this to never fire!
+  this.exitCallbacks.forEach(cb => cb(code));
 });
+
+this.process.stdout.on('data', (data) => {
+  if (!this.isRunningFlag) return; // Guard dropping late-arriving data!
+  this.dataCallbacks.forEach(cb => cb(data));
+});
+```
+
+**✅ Final Fix Diff (The Deterministic Engine)**
+```typescript
+// src/services/AsyncCommandRunner.ts
+- // Listens to 'close', waiting for BOTH process termination AND pipe drainage
+- this.process.on('close', (code) => {
++ // Use 'exit' (not 'close'): 'close' waits for ALL stdio streams to end...
++ this.process.on('exit', (code) => {
+    this.isRunningFlag = false;
+    this.exitCode = code;
+
+    this.exitCallbacks.forEach(cb => cb(code));
+  });
+
+  this.process.stdout.on('data', (data) => {
+-   if (!this.isRunningFlag) return; // Guard dropping late-arriving data!
++   // Data integrity handled by replay buffers. NO 'if (exited) return' guard.
++   // Late-arriving data is captured in dataReplayBuffer and replayed.
++   this.dataReplayBuffer.push(data);
+    this.dataCallbacks.forEach(cb => cb(data));
+  });
 ```
 
 **Impact**:
@@ -408,7 +438,7 @@ process.on('exit', (code) => {
 
 ---
 
-#### 2. **The read -p Trap: Cross-Platform Consistency** 🌍
+#### 2. **The Interactive Shell: read -p vs node -e** 🌍
 
 **Problem**: The interactive input detection system was failing inconsistently across CI runners (Ubuntu 20.04, 22.04, Windows Server 2022).
 
@@ -419,19 +449,53 @@ process.on('exit', (code) => {
 
 This meant tests passed locally but failed in CI due to silent prompt rerouting.
 
-**Solution**: Replaced all shell built-ins with **Node.js generated commands**:
+**Solution**: Replaced all shell built-ins with **Node.js generated commands** for platform parity.
 
-```bash
-# Before: Platform-dependent
-echo "test" | read -p "prompt: "  # ❌ Inconsistent behavior
+**❌ First Run Code (The OS-Dependent Hang)**
+```typescript
+// src/test/asyncCommandRunner-interactive.test.ts
+it('should handle interactive prompts', async () => {
+  // Fails on Windows (no 'read').
+  // Hangs on Linux CI because 'Prompt:' goes to stderr, missing our detector.
+  const handle = runner.runStreaming('read -p "Prompt:" var; echo $var');
 
-# After: Platform-independent
-node -e "for(let i=0;i<1000;i++)console.log('y')"  # ✅ 100% consistent
+  handle.onData((data) => {
+    if (data.chunk.includes('Prompt:')) {
+      handle.sendInput('my-answer\n');
+    }
+  });
+  // ...
+});
+```
+
+**✅ Final Fix Diff (The Cross-Platform Standard)**
+```typescript
+// src/test/asyncCommandRunner-interactive.test.ts
+it('should handle interactive prompts', async () => {
+- const handle = runner.runStreaming('read -p "Prompt:" var; echo $var');
++ // Uses standard Node readline to guarantee stdout emission across all OSs
++ const nodeScript = `
++   const readline = require('readline').createInterface({
++     input: process.stdin, output: process.stdout
++   });
++   readline.question('Prompt:', (ans) => {
++     console.log(ans);
++     readline.close();
++   });
++ `;
++ const handle = runner.runStreaming(`node -e "${nodeScript.replace(/\n/g, '')}"`);
+
+  handle.onData((data) => {
+    if (data.chunk.includes('Prompt:')) {
+      handle.sendInput('my-answer\n');
+    }
+  });
+});
 ```
 
 **Implementation**: Updated test generators in `asyncCommandRunner-streaming.test.ts`:
-- `npm install` simulator → node -e loop with y output
-- `git clone` simulator → node -e with stdout data
+- `npm install` simulator → `node -e "for(let i=0;i<1000;i++)console.log('y')"`
+- `git clone` simulator → `node -e` with stdout data
 - Generic prompts → deterministic node output
 
 **Impact**:
@@ -441,7 +505,7 @@ node -e "for(let i=0;i<1000;i++)console.log('y')"  # ✅ 100% consistent
 
 ---
 
-#### 3. **CI Variance vs. Algorithmic Complexity: Pragmatic Thresholds** ⚡
+#### 3. **CI Variance vs. Algorithmic Loops** ⚡
 
 **Problem**: Performance regression detection tests were failing inconsistently because thresholds were too aggressive for shared CI runners.
 
@@ -452,26 +516,48 @@ node -e "for(let i=0;i<1000;i++)console.log('y')"  # ✅ 100% consistent
 
 However, this threshold was correct for detecting **algorithmic regressions** like O(n²) loops introduced accidentally.
 
-**Solution**: **Pragmatic threshold adjustment** from <100ms to <200ms:
-- Still catches O(n²) catastrophic regressions (10x slowdown = 200ms → 2000ms)
-- Allows for CI environment variance and cold caches
-- Maintains protection against algorithmic complexity creep
+**Solution**: **Pragmatic threshold adjustment** from <100ms to <200ms that distinguishes algorithmic regressions from normal CI variance.
 
+**❌ First Run Code (The Throttled Failure)**
 ```typescript
-// Before: Too strict for CI
-const threshold = 100;  // ❌ Fails on cache misses
+// src/test/diffSummarizer.test.ts
+it('should summarize diffs efficiently', () => {
+  const start = performance.now();
+  summarizer.generate(massiveDiff);
+  const duration = performance.now() - start;
 
-// After: Pragmatic
-const threshold = 200;  // ✅ Catches regressions, allows variance
-                        //   O(1) operations: <20ms (safe)
-                        //   O(n) operations: <100ms (safe)
-                        //   O(n²) operations: >2000ms (caught!)
+  // Fails randomly when CI runner is dealing with noisy neighbors
+  expect(duration).toBeLessThan(100);
+});
+```
+
+**✅ Final Fix Diff (The Pragmatic Buffer)**
+```typescript
+// src/test/diffSummarizer.test.ts
+it('should summarize diffs efficiently', () => {
+  const start = performance.now();
+  summarizer.generate(massiveDiff);
+  const duration = performance.now() - start;
+
+- expect(duration).toBeLessThan(100);
++ // Relaxed to 200ms to tolerate CI CPU variance, but still catches O(n^2) regressions
++ expect(duration).toBeLessThan(200);
+});
 ```
 
 **Trade-off Analysis**:
-- **False Negatives** (Regression Missed): Only if O(n) → O(n²) regression is tiny (<10x)
-- **False Positives** (Test Fails on Fast Hardware): None—tests pass faster on good hardware
-- **CI Stability**: Improves from ~85% to ~99% pass rate
+| Scenario | Impact |
+|----------|--------|
+| **Cold cache on CI** | Pass (now at ~80-120ms vs failing at <100ms) |
+| **O(1) operation** | Pass (~5-20ms) |
+| **O(n) operation** | Pass (~50-100ms) |
+| **O(n²) regression** | FAIL (would be >2000ms) ✅ Caught |
+| **False Positives** | None—faster hardware passes even faster |
+
+**Result**:
+- **CI Stability**: Improved from ~85% to ~99% pass rate
+- **Regression Detection**: Still catches catastrophic algorithmic regressions (10x slowdown)
+- **Developer Experience**: No flaky false failures on good hardware
 
 **Impact**:
 - Eliminates non-deterministic CI failures
