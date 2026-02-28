@@ -371,10 +371,6 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
       let output2 = '';
 
       const handle1 = runner.spawn('echo "first"');
-      // Register callbacks IMMEDIATELY after spawn, before spawning the
-      // next handle. On fast Linux CI both processes can complete before
-      // any callback is registered; waitForExit's onExit replay then
-      // resolves the Promise before onData replay runs.
       handle1.onData((chunk) => {
         output1 += chunk;
       });
@@ -384,7 +380,15 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
         output2 += chunk;
       });
 
-      await Promise.all([waitForExit(handle1), waitForExit(handle2)]);
+      // Wait for BOTH outputs to contain expected data, not just for exit.
+      // On Node 20.x Linux CI, pipe reads (stdout data) can arrive multiple
+      // event loop iterations after the 'exit' event. setImmediate is not
+      // enough because 'exit' comes from waitpid() while pipe data comes
+      // from separate I/O reads with no ordering guarantee.
+      await waitFor(
+        () => output1.includes('first') && output2.includes('second'),
+        3000
+      );
 
       expect(output1).toContain('first');
       expect(output2).toContain('second');
