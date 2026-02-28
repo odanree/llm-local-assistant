@@ -2788,15 +2788,28 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         // 1. Stream data and check for prompts (Circuit Breaker)
         handle.onData?.((data: any) => {
           // ✅ v2.12.1 FIX: Handle both string and ProcessStream object data
-          const chunk = typeof data === 'string'
-            ? data
-            : (typeof data === 'object' && data.chunk
-              ? data.chunk
-              : JSON.stringify(data));
+          // 1. Unbox the chunk safely - prefer data.chunk, fallback to string conversion
+          let chunk: string;
+          if (typeof data === 'string') {
+            chunk = data;
+          } else if (typeof data === 'object' && data.chunk) {
+            chunk = String(data.chunk);
+          } else if (typeof data === 'object' && data.toString) {
+            // Try toString() if available, but only if it produces meaningful output
+            const str = data.toString();
+            chunk = (str !== '[object Object]') ? str : '';
+          } else {
+            chunk = '';
+          }
+
+          // 2. Ignore empty chunks to avoid extra blank lines and {} serialization
+          if (!chunk || chunk.trim() === '') {
+            return;
+          }
 
           output += chunk;
 
-          // Pass output to UI in real-time
+          // 3. Pass output to UI in real-time (only non-empty)
           this.config.onStepOutput?.(step.stepId || 0, chunk, false);
 
           // THE CIRCUIT BREAKER: Check for prompts mid-stream
@@ -2972,9 +2985,10 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
   private classifyStderr(chunk: string): { isWarning: boolean; message: string } {
     // Non-fatal warning keywords (npm, yarn, node output)
     const warningPatterns = [
-      /npm\s+warn/i,
+      /^npm\s+(warn|notice|deprecated)/i,  // npm WARN, npm notice, npm deprecated
       /deprecated/i,
       /vulnerability|vulnerabilities/i,
+      /looking for funding/i,              // npm funding message
       /funding/i,
       /optional dependency/i,
       /peer dependency/i,
