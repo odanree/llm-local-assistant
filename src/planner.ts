@@ -28,6 +28,7 @@ import {
   validateExecutionStep,
   assertValidActionType,
 } from './types/executor';
+import { PlanStateString } from './types/PlanState';
 import { sanitizeJson, safeParse } from './utils/jsonSanitizer';
 import { TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
 import { SemanticValidator } from './services/semanticValidator';
@@ -49,7 +50,7 @@ export interface TaskPlan {
   steps: ExecutionStep[];
   generatedAt: Date;
   reasoning: string; // Why LLM chose this approach
-  status?: 'pending' | 'executing' | 'completed' | 'failed'; // For executor tracking
+  status?: PlanStateString | 'pending'; // For executor tracking (PlanState enum + backward compat)
   currentStep?: number; // For executor tracking
   results?: Map<number, StepResult>; // For executor tracking
   

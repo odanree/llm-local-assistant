@@ -37,7 +37,7 @@ export interface ExecutorConfig {
   onProgress?: (step: number, total: number, description: string) => void;
   onMessage?: (message: string, type: 'info' | 'error') => void;
   onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;  // Stream step output
-  onQuestion?: (question: string, options: string[]) => Promise<string | undefined>;  // Ask clarification question (Priority 2.2)
+  onQuestion?: (question: string, options: string[], timeoutMs?: number) => Promise<string | undefined>;  // Ask clarification question (Priority 2.2)
   // Phase 3A: Dependency Injection for side effects
   fs?: IFileSystem;         // Default: FileSystemProvider (production)
   commandRunner?: ICommandRunner;  // Default: CommandRunnerProvider (production)
