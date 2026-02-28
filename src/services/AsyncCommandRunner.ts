@@ -65,12 +65,14 @@ export class AsyncCommandRunner {
     const [cmd, ...args] = this.parseCommand(command, shell);
 
     // Spawn the child process
+    // When shell is a boolean, pass it to spawn directly — parseCommand
+    // returns the raw command for shell=true (spawn handles wrapping).
+    // When shell is a custom string, parseCommand already wraps it,
+    // so spawn gets shell=false to avoid double-wrapping.
     const child = cp.spawn(cmd, args, {
       cwd,
       shell: typeof shell === 'boolean' ? shell : false,
-      stdio: ['pipe', 'pipe', 'pipe'], // stdin, stdout, stderr
-      // Note: maxBuffer option is not standard for spawn(), only for exec()
-      // Buffer overflow is managed by stream handling, not by this option
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     // Create ProcessHandle implementation
@@ -104,7 +106,7 @@ export class AsyncCommandRunner {
    * - shell: string → use custom shell
    *
    * @example
-   * parseCommand('npm install', true)  // → ['sh', '-c', 'npm install']
+   * parseCommand('npm install', true)  // → ['npm install'] (spawn handles shell)
    * parseCommand('npm install', false) // → ['npm', 'install']
    */
   private parseCommand(
@@ -122,11 +124,11 @@ export class AsyncCommandRunner {
       return parts as [string, ...string[]];
     }
 
-    // Default shell behavior - use system shell with -c flag
-    const isWindows = process.platform === 'win32';
-    const shellCmd = isWindows ? 'cmd.exe' : '/bin/sh';
-    const flag = isWindows ? '/c' : '-c';
-    return [shellCmd, flag, command];
+    // shell === true: Return raw command — spawn's shell option handles
+    // wrapping in the system shell (sh -c on Linux, cmd /s /c on Windows).
+    // Do NOT wrap here to avoid double-shelling, which corrupts argument
+    // parsing (e.g., "exit 42" becomes "exit" with $0="42" → code 0).
+    return [command] as [string, ...string[]];
   }
 
   /**
@@ -163,24 +165,52 @@ export class AsyncCommandRunner {
     const exitCallbacks: ((code: number) => void)[] = [];
     const promptCallbacks: ((text: string) => void)[] = [];
 
-    // Register callback methods on handle
-    handle.onData = (cb) => dataCallbacks.push(cb);
-    handle.onError = (cb) => errorCallbacks.push(cb);
-    handle.onExit = (cb) => exitCallbacks.push(cb);
-    handle.onPrompt = (cb) => promptCallbacks.push(cb);
+    // Replay buffers — on fast Linux CI, the child process can emit data
+    // and exit BEFORE the caller registers callbacks (since spawn() returns
+    // synchronously but I/O events fire on the next microtask). These buffers
+    // capture all events so late-registered callbacks receive the full history.
+    const dataReplayBuffer: string[] = [];
+    const errorReplayBuffer: Error[] = [];
+    const promptReplayBuffer: string[] = [];
+
+    // Register callback methods with replay support
+    handle.onData = (cb) => {
+      for (const chunk of dataReplayBuffer) {
+        try { cb(chunk); } catch (err) { console.error('Error in onData replay:', err); }
+      }
+      dataCallbacks.push(cb);
+    };
+    handle.onError = (cb) => {
+      for (const err of errorReplayBuffer) {
+        try { cb(err); } catch (e) { console.error('Error in onError replay:', e); }
+      }
+      errorCallbacks.push(cb);
+    };
+    handle.onExit = (cb) => {
+      if (exited && exitCode !== undefined) {
+        try { cb(exitCode); } catch (err) { console.error('Error in onExit replay:', err); }
+      }
+      exitCallbacks.push(cb);
+    };
+    handle.onPrompt = (cb) => {
+      for (const text of promptReplayBuffer) {
+        try { cb(text); } catch (err) { console.error('Error in onPrompt replay:', err); }
+      }
+      promptCallbacks.push(cb);
+    };
 
     // ================== stdout Handler ==================
     if (child.stdout) {
       child.stdout.on('data', (chunk) => {
-        if (exited) return; // Ignore data after exit
-
         const data = chunk.toString('utf8');
 
+        // Buffer for replay (late-registered callbacks)
+        dataReplayBuffer.push(data);
+
         // Prompt detection heuristic: check if this looks like a prompt
-        // (This is simple detection - Milestone 2 will add full pattern matching)
         if (!promptDetected && this.looksLikePrompt(data)) {
           promptDetected = true;
-          // Emit to prompt handlers
+          promptReplayBuffer.push(data);
           promptCallbacks.forEach((cb) => {
             try {
               cb(data);
@@ -201,6 +231,7 @@ export class AsyncCommandRunner {
       });
 
       child.stdout.on('error', (err) => {
+        errorReplayBuffer.push(err);
         errorCallbacks.forEach((cb) => {
           try {
             cb(err);
@@ -214,10 +245,11 @@ export class AsyncCommandRunner {
     // ================== stderr Handler ==================
     if (child.stderr) {
       child.stderr.on('data', (chunk) => {
-        if (exited) return;
-
         const data = chunk.toString('utf8');
         const err = new Error(data);
+
+        // Buffer for replay
+        errorReplayBuffer.push(err);
 
         // Emit to error handlers
         errorCallbacks.forEach((cb) => {
@@ -230,6 +262,7 @@ export class AsyncCommandRunner {
       });
 
       child.stderr.on('error', (err) => {
+        errorReplayBuffer.push(err);
         errorCallbacks.forEach((cb) => {
           try {
             cb(err);
