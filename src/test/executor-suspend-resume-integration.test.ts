@@ -57,9 +57,10 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
   describe('Suspend/Resume State Persistence', () => {
     it('should save suspended execution state to codebaseIndex', async () => {
       const plan: TaskPlan = {
-        id: 'test-plan-1',
         taskId: 'task-1',
-        taskDescription: 'Test state persistence',
+        userRequest: 'Test state persistence',
+        reasoning: 'Testing suspended state persistence',
+        generatedAt: new Date(),
         status: PlanState.IDLE,
         steps: [
           {
@@ -77,25 +78,26 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
 
       // Simulate setting suspended state
       const suspendedState = {
-        planId: plan.id,
+        planId: plan.taskId,
         stepIndex: 0,
         remainingSteps: plan.steps,
         fileSnapshots: { '/test/project/src/index.ts': 'hash123' },
       };
-      codebaseIndex.setSuspendedState(plan.id, suspendedState);
+      codebaseIndex.setSuspendedState(plan.taskId, suspendedState);
 
       // Verify state was saved
-      const retrieved = codebaseIndex.getSuspendedState(plan.id);
+      const retrieved = codebaseIndex.getSuspendedState(plan.taskId);
       expect(retrieved).toBeDefined();
       expect(retrieved?.stepIndex).toBe(0);
-      expect(retrieved?.planId).toBe(plan.id);
+      expect(retrieved?.planId).toBe(plan.taskId);
     });
 
     it('should clear suspended state when resumed', async () => {
       const plan: TaskPlan = {
-        id: 'test-plan-2',
         taskId: 'task-2',
-        taskDescription: 'Test state cleanup',
+        userRequest: 'Test state cleanup',
+        reasoning: 'Testing state clearing',
+        generatedAt: new Date(),
         status: PlanState.SUSPENDED_FOR_PERMISSION,
         steps: [],
         results: new Map(),
@@ -104,18 +106,18 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
       };
 
       // Setup suspended state
-      codebaseIndex.setSuspendedState(plan.id, {
-        planId: plan.id,
+      codebaseIndex.setSuspendedState(plan.taskId, {
+        planId: plan.taskId,
         stepIndex: 0,
         remainingSteps: [],
         fileSnapshots: {},
       });
 
       // Clear it (simulating successful resume)
-      codebaseIndex.setSuspendedState(plan.id, null);
+      codebaseIndex.setSuspendedState(plan.taskId, null);
 
       // Verify it's cleared
-      const retrieved = codebaseIndex.getSuspendedState(plan.id);
+      const retrieved = codebaseIndex.getSuspendedState(plan.taskId);
       expect(retrieved).toBeNull();
     });
   });
@@ -123,9 +125,10 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
   describe('Resume Integration', () => {
     it('should successfully send input on resume', async () => {
       const plan: TaskPlan = {
-        id: 'test-plan-3',
         taskId: 'task-3',
-        taskDescription: 'Test resume',
+        userRequest: 'Test resume',
+        reasoning: 'Testing resume functionality',
+        generatedAt: new Date(),
         status: PlanState.SUSPENDED_FOR_PERMISSION,
         steps: [],
         results: new Map(),
@@ -135,12 +138,12 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
 
       // Setup suspended state
       const suspendedState = {
-        planId: plan.id,
+        planId: plan.taskId,
         stepIndex: 0,
         remainingSteps: [],
         fileSnapshots: {},
       };
-      codebaseIndex.setSuspendedState(plan.id, suspendedState);
+      codebaseIndex.setSuspendedState(plan.taskId, suspendedState);
 
       // Mock lastHandle
       const mockHandle = {
@@ -149,7 +152,7 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
       };
       (executor['commandRunner'] as any).lastHandle = mockHandle;
 
-      const result = await executor.resume(plan.id, {
+      const result = await executor.resume(plan.taskId, {
         userInput: 'y',
       });
 
@@ -170,9 +173,10 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
   describe('Cancel Suspended Execution', () => {
     it('should kill process and clear state on cancel', async () => {
       const plan: TaskPlan = {
-        id: 'test-plan-4',
         taskId: 'task-4',
-        taskDescription: 'Test cancel',
+        userRequest: 'Test cancel',
+        reasoning: 'Testing cancel functionality',
+        generatedAt: new Date(),
         status: PlanState.SUSPENDED_FOR_PERMISSION,
         steps: [],
         results: new Map(),
@@ -181,8 +185,8 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
       };
 
       // Setup suspended state
-      codebaseIndex.setSuspendedState(plan.id, {
-        planId: plan.id,
+      codebaseIndex.setSuspendedState(plan.taskId, {
+        planId: plan.taskId,
         stepIndex: 0,
         remainingSteps: [],
         fileSnapshots: {},
@@ -195,13 +199,13 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
       };
       (executor['commandRunner'] as any).lastHandle = mockHandle;
 
-      const result = await executor.cancel(plan.id);
+      const result = await executor.cancel(plan.taskId);
 
       expect(result.cancelled).toBe(true);
       expect(mockHandle.kill).toHaveBeenCalled();
 
       // State should be cleared
-      const clearedState = codebaseIndex.getSuspendedState(plan.id);
+      const clearedState = codebaseIndex.getSuspendedState(plan.taskId);
       expect(clearedState).toBeNull();
     });
 
@@ -234,18 +238,19 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
   describe('File Modification Detection', () => {
     it('should detect when a file is modified during suspension', async () => {
       const plan: TaskPlan = {
-        id: 'test-plan-5',
         taskId: 'task-5',
-        taskDescription: 'Test file detection',
+        userRequest: 'Test file detection',
         status: PlanState.SUSPENDED_FOR_PERMISSION,
         steps: [],
+        reasoning: 'Testing file modification detection',
         results: new Map(),
         workspaceName: 'Test Project',
         workspacePath: '/test/project',
+        generatedAt: new Date(),
       };
 
       const suspendedState = {
-        planId: plan.id,
+        planId: plan.taskId,
         stepIndex: 0,
         remainingSteps: [],
         fileSnapshots: {
@@ -253,7 +258,7 @@ describe('v2.13.0 Phase 4: Executor Suspend/Resume Integration', () => {
         },
       };
 
-      codebaseIndex.setSuspendedState(plan.id, suspendedState);
+      codebaseIndex.setSuspendedState(plan.taskId, suspendedState);
 
       // Mock fileSystem to return modified content
       const mockFS = executor['config'].fs as any;

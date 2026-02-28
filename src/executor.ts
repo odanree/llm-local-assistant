@@ -231,9 +231,9 @@ export class Executor {
     // ✅ PHASE 3 SUSPEND/RESUME HOOK: Check for previously suspended execution
     // If this plan was suspended waiting for user input, we need to resume it
     if (plan.status === PlanState.SUSPENDED_FOR_PERMISSION && this.codebaseIndex) {
-      const suspendedState = this.codebaseIndex.getSuspendedState(plan.id);
+      const suspendedState = this.codebaseIndex.getSuspendedState(plan.taskId);
       if (suspendedState) {
-        console.log(`[Executor] Found suspended plan ${plan.id} - will resume from step ${suspendedState.stepIndex + 1}`);
+        console.log(`[Executor] Found suspended plan ${plan.taskId} - will resume from step ${suspendedState.stepIndex + 1}`);
 
         // Detect any file modifications that occurred while suspended
         const fileModifications = await this.detectFileModifications(suspendedState);
@@ -364,7 +364,7 @@ export class Executor {
 
           // ✅ PHASE 2 CIRCUIT BREAKER: Check for suspension BEFORE retry logic
           // If suspended, DON'T treat as failure - just pause and wait for user input
-          const isSuspended = (result as any).suspended === true || plan.status === PlanState.SUSPENDED_FOR_PERMISSION;
+          const isSuspended = (result as any).suspended === true || (plan.status as any) === PlanState.SUSPENDED_FOR_PERMISSION;
           if (isSuspended) {
             console.log(`[Executor] Step ${step.stepId} suspended for user input - pausing execution`);
             plan.status = PlanState.SUSPENDED_FOR_PERMISSION;
@@ -2842,7 +2842,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               // Save suspended state to codebaseIndex
               if (this.codebaseIndex && this.plan) {
                 const suspendedState = {
-                  planId: this.plan.id,
+                  planId: this.plan.taskId,
                   stepIndex: this.plan.steps.indexOf(step),
                   currentStep: step,
                   remainingSteps: this.plan.steps.slice(
@@ -2854,7 +2854,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     suggestedInputs: this.streamingIO?.getSuggestedInputs?.(suspendedPromptText) || [],
                   },
                 };
-                this.codebaseIndex.setSuspendedState(this.plan.id, suspendedState);
+                this.codebaseIndex.setSuspendedState(this.plan.taskId, suspendedState);
               }
             }
           }
@@ -2956,7 +2956,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       // For each file in the snapshot, check if it was modified
       for (const [filePath, originalHash] of Object.entries(suspendedState.fileSnapshots)) {
         try {
-          const content = await this.config.fs?.readFile(filePath);
+          const content = this.fs.readFileSync(filePath);
           const currentHash = content ? this.simpleHash(content) : '';
 
           if (currentHash !== originalHash) {
@@ -3119,7 +3119,9 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       // Execute remaining steps
       let stepsCompleted = 0;
       for (const step of suspendedState.remainingSteps || []) {
-        if (this.cancelled) break;
+        if (this.cancelled) {
+          break;
+        }
 
         // Execute step (simplified for M3 tests)
         // In full implementation, would call executeRun(step)
