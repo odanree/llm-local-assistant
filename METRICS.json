@@ -1,16 +1,6 @@
 {
   "version": "2.13.0",
   "tests": 3597,
-  "testsPassed": 3597,
-  "testsSkipped": 3,
-  "testFiles": 101,
   "coverage": 81.21,
-  "coverageTarget": 81.0,
-  "coverageStatus": "ACHIEVED",
-  "branches": 73.0,
-  "statements": 81.0,
-  "functions": 82.0,
-  "lines": 81.0,
-  "lastUpdated": "2026-02-28T11:30:00Z",
-  "releaseStage": "Production Ready"
+  "lastUpdated": "2026-02-28T11:30:00Z"
 }
