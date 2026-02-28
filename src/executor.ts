@@ -341,6 +341,24 @@ export class Executor {
 
           result = await this.executeStep(plan, step.stepId, planWorkspaceUri);
 
+          // ✅ PHASE 2 CIRCUIT BREAKER: Check for suspension BEFORE retry logic
+          // If suspended, DON'T treat as failure - just pause and wait for user input
+          const isSuspended = (result as any).suspended === true || plan.status === PlanState.SUSPENDED_FOR_PERMISSION;
+          if (isSuspended) {
+            console.log(`[Executor] Step ${step.stepId} suspended for user input - pausing execution`);
+            plan.status = PlanState.SUSPENDED_FOR_PERMISSION;
+            this.config.onMessage?.(`⏸️ Step ${step.stepId} waiting for user input...`, 'info');
+            // Return with suspended status (will be handled by calling code)
+            return {
+              success: false, // Not success, but not a failure either
+              completedSteps: succeededSteps,
+              results: plan.results,
+              error: `Execution paused: ${(result as any).promptText || 'Awaiting user input'}`,
+              totalDuration: Date.now() - startTime,
+              ...(isSuspended && { suspended: true }),
+            };
+          }
+
           if (result.success) {
             // Success! Show retry info if retries happened
             if (retryCount > 0) {
