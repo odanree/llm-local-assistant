@@ -4,10 +4,19 @@
 
 ---
 
-## NEW (v2.11): Dependency Injection & Provider Architecture
+## Core Architecture Layers (v2.11-v2.13)
 
+### v2.11: Dependency Injection & Provider Architecture
 **Release**: v2.11.0 - Side-Effect Decoupling & Fault-Tolerance
-**Status**: Production-ready; core services refactored for testability
+**Status**: Foundation for v2.12 streaming infrastructure
+
+### v2.12: Real-Time Streaming & Interactive Execution
+**Release**: v2.12.0 - Reactive Infrastructure
+**Status**: AsyncCommandRunner, process streaming, suspend/resume state machine
+
+### v2.13: Safety Rails & Reactive Orchestration (Current)
+**Release**: v2.13.0 - Self-Healing Systems
+**Status**: Production-ready; three independent safety rails with Chaos Suite validation
 
 ### High-Level Provider Pattern
 

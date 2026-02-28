@@ -10,6 +10,9 @@ export default defineConfig({
       '.claude/worktrees/**',
       'dist/**',
       'out/**',
+      'examples/**', // Exclude examples folder (contains zod tests in node_modules)
+      '**/examples/**', // Exclude examples at any level
+      '**/examples/node_modules/**', // Explicitly exclude examples node_modules
       'tests-legacy-backup-wave1-20260226/**', // Phase 5 Wave 1 backup
       'tests-legacy-backup-*/**', // All legacy backup directories
     ],
@@ -32,13 +35,13 @@ export default defineConfig({
         '**/mock/**',
         'src/test/executor.shared-mocks.ts', // Test utilities don't need coverage
       ],
-      // CRITICAL: Coverage thresholds locked at Phase 6.4 achievement (74.68%)
-      // These thresholds enforce the realistic testable ceiling and prevent regression
-      // Note: 74.68% is the maximum testable coverage without architectural refactoring
-      lines: 74,
-      functions: 80,
-      branches: 67, // Branch coverage is harder to achieve
-      statements: 74,
+      // DIAMOND TIER: Coverage thresholds locked at v2.11.1 achievement (81.21%)
+      // These thresholds enforce enterprise-grade testing standards and prevent regression
+      // Achieved through targeted testing of executor, refiner, and smartAutoCorrection modules
+      lines: 81,
+      functions: 82,
+      branches: 73, // Branch coverage requires focused decision logic testing
+      statements: 81,
       // Fail the build if any threshold is not met
       all: true,
     },

@@ -18,8 +18,7 @@
  * 7. GenerationModeDetector - Runtime detection of generation mode (diff vs scaffold)
  * 8. LeanParser - Parse lean prompt output (Danh's optimization for 7B models)
  * 9. PathSanitizer - Strict path guard & circuit breaker (senior architecture)
- * 10. ModeDetector - Detect project structure for context anchoring (Core Four closure)
- * 11. HandoverSummary - Post-execution handover for human-in-the-loop (product thinking)
+ * 10. HandoverSummary - Post-execution handover for human-in-the-loop (product thinking)
  */
 
 export { SimpleFixer, type FixResult, type FixAction } from './simpleFixer';
@@ -31,7 +30,6 @@ export { WorkspaceDetector, type DetectedWorkspace } from './workspaceDetector';
 export { GenerationModeDetector, type GenerationModeResult } from './generationModeDetector';
 export { parseLeanOutput, validateLeanOutput } from './leanParser';
 export { PathSanitizer } from './pathSanitizer';
-export { GenerationModeDetector as ModeDetector, type ProjectContext as ModeDetectorContext } from './modeDetector';
 export {
   generateHandoverSummary,
   formatHandoverHTML,

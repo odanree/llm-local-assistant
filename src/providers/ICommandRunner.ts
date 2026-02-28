@@ -5,9 +5,12 @@
  * - Mock command runners for testing error paths (timeout, process crash, etc.)
  * - Different execution strategies (local, remote, containerized, etc.)
  * - Better process management and error recovery
+ * - v2.12.0: Streaming I/O with real-time process interaction
  *
  * Design Pattern: Strategy pattern for side effects
  */
+
+import type { ProcessHandle, SpawnOptions } from '../types';
 
 export interface ExecOptions {
   timeout?: number;
@@ -70,6 +73,25 @@ export interface ICommandRunner {
    * Get shell to use for execution
    */
   getShell(): string;
+
+  /**
+   * NEW v2.12.0: Spawn a process with real-time streaming
+   *
+   * Returns a ProcessHandle for interactive command execution.
+   * Used for commands that require real-time interaction (npm, yarn, git, etc.)
+   *
+   * @param command Command string to execute
+   * @param options Spawn options (timeout, cwd, shell, maxBuffer, echo)
+   * @returns ProcessHandle for streaming and interaction
+   *
+   * @example
+   * const handle = commandRunner.spawn('npm install', { timeout: 30000 });
+   * handle.onData(data => console.log('output:', data));
+   * handle.onPrompt(prompt => console.log('prompt:', prompt));
+   * handle.sendInput('y\n');
+   * handle.kill();
+   */
+  spawn(command: string, options?: SpawnOptions): ProcessHandle;
 }
 
 /**
