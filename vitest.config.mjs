@@ -10,6 +10,9 @@ export default defineConfig({
       '.claude/worktrees/**',
       'dist/**',
       'out/**',
+      'examples/**', // Exclude examples folder (contains zod tests in node_modules)
+      '**/examples/**', // Exclude examples at any level
+      '**/examples/node_modules/**', // Explicitly exclude examples node_modules
       'tests-legacy-backup-wave1-20260226/**', // Phase 5 Wave 1 backup
       'tests-legacy-backup-*/**', // All legacy backup directories
     ],
