@@ -1,4 +1,4 @@
-name: 🚀 Metrics Validator & Quality Gate
+name: 🏛️ Quality Gate Check
 
 on:
   push:
@@ -7,16 +7,12 @@ on:
     branches: [ main ]
 
 jobs:
-  sync-metrics:
+  quality-gate:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # Required to push changes back to the PR branch
 
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
@@ -27,21 +23,10 @@ jobs:
       - name: 📦 Install Dependencies
         run: npm ci
 
-      - name: 🧪 Generate Coverage Summary
-        # We run tests to get the most recent coverage-summary.json
-        run: npm run coverage
-
-      - name: ⚡ Run Metrics Validator Skill
-        # This creates/updates METRICS.json with version, tests, and coverage
-        # Validates quality gate threshold (80.27% coverage)
+      - name: ⚡ Verify Quality Gate
+        # Quality gate check: Verify METRICS.json declares acceptable coverage
+        # No coverage runs, no metric generation - just validation
         run: sh .github/skills/metrics-validator/validate-metrics.sh
 
       - name: 🏛️ Enforce Root Directory Rules
-        # Optional: Run your root-enforcer here to ensure no ghost files sneak into the PR
         run: sh .github/skills/root-enforcer/enforce.sh
-
-      - name: 📤 Commit and Push Changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore(metrics): update METRICS.json with latest version, tests, and coverage [skip ci]"
-          file_pattern: 'METRICS.json'
