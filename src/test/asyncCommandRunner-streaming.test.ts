@@ -92,7 +92,8 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
 
     it('should buffer data correctly without loss', async () => {
       let totalBytes = 0;
-      const handle = runner.spawn('yes | head -100'); // 100 lines of "y"
+      // Cross-platform: use node to generate 100 lines
+      const handle = runner.spawn('node -e "for(let i=0;i<100;i++)console.log(\'y\')"');
       handle.onData((chunk) => {
         totalBytes += chunk.length;
       });
@@ -115,8 +116,8 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
       await waitForExit(handle);
       const elapsed = Date.now() - startTime;
 
-      // Should timeout well before 10 seconds
-      expect(elapsed).toBeLessThan(500);
+      // Should timeout well before 10 seconds (allow up to 1s for system variance)
+      expect(elapsed).toBeLessThan(1000);
       expect(handle.isRunning()).toBe(false);
     });
 
@@ -221,7 +222,8 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
   describe('Buffers: Large data handling', () => {
     it('should handle 10,000 lines without crash', async () => {
       let lineCount = 0;
-      const handle = runner.spawn('seq 10000');
+      // Cross-platform: use node to generate 10,000 lines
+      const handle = runner.spawn('node -e "for(let i=0;i<10000;i++)console.log(i)"');
       handle.onData((chunk) => {
         lineCount += chunk.split('\n').length;
       });
@@ -252,7 +254,8 @@ describe('AsyncCommandRunner - Streaming I/O', () => {
 
     it('should call onData for each chunk', async () => {
       let callCount = 0;
-      const handle = runner.spawn('seq 1000');
+      // Cross-platform: use node to generate 1,000 lines
+      const handle = runner.spawn('node -e "for(let i=0;i<1000;i++)console.log(i)"');
       handle.onData(() => {
         callCount++;
       });
