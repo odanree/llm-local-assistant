@@ -26,7 +26,7 @@
  * Coverage target: Maintain 81.4%+ (Diamond Tier)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AsyncCommandRunner } from '../services/AsyncCommandRunner';
 import { ProcessHandle } from '../types/ProcessHandle';
 import * as os from 'os';
