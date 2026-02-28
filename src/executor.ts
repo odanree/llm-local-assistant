@@ -227,7 +227,28 @@ export class Executor {
     this.plan = plan;
     this.paused = false;
     this.cancelled = false;
-    plan.status = 'executing';
+
+    // ✅ PHASE 3 SUSPEND/RESUME HOOK: Check for previously suspended execution
+    // If this plan was suspended waiting for user input, we need to resume it
+    if (plan.status === PlanState.SUSPENDED_FOR_PERMISSION && this.codebaseIndex) {
+      const suspendedState = this.codebaseIndex.getSuspendedState(plan.id);
+      if (suspendedState) {
+        console.log(`[Executor] Found suspended plan ${plan.id} - will resume from step ${suspendedState.stepIndex + 1}`);
+
+        // Detect any file modifications that occurred while suspended
+        const fileModifications = await this.detectFileModifications(suspendedState);
+        if (fileModifications.length > 0) {
+          const msg = `⚠️ Detected ${fileModifications.length} file modification(s) during suspension`;
+          this.config.onMessage?.(msg, 'info');
+          console.log(`[Executor] Modified files: ${fileModifications.join(', ')}`);
+        }
+
+        // Note: Actual resume is handled separately - this is just initialization
+        // The UI will call resume() with user input to continue
+      }
+    }
+
+    plan.status = PlanState.EXECUTING;
 
     // CRITICAL: Initialize results Map if not already present
     if (!plan.results) {
@@ -329,7 +350,7 @@ export class Executor {
           }
 
           if (this.cancelled) {
-            plan.status = 'failed';
+            plan.status = PlanState.FAILED;
             return {
               success: false,
               completedSteps: succeededSteps,
@@ -415,7 +436,7 @@ export class Executor {
         plan.results.set(step.stepId, result!);
 
         if (!result!.success) {
-          plan.status = 'failed';
+          plan.status = PlanState.FAILED;
           plan.currentStep = step.stepId;
           const failureMsg = retryCount > 0
             ? `Step ${step.stepId} failed after ${retryCount} retry attempt${retryCount > 1 ? 's' : ''}`
@@ -461,7 +482,7 @@ export class Executor {
       }
     }
 
-    plan.status = 'completed';
+    plan.status = PlanState.COMPLETED;
 
     // 🔴 CRITICAL: Integration Validation (User's Recommendation)
     // After all files are generated, validate they ACTUALLY integrate
@@ -2868,6 +2889,54 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     // TODO: Implement file hash capture
     // For now, return empty snapshot - will be enhanced in M4 integration
     return {};
+  }
+
+  /**
+   * ✅ PHASE 3 HELPER: Detect file modifications during suspension
+   * Compares current file state with snapshot from when execution was suspended
+   * @param suspendedState The saved execution state from suspension
+   * @returns Array of file paths that were modified
+   */
+  private async detectFileModifications(suspendedState: any): Promise<string[]> {
+    const modifications: string[] = [];
+
+    if (!suspendedState.fileSnapshots) {
+      return modifications; // No snapshot, can't detect modifications
+    }
+
+    try {
+      // For each file in the snapshot, check if it was modified
+      for (const [filePath, originalHash] of Object.entries(suspendedState.fileSnapshots)) {
+        try {
+          const content = await this.config.fs?.readFile(filePath);
+          const currentHash = content ? this.simpleHash(content) : '';
+
+          if (currentHash !== originalHash) {
+            modifications.push(filePath);
+          }
+        } catch (err) {
+          // File may have been deleted or moved - count as modification
+          modifications.push(filePath);
+        }
+      }
+    } catch (err) {
+      console.warn(`[Executor] Error detecting file modifications: ${err}`);
+    }
+
+    return modifications;
+  }
+
+  /**
+   * Simple hash function for file comparison
+   */
+  private simpleHash(content: string): string {
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.toString(16);
   }
 
   /**
