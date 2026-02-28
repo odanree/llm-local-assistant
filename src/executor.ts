@@ -12,6 +12,7 @@ import CodebaseIndex from './codebaseIndex';
 import { ArchitectureValidator } from './architectureValidator';
 import { TaskPlan, PlanStep, StepResult } from './planner';
 import { validateExecutionStep } from './types/executor';
+import { PlanState } from './types/PlanState';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
 import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
@@ -2765,7 +2766,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
               // Transition to SUSPENDED_FOR_PERMISSION state
               if (this.plan) {
-                this.plan.status = (PlanState as any).SUSPENDED_FOR_PERMISSION;
+                this.plan.status = PlanState.SUSPENDED_FOR_PERMISSION;
               }
 
               // Save suspended state to codebaseIndex
@@ -2799,7 +2800,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         // Check if suspended BEFORE treating as failure
         handle.onExit?.((code: number) => {
           // If suspended, return suspended status (not failure!)
-          if (promptDetected || this.plan?.status === (PlanState as any).SUSPENDED_FOR_PERMISSION) {
+          if (promptDetected || this.plan?.status === PlanState.SUSPENDED_FOR_PERMISSION) {
             console.log(`[Executor] Process paused at prompt - returning SUSPENDED status`);
             resolve({
               stepId: step.stepId,
