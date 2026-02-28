@@ -63,41 +63,112 @@ export interface PromptPattern {
  * Default prompt patterns used by v2.12.0
  *
  * Covers npm, yarn, pnpm, git, sudo, and generic yes/no prompts
+ * Order matters: More specific patterns should come first
  */
 export const DEFAULT_PROMPT_PATTERNS: PromptPattern[] = [
+  // npm & yarn package manager prompts
   {
     name: 'npm_proceed',
-    pattern: /npm\s+(?:ERR!|WARN).*\s*\(y\/n\)/i,
+    pattern: /npm\s+(?:ERR|WARN)!.*\s*\(y\/n\)/i,
     suggestedInputs: ['y', 'n'],
     defaultInput: 'n',
   },
   {
-    name: 'generic_yes_no',
+    name: 'yarn_proceed',
+    pattern: /yarn\s+(?:ERR|WARN)!.*\s*\(y\/n\)/i,
+    suggestedInputs: ['y', 'n'],
+    defaultInput: 'n',
+  },
+  {
+    name: 'pnpm_proceed',
+    pattern: /pnpm\s+(?:ERR|WARN)!.*\s*\(y\/n\)/i,
+    suggestedInputs: ['y', 'n'],
+    defaultInput: 'n',
+  },
+
+  // Password prompts (sudo, ssh, etc.)
+  {
+    name: 'password_prompt',
+    pattern: /[Pp]assword\s*[:]/,
+    suggestedInputs: [],
+  },
+  {
+    name: 'sudo_password',
+    pattern: /\[sudo\]\s+password\s+for/i,
+    suggestedInputs: [],
+  },
+
+  // Yes/No confirmation prompts
+  {
+    name: 'uppercase_yes_no',
     pattern: /\[Y\/n\]/,
     suggestedInputs: ['y', 'n'],
     defaultInput: 'y',
   },
   {
+    name: 'lowercase_yes_no',
+    pattern: /\[y\/N\]/,
+    suggestedInputs: ['y', 'n'],
+    defaultInput: 'n',
+  },
+  {
+    name: 'confirm_yes_no',
+    pattern: /\(yes\/no\)/i,
+    suggestedInputs: ['yes', 'no'],
+    defaultInput: 'no',
+  },
+
+  // Generic proceed/continue prompts
+  {
     name: 'generic_proceed',
-    pattern: /[Pp]roceed\?\s*(?:\(y\/n\))?/,
+    pattern: /[Pp]roceed\s*\?\s*(?:\(y\/n\))?/,
     suggestedInputs: ['y', 'n'],
     defaultInput: 'y',
   },
   {
+    name: 'continue_prompt',
+    pattern: /[Cc]ontinue\s*\?\s*(?:\(y\/n\))?/,
+    suggestedInputs: ['y', 'n'],
+    defaultInput: 'y',
+  },
+  {
+    name: 'overwrite_prompt',
+    pattern: /[Oo]verwrite\s*\?\s*(?:\(y\/n\))?/,
+    suggestedInputs: ['y', 'n'],
+    defaultInput: 'n',
+  },
+
+  // Selection menus (version selection, etc.)
+  {
     name: 'select_version',
-    pattern: /[Ss]elect\s+[a-z]+\s*:/i,
+    pattern: /[Ss]elect\s+(?:a\s+)?[a-z]+\s*[:]/i,
     suggestedInputs: ['1', '2', '3'],
   },
   {
-    name: 'git_rebase',
+    name: 'numbered_selection',
+    pattern: /^\s*\d+\)\s+.+$/m,
+    suggestedInputs: ['1', '2', '3'],
+  },
+
+  // Git-specific prompts
+  {
+    name: 'git_rebase_editor',
     pattern: />>>\s*$/m,
     suggestedInputs: [],
     defaultInput: 'continue',
   },
   {
-    name: 'password_prompt',
-    pattern: /[Pp]assword\s*[:]/,
+    name: 'git_merge_conflict',
+    pattern: /\(Aborting\)|CONFLICT/i,
     suggestedInputs: [],
+  },
+
+  // Generic catch-all patterns (must be last)
+  {
+    name: 'question_mark',
+    pattern: /\?\s*$/,
+    suggestedInputs: ['y', 'n'],
+    defaultInput: 'n',
   },
 ];
 
