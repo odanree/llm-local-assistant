@@ -551,13 +551,13 @@ Agent Skills are automated CI/CD-integrated tools for documentation sync, root d
 
 #### 1. Root Directory Enforcer
 
-The root directory follows the **Original 6 Rule** - only these 6 documentation files should exist in root:
+The root directory follows the **Original 4 Rule** - only these 4 documentation files should exist in root:
 - `README.md`
 - `ROADMAP.md`
-- `ARCHITECTURE.md`
-- `PROJECT_STATUS.md`
-- `QUICK_REFERENCE.md`
 - `CHANGELOG.md`
+- `LICENSE`
+
+All other documentation (ARCHITECTURE.md, PROJECT_STATUS.md, QUICK_REFERENCE.md, etc.) lives in `/docs/`.
 
 **Usage:**
 ```bash
@@ -1139,7 +1139,7 @@ coverage: {
 - Thresholds automatically enforced on every test run
 - Build fails if thresholds not met
 - Prevents regression via automated gates
-- Documented in [ARCHITECTURE.md](ARCHITECTURE.md) - "Coverage Thresholds Section"
+- Documented in [ARCHITECTURE.md](docs/ARCHITECTURE.md) - "Coverage Thresholds Section"
 
 **To Maintain or Improve:**
 ```bash
