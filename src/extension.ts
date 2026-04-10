@@ -9,8 +9,6 @@ import CodebaseIndex from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
 import { ArchitecturePatterns } from './architecturePatterns';
 import { FeatureAnalyzer } from './featureAnalyzer';
-import { ServiceExtractor } from './serviceExtractor';
-import { RefactoringExecutor } from './refactoringExecutor';
 import { PatternDetector } from './patternDetector';
 import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
 import { Refiner } from './refiner';
@@ -27,8 +25,6 @@ let architecturePatterns: ArchitecturePatterns;
 let patternDetector: PatternDetector;
 let patternRefactoringGenerator: PatternRefactoringGenerator;
 let featureAnalyzer: FeatureAnalyzer;
-let serviceExtractor: ServiceExtractor;
-let refactoringExecutor: RefactoringExecutor;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -2800,8 +2796,6 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(workspaceFolderListener);
   featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
-  serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
-  refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
 
   // Register commands
   const openChatCommand = vscode.commands.registerCommand('llm-assistant.open-chat', () => {
