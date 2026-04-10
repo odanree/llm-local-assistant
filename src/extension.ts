@@ -192,8 +192,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**LLM Local Assistant - v2.13.1**\n` +
-          `📊 89 test files, 3,251 tests passing\n\n` +
+        text: `**LLM Local Assistant - v2.14.0**\n` +
+          `📊 78 test files, 2,891 tests passing\n\n` +
           `📋 **Planning & Execution:**\n` +
           `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
@@ -206,9 +206,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /context show patterns → Show detected code patterns\n` +
           `- /context show dependencies → Show file dependencies\n` +
           `- /context find similar <file> → Find similar files\n\n` +
-          `🔧 **Refactoring & Architecture:**\n` +
-          `- /refactor <file> → Analyze and suggest improvements\n` +
-          `\n` +
+          `🔧 **Refactoring:**\n` +
+          `- /refactor <file> → Analyze and suggest improvements\n\n` +
           `📝 **File Operations:**\n` +
           `- /read <path> → Read a file from workspace\n` +
           `- /write <path> <prompt> → Generate and write file content\n` +

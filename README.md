@@ -1,32 +1,30 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.13.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.14.0-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
-[![Tests](https://img.shields.io/badge/tests-3637%2F3640%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
-[![Code Coverage](https://img.shields.io/badge/coverage-81.61%25-brightgreen.svg)](#testing--coverage)
+[![Tests](https://img.shields.io/badge/tests-2891%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
 [![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
 [![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
-**Enterprise-Grade Local AI Orchestrator** - Advanced code analysis, architecture validation, pattern detection, and Zustand/React Hook auditing. Comprehensive test suite with 3637 tests and 81.61% coverage. All running on your local LLM with zero cloud dependencies.
+**Local AI Code Orchestrator** - Multi-step planning, architecture validation, RAG-powered codebase context, and Zustand/React Hook auditing. 2,891 tests. All running on your local LLM with zero cloud dependencies.
 
-**💎 v2.13.1: The Reactive Orchestrator - Diamond Tier Self-Healing Architecture (Marketplace Bloat Fix)**
+**🚀 v2.14.0: Lean Edition — 79KB vsix, 0 runtime dependencies**
 
-![Diamond Tier](https://img.shields.io/badge/★★-Diamond%20Tier-cyan?style=flat-square&logo=badge) [![Tests](https://img.shields.io/badge/tests-3637%2F3640%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions) [![Coverage](https://img.shields.io/badge/coverage-81.61%25-brightgreen.svg)](#testing--coverage) [![Quality Gate](https://img.shields.io/badge/quality%20gate-81.61%25%20enforced-blue.svg)](#quality-gates)
-
-> **Latest Release**: v2.13.1 - **Reactive Orchestrator**: 3637 comprehensive tests, 81.61% coverage with safety rail architecture (Architecture Guard, Form Fallback, Zustand Sync-Fixer) - **Marketplace bloat eliminated: 18.06MB → 1.59MB**
-> **Advanced Capabilities**: Real-time Streaming, Interactive Prompts, Suspend/Resume State Machine, Three-Layer Self-Healing
-> **Status**: 3637/3640 tests passing. 81.61% coverage achieved. Quality gate enforced at 81.61%. Production-ready with enterprise reliability.
+> **Latest Release**: v2.14.0 - **Lean Edition**: Replaced Babel AST (995KB) with targeted regex, dropped 8,800+ lines of dead code, .vsix shrank from 1.06MB → 79KB (-93%). 2,891 tests passing.
+> **Advanced Capabilities**: Real-time Streaming, Interactive Prompts, RAG Embeddings, Suspend/Resume State Machine, Three-Layer Self-Healing
+> **Status**: 2,891 tests passing. Production-ready with enterprise reliability.
 
 ## 📚 Release History
 
 For a complete history of releases and detailed changelogs, see [CHANGELOG.md](CHANGELOG.md).
 
 **Recent Releases:**
-- **v2.13.1** (Current) - Reactive Orchestrator: 81.61% coverage, 3,637 tests, marketplace bloat fix (18.06MB → 1.59MB)
-- **v2.13.0** - Reactive Orchestrator: 81.61% coverage, 3,637 tests (3,640 total), self-healing architecture with safety rails
+- **v2.14.0** (Current) - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
+- **v2.13.1** - Reactive Orchestrator: marketplace bloat fix (18.06MB → 1.59MB)
+- **v2.13.0** - Reactive Orchestrator: 81.61% coverage, 3,637 tests, self-healing architecture with safety rails
 - **v2.12.0** - Infrastructure: Real-time streaming, interactive prompts, suspend/resume state machine
 - **v2.11.0** - Diamond Tier: 80.27% coverage, 3,594 tests, automated quality gates
 - **v2.10.0** - Elite Tier: 74.68% coverage, 2453 tests, agent skills integration
@@ -36,7 +34,7 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 
 ---
 
-## ✨ Key Features & Capabilities (v2.13.1)
+## ✨ Key Features & Capabilities (v2.14.0)
 
 ### 🏛️ Architecture & Validation System
 
@@ -48,12 +46,10 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 - **Layer 5: Hook Usage Validation** - Proper React hook patterns
 - **Layer 6: Store Contract Validation** - Zustand property matching ✅
 
-**Advanced Pattern Detection**
-- ✅ **`/refactor <file>`** - 5-layer semantic code analysis
-- ✅ **`/rate-architecture`** - Score your codebase (0-10)
-- ✅ **`/suggest-patterns`** - Detect & recommend 8 design patterns
+**Code Analysis**
+- ✅ **`/refactor <file>`** - LLM-powered refactoring suggestions
 - ✅ **`/context show structure`** - Visualize project organization
-- ✅ **`/context show patterns`** - View detected design patterns
+- ✅ **`/context show patterns`** - View detected code patterns
 - ✅ **Zustand store validation** - Property extraction + destructuring validation
 - ✅ **Cross-file contract enforcement** - Component-store alignment guaranteed
 
@@ -61,8 +57,8 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 
 **Multi-Step Planning with Validation**
 - ✅ **`/plan <task>`** - Create multi-step action plans with semantic validation
-- ✅ **`/design-system <feature>`** - Generate full feature architecture
-- ✅ **`/approve`** - Approve and execute generated plans
+- ✅ **`/approve`** / **`/reject`** - Approve or discard generated plans
+- ✅ **`/execute`** - Run the plan step-by-step
 
 **File Operations with Confidence**
 - ✅ **`/read <path>`** - Read and display file contents
@@ -71,16 +67,12 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 - ✅ **`/explain <path>`** - Get detailed code explanations
 - ✅ **Markdown rendering** - Beautifully formatted output with h1-h6 headers, bold, italic, code blocks, lists, blockquotes
 
-### 🔊 Voice Narration & Audio
+### 🔍 RAG Codebase Context
 
-**Automatic Audio Synthesis (v2.6.0+)**
-- ✅ **`/explain` with audio** - Automatic MP3 synthesis using edge-tts
-- ✅ Click-to-play audio player in chat with playback controls
-- ✅ Multi-chunk synthesis for long explanations
-- ✅ Accurate duration display and seek support
-- ✅ Workspace-relative file paths (e.g., `/explain src/main.ts`)
-- ✅ Graceful fallback if TTS unavailable
-- ✅ Diagnostic commands: `/test-voice` and `/setup-voice`
+**Embedding-Powered Import Resolution**
+- ✅ Incremental indexing — only re-indexes changed files
+- ✅ Embeddings persisted to `.lla-embeddings.json` for fast restarts
+- ✅ **`/context find similar <file>`** - Find semantically similar files
 
 ### 📊 Git Integration & Code Review
 
@@ -92,10 +84,8 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 
 ### 🔐 Quality & Testing Infrastructure
 
-**Automated Quality Assurance (v2.13.0+)**
-- ✅ **Quality Gates** - Enforce 81.61% minimum coverage with automated regression prevention
-- ✅ **Dynamic Metrics Sync** - Real-time coverage extraction from npm run coverage
-- ✅ **3,637 comprehensive tests** - Full test suite with 100% pass rate
+**Automated Quality Assurance**
+- ✅ **2,891 comprehensive tests** - 78 test files, 100% pass rate
 - ✅ **Zero regressions** - All existing functionality verified
 - ✅ **Strict coverage thresholds** - Enforced via vitest.config.mjs
 - ✅ **CI/CD integration** - Automatic quality checks on every PR
@@ -128,19 +118,10 @@ python -m vllm.entrypoints.openai.api_server --model mistral-7b
 ### 4. Analyze Your Code
 ```bash
 /context show structure       # See your project layout
-/rate-architecture            # Score your code (0-10)
-/suggest-patterns             # Get pattern suggestions
 /refactor src/App.tsx         # Analyze and suggest improvements
-/explain src/App.tsx          # Explain code (with optional voice narration)
+/explain src/App.tsx          # Explain code with markdown output
+/plan create a login form     # Multi-step code generation
 ```
-
-### 5. Optional: Enable Voice Narration (v2.6+)
-```bash
-/setup-voice                  # Install and configure voice narration
-/test-voice                   # Verify voice setup
-```
-
-For detailed voice setup instructions, see [Voice Narration Guide](docs/VOICE_NARRATION.md).
 
 ## 📋 Command Reference
 
@@ -162,7 +143,6 @@ Step 1: Create useLoginStore.ts
 
 Step 2: Create LoginForm.tsx  
   - Component with store integration
-  - Uses /design-system for architecture
   - Validation: 6-layer semantic checks
 
 Step 3: Add validation logic
@@ -187,51 +167,6 @@ Ready to execute with: /execute
 - No more infinite loops (v2.5.0+)
 - Semantic validation prevents hallucinations
 
-#### `/design-system <feature>`
-Generate full feature architecture with complete validation.
-
-```
-You: /design-system user authentication
-
-Output:
-🏗️ **Architecture: User Authentication**
-
-[Schema Layer]
-- User.ts (ID, email, passwordHash)
-- Session.ts (token, expiresAt)
-
-[Service Layer]
-- authService.ts (login, logout, verify)
-- tokenService.ts (generate, validate)
-
-[Hook Layer]
-- useAuth.ts (useContext + custom logic)
-- useSession.ts (session state)
-
-[Component Layer]
-- LoginForm.tsx (form + validation)
-- ProtectedRoute.tsx (auth guard)
-
-[Validation]
-✅ All layers defined
-✅ File contracts validated
-✅ Import paths calculated
-✅ Ready for generation
-
-Next: Use /write to create files
-```
-
-**Real-World Example:**
-
-![Design System Command Example - User Authentication](./assets/design-system-command-example.png)
-
-**What it does:**
-- Generates complete feature architectures
-- Defines all 4 layers (schema, service, hook, component)
-- Pre-calculates import paths
-- Shows file organization
-- No infinite loops (v2.5.0+)
-
 #### `/approve`
 Acknowledge and approve generated content or plan execution.
 
@@ -244,92 +179,24 @@ Ready to execute steps 1-3
 Use /execute to continue
 ```
 
-### Architecture Analysis (SAFE & RELIABLE)
+### Architecture Analysis
 
 #### `/refactor <file>`
-Deep semantic analysis with actionable recommendations.
+LLM-powered refactoring analysis with actionable recommendations.
 
 ```
 You: /refactor src/hooks/useUser.ts
 
 Output:
-🔍 **Semantic Analysis** (useUser.ts)
-
-[5-Layer Analysis]
-✅ State Management: 3 states, well-organized
-⚠️ Dependencies: Missing useCallback on fetchUser
-⚠️ Coupling: Tight to AuthContext
-⚠️ Anti-patterns: Direct API call (should extract)
-⚠️ Data Flow: Incomplete error handling
+🔍 **Refactor Analysis** (useUser.ts)
 
 [Recommendations]
-1. Extract API logic to service layer (95% confidence)
-2. Add useCallback optimization (88% confidence)
-3. Improve error handling patterns (92% confidence)
+1. Extract API logic to service layer
+2. Add useCallback optimization
+3. Improve error handling patterns
 ```
 
-**What it analyzes:**
-- State management (unused states, missing deps)
-- Coupling (tight dependencies on context/props)
-- Data flow (traces data movement)
-- Anti-patterns (unsafe practices, magic strings)
-- Performance (optimization opportunities)
-
-#### `/rate-architecture`
-Score your codebase with layer-aware analysis.
-
-```
-You: /rate-architecture
-
-Output:
-📊 **Architecture Rating: 9/10** ⭐⭐⭐⭐⭐
-
-[Layer Breakdown]
-├─ Schema Layer (types/): 9/10
-├─ Service Layer (services/): 8/10
-├─ Hook Layer (hooks/): 9/10
-└─ Component Layer (components/): 8/10
-
-[Strengths]
-✅ Clear separation of concerns
-✅ Proper error handling
-✅ Type-safe implementation
-✅ Testable architecture
-
-[Recommendations]
-⚠️ Some hooks are large (150+ lines)
-⚠️ Missing error boundary components
-```
-
-#### `/suggest-patterns`
-Get pattern recommendations for your codebase.
-
-```
-You: /suggest-patterns
-
-Output:
-🎯 **Available Patterns**
-
-1. CRUD Pattern (95% match) ✅ Already implemented
-   Where: src/services/userService.ts
-   
-2. Forms Pattern (82% match) ⚠️ Partially implemented
-   Gap: Missing form validation framework
-   
-3. DataFetching Pattern (78% match) ✅ Already implemented
-   Where: src/hooks/useUser.ts
-
-4. StateManagement Pattern (65% match) ⚠️ Partial
-   Gap: No centralized state store
-   
-5-8. Other patterns...
-
-[Supported Patterns]
-CRUD, Authentication, Forms, DataFetching, StateManagement,
-Notifications, SearchFilter, Pagination
-```
-
-### Project Context (100% Reliable)
+### Project Context
 
 #### `/context show structure`
 Visualize your project organization.
