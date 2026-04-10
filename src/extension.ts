@@ -2662,10 +2662,16 @@ export async function activate(context: vscode.ExtensionContext) {
   if (wsFolder) {
     embeddingClient = new EmbeddingClient({ endpoint: config.endpoint });
     codebaseIndex = new CodebaseIndex(wsFolder.fsPath);
+    const cacheFile = path.join(wsFolder.fsPath, '.lla-embeddings.json');
     codebaseIndex.scan().then(() => {
       console.log('[Extension] ✅ Codebase index scanned');
+      const restored = codebaseIndex.loadEmbeddingsCache(cacheFile);
+      if (restored > 0) {
+        console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
+      }
       return codebaseIndex.embedAll(embeddingClient);
     }).then(() => {
+      codebaseIndex.saveEmbeddingsCache(cacheFile);
       codebaseIndex.setEmbeddingClient(embeddingClient);
       console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text) — incremental indexing active');
     }).catch((err: unknown) => {
