@@ -5,7 +5,7 @@ import { GitClient } from './gitClient';
 import { Planner } from './planner';
 import GatekeeperValidator from './gatekeeperValidator';
 import { Executor } from './executor';
-import CodebaseIndex from './codebaseIndex';
+import CodebaseIndex, { EmbeddingClient } from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
 import { ArchitecturePatterns } from './architecturePatterns';
 import { FeatureAnalyzer } from './featureAnalyzer';
@@ -21,6 +21,7 @@ import * as path from 'path';
 let llmClient: LLMClient;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
+let embeddingClient: EmbeddingClient;
 let architecturePatterns: ArchitecturePatterns;
 let patternDetector: PatternDetector;
 let patternRefactoringGenerator: PatternRefactoringGenerator;
@@ -2656,6 +2657,20 @@ export async function activate(context: vscode.ExtensionContext) {
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();
   console.log(`[Extension] Workspace: ${wsFolder?.fsPath || 'none'}`);
+
+  // RAG: scan + embed the workspace index in the background (non-blocking)
+  if (wsFolder) {
+    embeddingClient = new EmbeddingClient({ endpoint: config.endpoint });
+    codebaseIndex = new CodebaseIndex(wsFolder.fsPath);
+    codebaseIndex.scan().then(() => {
+      console.log('[Extension] ✅ Codebase index scanned');
+      return codebaseIndex.embedAll(embeddingClient);
+    }).then(() => {
+      console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text)');
+    }).catch((err: unknown) => {
+      console.warn('[Extension] RAG embed skipped (Ollama unavailable?):', err);
+    });
+  }
 
   // Initialize Executor (Planner is now created per-command, stateless)
   wsFolder = getActiveWorkspace();
