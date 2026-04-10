@@ -7,11 +7,6 @@ import GatekeeperValidator from './gatekeeperValidator';
 import { Executor } from './executor';
 import CodebaseIndex, { EmbeddingClient } from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
-import { ArchitecturePatterns } from './architecturePatterns';
-import { FeatureAnalyzer } from './featureAnalyzer';
-import { PatternDetector } from './patternDetector';
-import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
-import { Refiner } from './refiner';
 import { PlanParser } from './planParser';
 import { WorkspaceDetector } from './utils';
 import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
@@ -22,10 +17,6 @@ let llmClient: LLMClient;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let embeddingClient: EmbeddingClient;
-let architecturePatterns: ArchitecturePatterns;
-let patternDetector: PatternDetector;
-let patternRefactoringGenerator: PatternRefactoringGenerator;
-let featureAnalyzer: FeatureAnalyzer;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -218,8 +209,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `🔧 **Refactoring & Architecture:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n` +
           `- /design-system <feature> → Generate full feature architecture with validation\n` +
-          `- /rate-architecture → Score codebase quality (0-10)\n` +
-          `- /suggest-patterns → Show pattern improvements\n\n` +
+          `\n` +
           `📝 **File Operations:**\n` +
           `- /read <path> → Read a file from workspace\n` +
           `- /write <path> <prompt> → Generate and write file content\n` +
@@ -687,13 +677,20 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   
                   // Collect locally defined names so we don't flag them as missing imports
                   const localNames = new Set<string>();
+                  // Helper: extract param names from a param list string "email: string, password: string"
+                  const addParams = (params: string) => {
+                    params.split(',').forEach((p: string) => {
+                      const name = p.trim().split(/[:\s=<(]/)[0].trim();
+                      if (name && /^[a-zA-Z_$]/.test(name)) { localNames.add(name); }
+                    });
+                  };
                   // Arrow function params: (email, password) =>
                   generatedContent.replace(/\(([^)]*)\)\s*=>/g, (_: string, params: string) => {
-                    params.split(',').forEach((p: string) => {
-                      const name = p.trim().split(/[:\s=]/)[0].trim();
-                      if (name) { localNames.add(name); }
-                    });
-                    return '';
+                    addParams(params); return '';
+                  });
+                  // Named function declarations: function foo(email: string, password: string)
+                  generatedContent.replace(/function\s+\w*\s*\(([^)]*)\)/g, (_: string, params: string) => {
+                    addParams(params); return '';
                   });
                   // Simple declarations: const email =
                   generatedContent.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_: string, name: string) => {
@@ -1207,8 +1204,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               return;
             }
 
-            // PHASE 3.4.5: New refactoring commands
-
             // Check for /refactor command
             const refactorMatch = text.match(/^\/refactor\s+(.+)$/);
             if (refactorMatch) {
@@ -1220,7 +1215,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   type: 'info',
                 });
 
-                // Find the correct workspace folder for this file
                 const workspaceFolder = await findWorkspaceFolderForFile(filepath);
                 if (!workspaceFolder) {
                   throw new Error('No workspace folder open');
@@ -1230,121 +1224,31 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
-                // FIXED: Use semantic analysis instead of regex-based analysis
-                console.log('[Extension] /refactor: Starting semantic analysis...');
-                const semanticAnalysis = await featureAnalyzer.analyzeHookSemantically(code);
-                console.log('[Extension] /refactor: Semantic analysis complete - Complexity:', semanticAnalysis.overallComplexity);
-                
-                // NEW: Also check for architectural patterns using LLM
-                console.log('[Extension] /refactor: Checking for architectural patterns...');
-                let patternResult: any = { pattern: 'None', confidence: 0, reasoning: '', suggestedImprovements: [] };
-                let shouldShowPattern = false;
-                try {
-                  patternResult = await patternDetector.detectPatternWithLLM(code, filepath);
-                  shouldShowPattern = patternDetector.shouldFlagPattern(patternResult);
-                  console.log('[Extension] /refactor: Pattern detected:', patternResult.pattern, 'Confidence:', patternResult.confidence, 'Should show:', shouldShowPattern);
-                } catch (patternErr) {
-                  console.log('[Extension] /refactor: Pattern detection failed:', patternErr);
-                  // Continue without pattern (fallback gracefully)
-                }
-                
-                // Build detailed report
-                let report = `📋 **Refactoring Analysis: ${filepath}**\n`;
-                report += `❓ **Workspace:** ${workspaceFolder.name}\n\n`;
-                report += `**Overall Complexity:** ${semanticAnalysis.overallComplexity}\n\n`;
-                
-                // Show pattern if detected (always prioritize pattern recommendations)
-                if (shouldShowPattern) {
-                  report += `**Architectural Pattern:** ${patternResult.pattern} (${Math.round(patternResult.confidence * 100)}% confidence)\n`;
-                  report += `> ${patternResult.reasoning}\n`;
-                  report += ` This file could benefit from the **${patternResult.pattern}** pattern\n\n`;
-                }
-                
-                if (semanticAnalysis.issues.length > 0) {
-                  report += `**Issues Found:**\n${semanticAnalysis.issues.map(i => `- ${i}`).join('\n')}\n\n`;
-                }
-                
-                // Only show "no issues" if we didn't detect a pattern requiring improvement
-                if (!semanticAnalysis.issues.length && !shouldShowPattern) {
-                  report += `**Issues Found:**\n- ✨ No major semantic issues detected\n\n`;
-                } else if (!semanticAnalysis.issues.length && shouldShowPattern) {
-                  // Pattern detected but no specific issues - that's fine, pattern is the recommendation
-                }
-                
-                if (semanticAnalysis.unusedStates.length > 0) {
-                  report += `**Unused States:**\n${
-                    semanticAnalysis.unusedStates.map(s => `- ${s.name}: ${s.description}`).join('\n')
-                  }\n\n`;
-                }
-                
-                if (semanticAnalysis.dependencyIssues.length > 0) {
-                  report += `**Dependency Issues:**\n${
-                    semanticAnalysis.dependencyIssues.map(d => {
-                      let msg = `- Line ${d.effect}: ${d.description}`;
-                      if (d.missing.length > 0) {msg += ` [Missing: ${d.missing.join(', ')}]`;}
-                      return msg;
-                    }).join('\n')
-                  }\n\n`;
+                const refactorPrompt = `You are an expert code reviewer. Analyze this file and suggest concrete refactoring improvements.
+
+File: ${filepath}
+
+\`\`\`
+${code}
+\`\`\`
+
+Provide a concise analysis covering:
+1. **Issues Found** — bugs, anti-patterns, complexity problems
+2. **Suggested Improvements** — specific, actionable refactoring steps
+3. **Architectural Notes** — any layer/separation-of-concerns concerns
+
+Keep the response focused and practical.`;
+
+                const response = await llmClient.sendMessage(refactorPrompt);
+                if (!response.success) {
+                  throw new Error(response.error || 'LLM call failed');
                 }
 
-                // Check if file is already a service (prevent circular extraction suggestions)
-                const isAlreadyService = filepath.includes('src/services/') || filepath.includes('src\\services\\');
-                
-                // Only show coupling problems if file is NOT a service
-                // (API-in-component is expected in service files)
-                if (semanticAnalysis.couplingProblems.length > 0 && !isAlreadyService) {
-                  report += `**Coupling Problems:**\n${
-                    semanticAnalysis.couplingProblems.map(c => `- ${c.type}: ${c.suggestion}`).join('\n')
-                  }\n\n`;
-                }
-                
-                if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
-                  report += `**Suggested Extractions:**\n${
-                    semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
-                  }\n\n`;
-                } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
-                  // File is a service - show architectural guidance instead of extraction suggestions
-                  report += `** Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
-                }
-                
                 postChatMessage({
                   command: 'addMessage',
-                  text: report,
+                  text: `📋 **Refactoring Analysis: ${filepath}**\n\n${response.message}`,
                   success: true,
                 });
-
-                // If there are suggested extractions, show them as recommendations
-                // BUT: Extraction generation is incomplete and unreliable
-                // Show suggestions but don't offer automated extraction
-                if (semanticAnalysis.suggestedExtractions.length > 0 && !isAlreadyService) {
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: ` **Recommended Extractions:**\n${
-                      semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
-                    }\n\n**Note:** Code extraction requires understanding component context and business logic that automated tools can't reliably handle. Please apply these extractions manually using your IDE's refactoring tools or Cursor/Windsurf.`,
-                    success: true,
-                  });
-                }
-
-                // If pattern detected and confidence high, offer to refactor to apply pattern
-                // BUT: Refactoring generation is unreliable - we only offer pattern detection
-                // Users can apply patterns manually using their IDE or other tools
-                
-                if (shouldShowPattern && patternResult.confidence > 0.7) {
-                  // Instead of offering refactoring, just inform the user about the detected pattern
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `✨ **Pattern Detected: ${patternResult.pattern}** (${Math.round(patternResult.confidence * 100)}% confidence)
-
-The analysis suggests this file implements or could benefit from the **${patternResult.pattern}** pattern.
-
-${patternResult.reasoning}
-
-**Note:** Automatic refactoring is disabled to ensure code quality and prevent incomplete or broken changes. Please apply this pattern manually using your IDE's refactoring tools or Cursor/Windsurf, which have better multi-file support.`,
-                    success: true,
-                  });
-                  return;
-                }
               } catch (err) {
                 postChatMessage({
                   command: 'addMessage',
@@ -1427,173 +1331,6 @@ KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No co
               }
               return;
             }
-
-            // Check for /rate-architecture command
-            const rateMatch = text.match(/^\/rate-architecture/);
-            if (rateMatch) {
-              try {
-                const folders = vscode.workspace.workspaceFolders;
-                
-                // If multiple workspaces, ask user which one to analyze
-                if (folders && folders.length > 1) {
-                  postChatMessage({
-                    command: 'question',
-                    question: ` **Multiple workspaces detected.** Which project would you like to analyze?`,
-                    options: folders.map(f => f.name),
-                  });
-                  
-                  // Store for handling the answer
-                  (chatPanel as any)._rateArchitectureWorkspaces = folders;
-                  return;
-                }
-
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: `📋 Scanning codebase...`,
-                  type: 'info',
-                });
-
-                // Initialize codebase index with the selected/only workspace
-                const selectedFolder = folders?.[0];
-                if (!selectedFolder) {
-                  throw new Error('No workspace folder open');
-                }
-
-                if (!codebaseIndex) {
-                  codebaseIndex = new CodebaseIndex(selectedFolder.uri.fsPath);
-                  await codebaseIndex.scan();
-                }
-
-                // Get summary and patterns
-                const summary = codebaseIndex.getSummary();
-                const patterns = codebaseIndex.getPatterns();
-
-                // Better architecture scoring
-                const purposes = ['schema', 'service', 'hook', 'component'];
-                const filesByPurpose: Record<string, number> = {};
-                let hasAllLayers = true;
-                let layerScore = 0;
-
-                for (const purpose of purposes) {
-                  const files = codebaseIndex.getFilesByPurpose(purpose);
-                  filesByPurpose[purpose] = files.length;
-                  
-                  // Check if layer exists
-                  if (files.length === 0) {
-                    hasAllLayers = false;
-                  } else {
-                    // Award points for having this layer with reasonable file count
-                    if (files.length >= 1) {
-                      layerScore += 2; // Layer exists: 2 points
-                    }
-                  }
-                }
-
-                // Base score from layer completeness
-                let totalScore = layerScore; // 0-8 points from layers
-
-                // Bonus for layer separation quality
-                const hasServices = filesByPurpose['service'] > 0;
-                const hasHooks = filesByPurpose['hook'] > 0;
-                const hasComponents = filesByPurpose['component'] > 0;
-                const hasSchemas = filesByPurpose['schema'] > 0;
-
-                // Award points for proper architecture patterns
-                if (hasSchemas && hasServices && hasHooks && hasComponents) {
-                  totalScore += 1.5; // Proper 4-layer architecture
-                }
-                
-                if (hasServices && hasComponents && !hasHooks) {
-                  totalScore += 0.5; // Services + Components is acceptable (no hooks needed for all)
-                }
-
-                // Bonus for good service-to-component ratio
-                const serviceCount = filesByPurpose['service'];
-                const componentCount = filesByPurpose['component'];
-                if (serviceCount >= 2 && componentCount >= 1) {
-                  totalScore += 1; // Good modular structure
-                }
-
-                // Penalty for too few files or bad structure
-                if (filesByPurpose['component'] === 0 && (filesByPurpose['service'] + filesByPurpose['hook']) === 0) {
-                  totalScore -= 3; // No actual code structure
-                }
-
-                const score = Math.min(10, Math.max(0, totalScore));
-
-                // Build detailed report
-                let report = `⭐ **Architecture Rating: ${Math.round(score)}/10**\n\n`;
-                report += `${summary}\n\n`;
-                report += `**Layer Breakdown:**\n`;
-                report += `${filesByPurpose['schema'] > 0 ? '✨' : '❌'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
-                report += `${filesByPurpose['service'] > 0 ? '✨' : '❌'} Services: ${filesByPurpose['service']} file(s)\n`;
-                report += `${filesByPurpose['hook'] > 0 ? '✨' : '❌'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
-                report += `${filesByPurpose['component'] > 0 ? '✨' : '❌'} Components: ${filesByPurpose['component']} file(s)\n\n`;
-
-                if (score >= 8) {
-                  report += `✨ **Excellent architecture!** Clear separation of concerns, proper layering.`;
-                } else if (score >= 6) {
-                  report += `✅ **Good structure** with room for improvement. Consider:`;
-                  if (filesByPurpose['schema'] === 0) {report += `\n- Add schemas for type safety`;}
-                  if (filesByPurpose['service'] < 2) {report += `\n- Extract more business logic to services`;}
-                  if (filesByPurpose['component'] === 0) {report += `\n- Create UI components`;}
-                } else {
-                  report += `❌ **Needs refactoring.** Consider:`;
-                  report += `\n- Create proper layer separation`;
-                  report += `\n- Extract business logic from components`;
-                  report += `\n- Add schema validation`;
-                }
-
-                postChatMessage({
-                  command: 'addMessage',
-                  text: report,
-                  success: true,
-                });
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Rating error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
-              return;
-            }
-
-            // Check for /suggest-patterns command
-            const suggestMatch = text.match(/^\/suggest-patterns/);
-            if (suggestMatch) {
-              try {
-                const folders = vscode.workspace.workspaceFolders;
-                
-                // If multiple workspaces, ask user which one to analyze
-                if (folders && folders.length > 1) {
-                  postChatMessage({
-                    command: 'question',
-                    question: ` **Multiple workspaces detected.** Which project would you like to analyze?`,
-                    options: folders.map(f => f.name),
-                  });
-                  
-                  // Store for handling the answer
-                  (chatPanel as any)._suggestPatternsWorkspaces = folders;
-                  return;
-                }
-
-                // Unified handler for single/multi-workspace
-                const selectedFolder = folders?.[0];
-                if (!selectedFolder) {
-                  throw new Error('No workspace folder open');
-                }
-
-                await performSuggestPatterns(selectedFolder);
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Pattern error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
-              return;
-            }
-
-            // Check for /read command
             const readMatch = text.match(/\/read\s+(\S+)/);
 
             // AGENT MODE: /read <path>
@@ -2021,121 +1758,6 @@ ${fileContent}
             // Handle clarification question response
             const answer = message.answer;
             
-            // Check if this is a workspace selection for /rate-architecture
-            const rateArchWorkspaces = (chatPanel as any)._rateArchitectureWorkspaces;
-            if (rateArchWorkspaces && rateArchWorkspaces.some((f: any) => f.name === answer)) {
-              try {
-                // Find the selected workspace
-                const selectedFolder = rateArchWorkspaces.find((f: any) => f.name === answer);
-                
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: ` Scanning ${answer} codebase...`,
-                  type: 'info',
-                });
-
-                // Initialize codebase index for selected workspace
-                codebaseIndex = new CodebaseIndex(selectedFolder.uri.fsPath);
-                await codebaseIndex.scan();
-
-                // Get summary and patterns
-                const summary = codebaseIndex.getSummary();
-                const patterns = codebaseIndex.getPatterns();
-
-                // Better architecture scoring
-                const purposes = ['schema', 'service', 'hook', 'component'];
-                const filesByPurpose: Record<string, number> = {};
-                let hasAllLayers = true;
-                let layerScore = 0;
-
-                for (const purpose of purposes) {
-                  const files = codebaseIndex.getFilesByPurpose(purpose);
-                  filesByPurpose[purpose] = files.length;
-                  
-                  // Check if layer exists
-                  if (files.length === 0) {
-                    hasAllLayers = false;
-                  } else {
-                    // Award points for having this layer with reasonable file count
-                    if (files.length >= 1) {
-                      layerScore += 2; // Layer exists: 2 points
-                    }
-                  }
-                }
-
-                // Base score from layer completeness
-                let totalScore = layerScore; // 0-8 points from layers
-
-                // Bonus for layer separation quality
-                const hasServices = filesByPurpose['service'] > 0;
-                const hasHooks = filesByPurpose['hook'] > 0;
-                const hasComponents = filesByPurpose['component'] > 0;
-                const hasSchemas = filesByPurpose['schema'] > 0;
-
-                // Award points for proper architecture patterns
-                if (hasSchemas && hasServices && hasHooks && hasComponents) {
-                  totalScore += 1.5; // Proper 4-layer architecture
-                }
-                
-                if (hasServices && hasComponents && !hasHooks) {
-                  totalScore += 0.5; // Services + Components is acceptable (no hooks needed for all)
-                }
-
-                // Bonus for good service-to-component ratio
-                const serviceCount = filesByPurpose['service'];
-                const componentCount = filesByPurpose['component'];
-                if (serviceCount >= 2 && componentCount >= 1) {
-                  totalScore += 1; // Good modular structure
-                }
-
-                // Penalty for too few files or bad structure
-                if (filesByPurpose['component'] === 0 && (filesByPurpose['service'] + filesByPurpose['hook']) === 0) {
-                  totalScore -= 3; // No actual code structure
-                }
-
-                const score = Math.min(10, Math.max(0, totalScore));
-
-                // Build detailed report
-                let report = ` **Architecture Rating: ${Math.round(score)}/10** (${answer})\n\n`;
-                report += `${summary}\n\n`;
-                report += `**Layer Breakdown:**\n`;
-                report += `${filesByPurpose['schema'] > 0 ? '✨' : '❌'} Schemas: ${filesByPurpose['schema']} file(s)\n`;
-                report += `${filesByPurpose['service'] > 0 ? '✨' : '❌'} Services: ${filesByPurpose['service']} file(s)\n`;
-                report += `${filesByPurpose['hook'] > 0 ? '✨' : '❌'} Hooks: ${filesByPurpose['hook']} file(s)\n`;
-                report += `${filesByPurpose['component'] > 0 ? '✨' : '❌'} Components: ${filesByPurpose['component']} file(s)\n\n`;
-
-                if (score >= 8) {
-                  report += `✨ **Excellent architecture!** Clear separation of concerns, proper layering.`;
-                } else if (score >= 6) {
-                  report += `✅ **Good structure** with room for improvement. Consider:`;
-                  if (filesByPurpose['schema'] === 0) {report += `\n- Add schemas for type safety`;}
-                  if (filesByPurpose['service'] < 2) {report += `\n- Extract more business logic to services`;}
-                  if (filesByPurpose['component'] === 0) {report += `\n- Create UI components`;}
-                } else {
-                  report += `❌ **Needs refactoring.** Consider:`;
-                  report += `\n- Create proper layer separation`;
-                  report += `\n- Extract business logic from components`;
-                  report += `\n- Add schema validation`;
-                }
-
-                postChatMessage({
-                  command: 'addMessage',
-                  text: report,
-                  success: true,
-                });
-                
-                // Clear workspace selection
-                (chatPanel as any)._rateArchitectureWorkspaces = null;
-                break;
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Rating error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                (chatPanel as any)._rateArchitectureWorkspaces = null;
-                break;
-              }
-            }
 
             // Handle /plan folder selection
             const planFolders = (chatPanel as any)._planFolders;
@@ -2154,28 +1776,7 @@ ${fileContent}
                   type: 'info',
                 });
 
-                // Create Refiner instance with selected folder
-                const refiner = new Refiner({
-                  projectRoot: selectedFolder.uri.fsPath,
-                  workspaceName: selectedFolder.name,
-                  maxRetries: 3,
-                  llmCall: async (systemPrompt: string, userMessage: string) => {
-                    const response = await llmClient.sendMessage(systemPrompt + '\n\n' + userMessage);
-                    if (!response.success) {
-                      throw new Error(response.error || 'LLM call failed');
-                    }
-                    return response.message || '';
-                  },
-                  onProgress: (stage: string, details: string) => {
-                    chatPanel?.webview.postMessage({
-                      command: 'addMessage',
-                      text: ` ${stage}: ${details}`,
-                      type: 'info',
-                    });
-                  },
-                });
-
-                // Use Planner for planning (not Refiner)
+                // Use Planner for planning
                 const planner = new Planner({
                   llmCall: async (prompt: string) => {
                     const response = await llmClient.sendMessage(prompt);
@@ -2235,204 +1836,6 @@ ${fileContent}
                 });
                 (chatPanel as any)._planFolders = null;
                 (chatPanel as any)._pendingPlanRequest = null;
-                break;
-              }
-            }
-            
-            // Check if this is a workspace selection for /suggest-patterns
-            const suggestPatternsWorkspaces = (chatPanel as any)._suggestPatternsWorkspaces;
-            if (suggestPatternsWorkspaces && suggestPatternsWorkspaces.some((f: any) => f.name === answer)) {
-              try {
-                // Find the selected workspace
-                const selectedFolder = suggestPatternsWorkspaces.find((f: any) => f.name === answer);
-                
-                await performSuggestPatterns(selectedFolder);
-                
-                // Clear workspace selection
-                (chatPanel as any)._suggestPatternsWorkspaces = null;
-                break;
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Pattern error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                (chatPanel as any)._suggestPatternsWorkspaces = null;
-                break;
-              }
-            }
-            
-            // Handle pattern refactoring answers
-            const refactorContext = (chatPanel as any)._currentRefactorContext;
-            if (refactorContext && answer === ' Refactor Now') {
-              const { filepath, code, pattern, workspace } = refactorContext;
-              
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: ` Generating refactored code for ${pattern} pattern...`,
-                  type: 'info',
-                });
-
-                // Generate refactored code
-                const refactoringResult = await patternRefactoringGenerator.generateRefactoredCode(
-                  code,
-                  pattern,
-                  filepath
-                );
-
-                if (!refactoringResult.success) {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Failed to generate refactored code: ${refactoringResult.error}`,
-                  });
-                  break;
-                }
-
-                // Store refactoring result for applying
-                (chatPanel as any)._currentRefactoringResult = {
-                  refactoringResult,
-                  filepath,
-                  workspace,
-                };
-
-                // Create preview message
-                const summary = patternRefactoringGenerator.summarizeChanges(refactoringResult);
-                const previewMsg = ` **Preview: Refactored Code**\n\n${summary}\n\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 500)}...\n\`\`\``;
-
-                postChatMessage({
-                  command: 'question',
-                  question: previewMsg,
-                  options: [
-                    ' Write Refactored File',
-                    ' Show Full Preview',
-                    '❌ Cancel',
-                  ],
-                });
-
-                // Clear refactor context
-                (chatPanel as any)._currentRefactorContext = null;
-                break;
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Pattern refactoring error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                (chatPanel as any)._currentRefactorContext = null;
-                break;
-              }
-            }
-
-            // Handle "Show Preview" for refactoring
-            if (refactorContext && answer === ' Show Preview') {
-              const { code, pattern } = refactorContext;
-              
-              try {
-                const refactoringResult = await patternRefactoringGenerator.generateRefactoredCode(
-                  code,
-                  pattern,
-                  refactorContext.filepath
-                );
-
-                if (refactoringResult.success) {
-                  // Store for later
-                  (chatPanel as any)._currentRefactoringResult = {
-                    refactoringResult,
-                    filepath: refactorContext.filepath,
-                    workspace: refactorContext.workspace,
-                  };
-
-                  const fullPreview = `### Original Code:\n\`\`\`typescript\n${code.substring(0, 300)}...\n\`\`\`\n\n### Refactored Code:\n\`\`\`typescript\n${refactoringResult.refactoredCode.substring(0, 300)}...\n\`\`\`\n\n### Changes:\n${refactoringResult.changes.map(c => ` ${c}`).join('\n')}`;
-
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: fullPreview,
-                  });
-
-                  postChatMessage({
-                    command: 'question',
-                    question: `Apply these changes?`,
-                    options: [' Write Refactored File', '❌ Cancel'],
-                  });
-                }
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Preview error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-              }
-              break;
-            }
-
-            // Handle "Skip" for pattern refactoring
-            if (refactorContext && answer === '❌ Skip') {
-              postChatMessage({
-                command: 'addMessage',
-                text: '✨ Skipped pattern refactoring.',
-              });
-              (chatPanel as any)._currentRefactorContext = null;
-              break;
-            }
-
-            // Handle "Cancel" for refactoring preview
-            if ((chatPanel as any)._currentRefactoringResult && answer === '❌ Cancel') {
-              postChatMessage({
-                command: 'addMessage',
-                text: '✨ Cancelled refactoring.',
-              });
-              (chatPanel as any)._currentRefactoringResult = null;
-              break;
-            }
-
-            // Handle "Write Refactored File"
-            if ((chatPanel as any)._currentRefactoringResult && answer === ' Write Refactored File') {
-              const { refactoringResult, filepath, workspace } = (chatPanel as any)._currentRefactoringResult;
-              
-              try {
-                chatPanel?.webview.postMessage({
-                  command: 'status',
-                  text: ` Writing refactored file...`,
-                  type: 'info',
-                });
-
-                // Write the refactored file
-                const fileUri = vscode.Uri.joinPath(workspace.uri, filepath);
-                const encoder = new TextEncoder();
-                const newContent = encoder.encode(refactoringResult.refactoredCode);
-                
-                // Read original content for backup
-                const originalContent = await vscode.workspace.fs.readFile(fileUri);
-                const backupFileName = `${filepath.replace(/\//g, '_')}.bak.${Date.now()}`;
-                const backupDir = vscode.Uri.joinPath(workspace.uri, '.refactor-backups');
-                
-                // Create backup directory if it doesn't exist
-                try {
-                  await vscode.workspace.fs.stat(backupDir);
-                } catch {
-                  await vscode.workspace.fs.createDirectory(backupDir);
-                }
-                
-                // Write backup
-                const backupUri = vscode.Uri.joinPath(backupDir, backupFileName);
-                await vscode.workspace.fs.writeFile(backupUri, originalContent);
-                
-                // Write refactored file
-                await vscode.workspace.fs.writeFile(fileUri, newContent);
-                
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `✨ **Refactored file written!**\n\n File: ${filepath}\n Backup: .refactor-backups/${backupFileName}\n\n**Changes Applied:**\n${refactoringResult.changes.map(c => ` ${c}`).join('\n')}`,
-                  success: true,
-                });
-
-                // Clear refactoring context
-                (chatPanel as any)._currentRefactoringResult = null;
-                break;
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `File write error: ${err instanceof Error ? err.message : String(err)}`,
-                });
-                (chatPanel as any)._currentRefactoringResult = null;
                 break;
               }
             }
@@ -2574,75 +1977,6 @@ ${fileContent}
   );
 }
 
-/**
- * Unified handler for /suggest-patterns analysis
- * Works for both single and multi-workspace setups
- */
-async function performSuggestPatterns(selectedFolder: vscode.WorkspaceFolder): Promise<void> {
-  chatPanel?.webview.postMessage({
-    command: 'status',
-    text: ` Analyzing ${selectedFolder.name} patterns...`,
-    type: 'info',
-  });
-
-  // Initialize codebase index
-  codebaseIndex = new CodebaseIndex(selectedFolder.uri.fsPath);
-  await codebaseIndex.scan();
-
-  // Get all files and suggest patterns using LLM-based detection
-  const patterns = architecturePatterns.getAllPatterns();
-  const suggestions: { file: string; pattern: string; confidence: number; reason: string }[] = [];
-  
-  const allFiles = codebaseIndex.getFilesInDependencyOrder();
-  
-  // Analyze each file with LLM for smarter pattern detection
-  for (const file of allFiles) {
-    try {
-      // Read file content for LLM analysis
-      const fileUri = vscode.Uri.joinPath(selectedFolder.uri, file.path || '');
-      const fileData = await vscode.workspace.fs.readFile(fileUri);
-      const fileContent = new TextDecoder().decode(fileData);
-      
-      // Use LLM-based pattern detection instead of keyword matching
-      const detectionResult = await patternDetector.detectPatternWithLLM(fileContent, file.path || '');
-      
-      // Only flag if we should (high confidence + not "None")
-      if (patternDetector.shouldFlagPattern(detectionResult)) {
-        // File itself contains the pattern logic (or needs the pattern applied)
-        suggestions.push({
-          file: file.path || '',
-          pattern: detectionResult.pattern,
-          confidence: detectionResult.confidence,
-          reason: detectionResult.reasoning,
-        });
-      }
-    } catch (err) {
-      // Skip files that can't be read
-      console.log(`[suggest-patterns] Could not analyze ${file.path}: ${err}`);
-    }
-  }
-
-  // Format suggestions with button options for quick refactoring
-  const suggestionText = suggestions.length > 0 
-    ? suggestions.slice(0, 5).map(s => 
-        ` ${s.file}  Could use **${s.pattern}** pattern (${Math.round(s.confidence * 100)}% confidence)\n    ${s.reason}`
-      ).join('\n\n')
-    : 'All files already follow good patterns!';
-
-  // Create refactor buttons for each suggestion
-  const refactorButtons = suggestions.length > 0
-    ? suggestions.slice(0, 5).map(s => `Execute: /refactor ${s.file}`)
-    : [];
-
-  postChatMessage({
-    command: 'addMessage',
-    text: ` **Pattern Suggestions** (${selectedFolder.name})\n\n` +
-      `**Available Patterns:**\n${patterns.map(p => `- ${p.name}: ${p.description}`).join('\n')}\n\n` +
-      `**Recommendations:**\n${suggestionText}`,
-    options: refactorButtons.length > 0 ? refactorButtons : undefined,
-    success: true,
-  });
-}
 
 /**
  * Get the active workspace folder, preferring the workspace of the active editor
@@ -2795,10 +2129,6 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
-  // Initialize Phase 3.4 components
-  architecturePatterns = new ArchitecturePatterns();
-  patternDetector = new PatternDetector(llmClient);
-  patternRefactoringGenerator = new PatternRefactoringGenerator(llmClient);
 
   // CRITICAL FIX (Issue #2): Listen for workspace folder changes
   // Update executor config globally when user selects a different folder
@@ -2815,7 +2145,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(workspaceFolderListener);
-  featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
 
   // Register commands
   const openChatCommand = vscode.commands.registerCommand('llm-assistant.open-chat', () => {

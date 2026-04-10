@@ -15,7 +15,6 @@ import { validateExecutionStep } from './types/executor';
 import { PlanState } from './types/PlanState';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
-import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 import { GOLDEN_TEMPLATES } from './constants/templates';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
@@ -50,7 +49,6 @@ export interface ExecutionResult {
   results: Map<number, StepResult>;
   error?: string;
   totalDuration: number;
-  handover?: any; // ExecutionHandover from handoverSummary (avoid circular import)
 }
 
 /**
@@ -528,18 +526,11 @@ export class Executor {
       'info'
     );
 
-    const handover = generateHandoverSummary(
-      plan.results!,
-      plan.steps.map(s => s.description).join('; '),
-      filesCreated
-    );
-
     return {
       success: true,
       completedSteps: succeededSteps,
       results: plan.results,
       totalDuration: Date.now() - startTime,
-      handover,
     };
   }
 

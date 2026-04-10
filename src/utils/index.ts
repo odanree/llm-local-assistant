@@ -30,9 +30,3 @@ export { WorkspaceDetector, type DetectedWorkspace } from './workspaceDetector';
 export { GenerationModeDetector, type GenerationModeResult } from './generationModeDetector';
 export { parseLeanOutput, validateLeanOutput } from './leanParser';
 export { PathSanitizer } from './pathSanitizer';
-export {
-  generateHandoverSummary,
-  formatHandoverHTML,
-  type ExecutionHandover,
-  type HandoverTask,
-} from './handoverSummary';

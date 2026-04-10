@@ -361,16 +361,17 @@ export function findImportAndSyntaxIssuesPure(
   // Collect local variables to exclude from analysis
   const localVariables = new Set<string>();
 
-  // Function parameters
-  code.replace(/\(([^)]*)\)\s*=>/g, (_, params) => {
-    params.split(',').forEach((param: string) => {
-      const cleaned = param.trim().split(/[:\s=]/)[0].trim();
-      if (cleaned) {
-        localVariables.add(cleaned);
-      }
+  // Helper: extract param names from "email: string, password: string"
+  const addParamsCPM = (params: string) => {
+    params.split(',').forEach((p: string) => {
+      const name = p.trim().split(/[:\s=<(]/)[0].trim();
+      if (name && /^[a-zA-Z_$]/.test(name)) { localVariables.add(name); }
     });
-    return '';
-  });
+  };
+  // Arrow function params: (email) =>
+  code.replace(/\(([^)]*)\)\s*=>/g, (_, params) => { addParamsCPM(params); return ''; });
+  // Named function declarations: function foo(email: string)
+  code.replace(/function\s+\w*\s*\(([^)]*)\)/g, (_, params) => { addParamsCPM(params); return ''; });
 
   // Variable definitions
   code.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
