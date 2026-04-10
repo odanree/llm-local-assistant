@@ -275,13 +275,7 @@ Get detailed code explanation with optional voice narration.
 /explain src/services/userService.ts
 ```
 
-**v2.6 NEW: Voice Narration** - Audio explanation with player controls
-- Click play in the audio player to hear explanation
-- Adjust playback speed (0.5x - 2.0x)
-- Progress seeking and volume control
-- Duration displayed in player
-
-![Explain Command with Voice Narration](./assets/explain-command-example.png)
+![Explain Command Example](./assets/explain-command-example.png)
 
 ### Git Integration
 
@@ -350,7 +344,6 @@ Show all available commands.
 
 ## ⚙️ Configuration
 
-
 ### VS Code Settings
 
 Open Settings (Cmd+, / Ctrl+,) and search "llm-assistant":
@@ -362,206 +355,6 @@ Open Settings (Cmd+, / Ctrl+,) and search "llm-assistant":
 | `llm-assistant.temperature` | `0.7` | Response randomness (0-1) |
 | `llm-assistant.maxTokens` | `4096` | Max response length |
 | `llm-assistant.timeout` | `60000` | Request timeout (ms) |
-
-### Quality Gates (v2.13.0+)
-
-v2.13.0 enforces **Automated Quality Gates** - production-grade minimum coverage thresholds to prevent regression.
-
-#### Quality Gate Configuration
-
-The quality gate is enforced at **81.61% coverage** (Diamond Tier threshold) via the metrics synchronizer script:
-
-```bash
-# .github/skills/metrics-validator/validate-metrics.sh
-THRESHOLD="81.61"
-
-if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
-    echo "❌ ERROR: Coverage ($COVERAGE%) is below the Diamond Tier threshold ($THRESHOLD%)!"
-    exit 1
-fi
-```
-
-**How It Works:**
-1. **Automatic Execution**: Runs on every PR and push to main
-2. **Coverage Check**: Extracts coverage from `npm run coverage` output
-3. **Threshold Validation**: Compares extracted coverage against 81.14% minimum
-4. **Regression Prevention**: Blocks merges if coverage drops below threshold
-5. **Clear Feedback**: Provides detailed error messages with remediation steps
-
-**What Triggers Quality Gate:**
-- ✅ Pull requests targeting `main` branch
-- ✅ Pushes to `feat/**` branches
-- ✅ Pushes to `main` branch
-- ✅ Manual execution: `sh .github/skills/metrics-validator/validate-metrics.sh`
-
-**Success Criteria:**
-- Coverage ≥ 81.14%: ✅ Quality gate PASSED - proceed with merge
-- Coverage < 81.14%: ❌ Quality gate FAILED - add tests and retry
-
-**To Maintain Quality Gate:**
-```bash
-# Run coverage locally before pushing
-npm run coverage
-
-# View detailed coverage report
-open coverage/lcov-report/index.html
-
-# Add tests until you meet 81.14% threshold
-npm test -- --coverage
-```
-
----
-
-### Agent Skills Setup (v2.13.0 Quality Gates)
-
-Agent Skills are automated CI/CD-integrated tools for documentation sync, root directory enforcement, and quality gate validation.
-
-#### 1. Root Directory Enforcer
-
-The root directory follows the **Original 4 Rule** - only these 4 documentation files should exist in root:
-- `README.md`
-- `ROADMAP.md`
-- `CHANGELOG.md`
-- `LICENSE`
-
-All other documentation (ARCHITECTURE.md, PROJECT_STATUS.md, QUICK_REFERENCE.md, etc.) lives in `/docs/`.
-
-**Usage:**
-```bash
-# Run the enforcer skill
-sh .github/skills/root-enforcer/enforce.sh
-
-# This will:
-# 1. Validate exactly 6 .md files in root
-# 2. Move any unauthorized .md or .txt files to /docs/
-# 3. Restore whitelisted files to root
-# 4. Prevent documentation bloat
-```
-
-The enforcer automatically runs in CI/CD pipelines on every PR to keep your repository clean.
-
-#### 2. Metrics Validator (v2.13.0+)
-
-The metrics validator skill (`.github/skills/metrics-validator/validate-metrics.sh`) runs on every PR to extract real metrics, enforce quality gates, and keep METRICS.json current:
-
-```bash
-# The script workflow:
-1. Reads version from package.json
-2. Runs npm run coverage to generate fresh metrics
-3. Extracts test count from "XXXX passed" pattern
-4. Extracts coverage from "All files | XX.XX %" pattern
-5. Validates coverage against 81.14% quality gate threshold
-6. Updates METRICS.json with live metrics
-7. Enforces root directory compliance via enforcer skill
-```
-
-**Features:**
-- ✅ Dynamic metrics extraction (not hardcoded)
-- ✅ Real-time coverage validation from test output
-- ✅ Quality gate enforcement (81.14% minimum)
-- ✅ Automatic METRICS.json updates
-- ✅ Regression prevention via threshold checks
-- ✅ Clear error messages for failed quality gates
-
-**Trigger Events:**
-- Push to `feat/**` or `main` branches
-- Pull requests targeting `main`
-- Manual execution: `sh .github/skills/metrics-validator/validate-metrics.sh`
-
-**Sample Output:**
-```
-[*] Detected Version: 2.11.0
-[*] Running npm run coverage to generate fresh metrics...
-[*] Parsing coverage output...
-[OK] Extracted Test Count: 3594 tests
-[OK] Extracted Coverage: 80.27%
-[*] Checking Quality Gate: Coverage must be >= 80.27%
-[OK] Quality Gate PASSED: 80.27% >= 80.27%
-[*] Updating METRICS.json...
-[OK] Dynamic Metrics Sync Complete:
-     Version: 2.11.0
-     Tests: 3594
-     Coverage: 80.27%
-```
-
-#### 3. README Auto-Updater (v2.13.0+)
-
-The README Auto-Updater skill automatically updates README.md with latest metrics on every semantic release:
-
-```bash
-# The script workflow:
-1. Reads version from package.json
-2. Extracts metrics from METRICS.json
-3. Updates header badges (test count, coverage)
-4. Updates v2.13.0 section with metrics
-5. Updates Quality & Testing section
-6. Updates footer with release metrics
-7. Commits changes with [skip ci] to prevent loops
-```
-
-**Automatic Trigger:**
-- Version change detected in `package.json` (semantic release)
-- Workflow: `.github/workflows/readme-update-on-release.yml`
-
-**Manual Execution:**
-```bash
-# Update metrics first (required)
-npm run coverage
-sh .github/skills/metrics-validator/validate-metrics.sh
-
-# Then run README updater
-sh .github/skills/readme-updater/update-readme.sh
-
-# Review and push
-git status
-git push origin your-branch
-```
-
-**Features:**
-- ✅ Automatic on semantic release
-- ✅ Extracts metrics from METRICS.json
-- ✅ Updates all version-dependent sections
-- ✅ Commits with `[skip ci]` to prevent loops
-- ✅ Works with GitHub Actions or manual execution
-
-**For Semantic Release Integration:**
-When you bump version in `package.json` and push to main:
-1. GitHub Actions detects version change
-2. Automatically runs README updater
-3. Updates all badges and metrics
-4. Commits to main with [skip ci]
-
-See [.github/skills/readme-updater/README.md](.github/skills/readme-updater/README.md) for detailed documentation.
-
----
-
-#### 4. Copilot Instructions Integration
-
-The `.github/copilot-instructions.md` file provides context for AI coding agents:
-
-```markdown
-# .github/copilot-instructions.md
-
-Defines:
-- Project constraints (root documentation rule)
-- Architecture patterns and code organization
-- Integration points and extension system
-- Testing and validation guidelines
-- Contribution workflows and commit practices
-
-Used by:
-- GitHub Copilot auto-complete and suggestions
-- Claude and other AI coding assistants
-- Local development environments for consistency
-```
-
-**For New Developers:**
-1. Read [.github/copilot-instructions.md](.github/copilot-instructions.md) for project context
-2. These instructions embedded in your IDE ensure:
-   - Consistent code style across team
-   - Automated compliance with architecture rules
-   - Smart suggestions aligned with project patterns
-   - Prevention of common mistakes (like creating root .md files)
 
 ### LLM Server Setup
 
@@ -672,67 +465,26 @@ See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATT
 
 ## 🏗️ Architecture & Design
 
-### Three-Phase AI Loop
-
 ```
-Your Code
-   ↓
-[ANALYZER] → Detects patterns and issues
-   ↓
-[RECOMMENDATIONS] → Suggests improvements
-   ↓
-[ACTION] → You decide what to do next
+Your Code → [PLANNER] → Multi-step plan with validation
+               ↓
+          [EXECUTOR] → Step-by-step file generation
+               ↓
+          [VALIDATOR] → 6-layer semantic validation
+               ↓
+         Your Files  ← Retry on failure
 ```
 
-### Phase 3: Architecture Analysis (SAFE)
-- Semantic code analysis (5 layers)
-- Pattern detection (8 patterns)
-- Architecture scoring (0-10)
-- Safe, always reliable
+## ✅ Quality & Testing
 
-### Phase 2: File Operations (SAFE)
-- Read files
-- Generate file content
-- Review before writing
-- Git integration
+- **2,891 tests** — 78 test files, 100% pass rate ✅
+- **TypeScript strict mode** — 0 compilation errors
+- **CI/CD** — Automatic quality checks on every PR
 
-### Phase 1: Chat & Utilities (SAFE)
-- LLM chat with context
-- Model diagnostics
-- Help and documentation
-
-**What's NOT included:**
-- Code generation with planning
-- Multi-file generation
-- Automatic refactoring
-- (These had infinite loop bugs, disabled for safety)
-
-## ✅ Quality & Testing (v2.11.0 Diamond Tier)
-
-- **3,594 tests** - All passing ✅ (100% success rate)
-- **80.27% coverage** - Diamond Tier threshold enforced with automated quality gates ✅
-- **100% TypeScript strict** - Zero type errors
-- **0 compilation errors**
-- **0 linting warnings** - Clean codebase
-- **Zero regressions** - All existing functionality verified
-- **Production-ready** - Enterprise-grade test foundation
-
-**Coverage by Module:**
-- smartAutoCorrection.ts: 96.31% statements ⭐⭐⭐
-- architectureValidator.ts: 81.48% statements ⭐⭐
-- refactoringExecutor.ts: 68.87% statements ⭐⭐
-- llmClient.ts: 93.98% statements
-- refiner.ts: 73.43% statements
-- codebaseIndex.ts: 78.42% statements
-
-**Test Distribution:**
-- Phase 10G: SmartAutoCorrection (95 tests) - 96.31% coverage
-- Phase 10F: RefactoringExecutor (64 tests) - 68.87% coverage
-- Phase 10H: Refiner (50 tests) - 73.43% coverage
-- Phase 10E: GitClient (58 tests) - Pragmatic coverage
-- Phase 10D: ArchitectureValidator (46 tests) - 81.48% coverage
-- Phase 10B: CodebaseIndex (40 tests) - 63.88% branch
-- Phase 10A: Utilities (143 tests) - retryContext, validation, leanParser
+```bash
+npm test              # Run all tests
+npm run coverage      # Run with coverage report
+```
 
 ## ⚠️ Limitations & Agentic Boundaries
 
@@ -799,46 +551,6 @@ Until v3.1, **manual verification is recommended** for multi-file state migratio
 
 But it won't prevent the LLM from imagining properties that don't exist. Trust your eyes more than the AI for this pattern.
 
-## 💎 v2.13.0 Reactive Orchestrator Achievement
-
-**What Changed from v2.11.0 → v2.13.0:**
-- ✅ Coverage improvement: 80.27% → 81.14% (+0.87% refinement, Focus: reactive architecture)
-- ✅ Test refinement: 3,594 → 3,600 tests (+6 net new, removed redundancy, maintained 100% pass rate)
-- ✅ **Reactive Orchestration**: Real-time streaming, three safety rails, five CI hardening fixes
-- ✅ **Dynamic Metrics Synchronizer**: Real-time metrics extraction from npm run coverage
-- ✅ Eight intensive testing phases (Phase 10A-H) targeting lowest-coverage modules
-- ✅ Pragmatic testing strategy: Focus on core logic over edge cases for sustainable gains
-- ✅ Module-specific improvements:
-  - smartAutoCorrection.ts: 77.36% → 96.31% (+18.95%)
-  - refactoringExecutor.ts: 37.24% → 68.87% (+31.63%)
-  - architectureValidator.ts: 62.46% → 81.48% (+19.02%)
-  - refiner.ts: 43.75% → 73.43% (+29.68%)
-
-**Features Inherited from v2.7-v2.10:**
-- Comprehensive test suite with 3,600 tests (3,597 passing) across 101 files
-- 6-layer multi-file validation system
-- Cross-file contract enforcement
-- Pattern detection and analysis (8 patterns)
-- Semantic code analysis (5 layers)
-- Git integration and AI-powered review
-- Full TypeScript strict mode enabled
-- Architecture validation with error reporting
-- Zustand/React Hook auditing capabilities
-- Voice narration with audio synthesis
-- Markdown rendering with formatted output
-
-**Metrics:**
-- Tests: 3,597/3,600 passing ✅ (99.9% success rate, zero flakiness)
-- Coverage: 81.14% achieved (Diamond Tier exceeded) ✅
-- Quality Gate: 80.27% minimum enforced with automated regression prevention ✅
-- Branch Coverage: 73% (strong decision path coverage) ✅
-- Compilation: 0 errors ✅
-- Linting: 0 warnings ✅
-- TypeScript strict: Enabled ✅
-- Blockers: 0 ✅
-- Regressions: 0 (from 3,281 pre-v2.11.0 tests) ✅
-- Ready for: Production & Enterprise Deployment ✅
-
 ## 🚀 Development
 
 ### Build
@@ -868,217 +580,17 @@ npm run test:watch   # Auto-run on changes
 - **[LICENSE](LICENSE)** - MIT License
 
 ### Core Documentation (/docs/)
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System design and voice narration architecture
-- **[Installation Guide](docs/INSTALL.md)** - Setup instructions with ModelFile customization
-- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines and v2.6 voice development
-- **[Voice Narration](docs/VOICE_NARRATION.md)** - Voice feature user guide
-- **[Project Status](docs/PROJECT_STATUS.md)** - Current project status and roadmap
-- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Developer quick reference guide
-- **[Release Notes](docs/RELEASE-COMPLETE.md)** - v2.6 release notes and features
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System design
+- **[Installation Guide](docs/INSTALL.md)** - Setup instructions
+- **[Contributing](docs/CONTRIBUTING.md)** - Development guidelines
+- **[Project Status](docs/PROJECT_STATUS.md)** - Current status and roadmap
 - **[Marketplace Info](docs/MARKETPLACE.md)** - VS Code Marketplace publishing guide
-
-### Guides (/docs/guides/)
-- **[Developer Guide](docs/guides/DEVELOPER_GUIDE_V1.2.0.md)** - Deep dive into codebase
-- **[Execution Guide](docs/guides/EXECUTION_GUIDE.md)** - Running code generation
-- **[Setup Guide](docs/guides/CURSORRULES_EXAMPLE.md)** - .lla-rules template for code generation
-- **[Quick Navigation](docs/guides/QUICK_NAVIGATION_GUIDE.md)** - Repository navigation guide
 
 ### Patterns (/docs/patterns/)
 - **[Form Component Patterns](docs/patterns/FORM_COMPONENT_PATTERNS.md)** - 7 form component patterns (rules in `.lla-rules`)
-- **[Validation Patterns](docs/patterns/RULE_BASED_VALIDATOR_REFACTORING.md)** - Validator refactoring patterns
 - **[Architecture Patterns](docs/patterns/ARCHITECTURE_RULES_INTEGRATION.md)** - Architecture rules integration
 
-### Implementation & Troubleshooting (/docs/implementation/)
-- **[Local Testing Guide](docs/implementation/PHASE-3.4.5-LOCAL-TESTING-GUIDE.md)** - Testing setup
-- **[Bug Fix Documentation](docs/implementation/)** - Technical implementation details
-
-### Repository Organization
-- **[Root Organization Rules](docs/ROOT_ORGANIZATION_RULES.md)** - Guidelines for keeping documentation clean
-- **[Documentation Organization](docs/DOCS_REORGANIZATION_COMPLETE.md)** - How documentation is structured
-
-### Quality Assurance & Testing
-
-#### Running Tests
-```bash
-# Run all tests
-npm test
-
-# Run tests with coverage report
-npm test -- --coverage
-
-# Watch mode (re-run on file changes)
-npm run test:watch
-
-# View coverage reports
-# HTML Report: open coverage/lcov-report/index.html
-# Console Output: Shows coverage metrics after test run
-
-# Check quality gate locally
-sh .github/skills/metrics-validator/validate-metrics.sh
-```
-
-#### Quality Gate Enforcement (v2.11.0+)
-
-The quality gate automatically enforces 80.27% minimum coverage:
-
-```bash
-# The quality gate will:
-1. Run npm run coverage to extract real metrics
-2. Compare coverage against 80.27% threshold
-3. Block merge if coverage is below threshold
-4. Provide clear error message with remediation steps
-
-# To pass quality gate:
-- Add tests to increase coverage
-- Ensure all critical code paths are covered
-- Run locally: npm test -- --coverage
-- Verify: coverage ≥ 80.27%
-```
-
-#### Test Coverage & Quality Goals
-
-**Current Status (v2.10.0)**:
-- **Elite Tier Coverage:** 74.68%
-- **Test Suite:** 2453 tests passing (100% success rate)
-- **No Regressions:** ✅ All existing functionality verified
-- **Testable Ceiling:** Maximum coverage identified without architectural refactoring
-
-**Coverage Progression:**
-- **v2.7.0:** Foundation (58.46% baseline)
-- **v2.8.0:** Services & validators focus (+13.72% to 72.18%)
-- **v2.9.0:** Performance optimization maintained 72.18%
-- **v2.10.0:** Elite Tier Achievement (+2.60% to 74.78%) ✅
-
-**Quality Commitments**:
-- Zero regressions policy
-- 100% test pass rate maintained
-- Coverage thresholds enforced in CI/CD
-- Strategic focus on critical/dangerous code paths
-
-#### Consolidated Test Matrix Architecture (v2.10.0+)
-
-v2.10.0 introduces a **Consolidated Test Matrix** - a strategic parameterized testing approach that:
-
-- **Reduces code duplication** - Table-driven test cases using `test.each()`
-- **Improves maintainability** - Single test function covers multiple scenarios
-- **Scales vertically** - Add test cases to matrix without writing new code
-- **Enhances clarity** - Test intent clear from parameter names and structure
-
-**Example Pattern:**
-```typescript
-// Before: Multiple separate test functions
-test('handles email validation', () => { ... })
-test('handles password validation', () => { ... })
-test('handles username validation', () => { ... })
-
-// After: Single parameterized test
-test.each([
-  ['email@test.com', 'valid-email'],
-  ['invalid-email', 'invalid-email'],
-  ['', 'empty-email'],
-])('validates email %s as %s', (input, expected) => {
-  // ... single test logic for all cases
-})
-```
-
-#### Strict Vitest Coverage Thresholds (v2.10.0)
-
-v2.10.0 locks coverage thresholds in `vitest.config.mjs` to enforce quality standards and prevent regression:
-
-```javascript
-// vitest.config.mjs coverage thresholds
-coverage: {
-  lines: 74,        // Minimum 74% line coverage (Phase 6.4 testable ceiling)
-  functions: 80,    // Minimum 80% function coverage (high-leverage functions)
-  branches: 67,     // Minimum 67% branch coverage (realistic for async/transpilation)
-  statements: 74,   // Minimum 74% statement coverage
-  all: true         // Enforce ALL thresholds (fail if ANY threshold missed)
-}
-```
-
-**Why These Thresholds:**
-- **74% line/statements** - Phase 6.4 identified as realistic ceiling without refactoring
-- **80% functions** - Ensures all public functions have test coverage
-- **67% branches** - Realistic for TypeScript transpilation artifacts (async/await)
-- **Fail on ANY miss** - `all: true` prevents selective coverage enforcement
-
-**CI/CD Integration:**
-- Thresholds automatically enforced on every test run
-- Build fails if thresholds not met
-- Prevents regression via automated gates
-- Documented in [ARCHITECTURE.md](docs/ARCHITECTURE.md) - "Coverage Thresholds Section"
-
-**To Maintain or Improve:**
-```bash
-# Run tests with coverage report
-npm test -- --coverage
-
-# View detailed coverage report
-open coverage/lcov-report/index.html
-
-# Track coverage over time
-# Compare before/after in PRs via coverage badges
-```
-
-#### Test Architecture
-
-The test suite uses:
-- **Vitest** - Fast, ESM-native testing framework
-- **happy-dom** - Lightweight DOM simulation (no browser overhead)
-- **Test Factories** - Reusable mock generators for consistent testing
-- **Coverage Provider** - v8 with HTML + LCOV reporting
-- **Parameterized Testing** - Consolidated Test Matrix pattern via `test.each()`
-
-Files:
-- `vitest.config.mjs` - Test configuration and **strict coverage thresholds** (enforced)
-- `src/vitest.setup.ts` - Test environment initialization
-- `src/test/factories/*` - Reusable factory patterns for mocks
-- `package.json` - Scripts: `npm test`, `npm run test:watch`, `npm run coverage`
-
-#### Detailed Documentation (/docs/)
-- **[Coverage Strategy](docs/COVERAGE_ANALYSIS.md)** - In-depth coverage analysis and metrics
-- **[Coverage Roadmap](docs/COVERAGE_DELIVERABLES.md)** - Detailed plan for reaching 70% coverage
-- **[Test Documentation](docs/COVERAGE_DOCUMENTATION_INDEX.md)** - Test suite documentation index
-
-### Development History (/docs/phase-docs/ and /docs/archive/)
-- **[Phase Documentation](docs/phase-docs/)** - Phase-specific development notes and roadmaps
-- **[Archives](docs/archive/)** - Session notes, analysis, and historical releases
-
 ## 🐛 Troubleshooting
-
-### Quality Gate Issues
-
-#### "Coverage is below the Diamond Tier threshold (80.27%)"
-**Error:** Quality gate failed because coverage dropped below 80.27%
-
-**Solutions:**
-1. Run coverage locally to verify: `npm test -- --coverage`
-2. Review the coverage report: `open coverage/lcov-report/index.html`
-3. Add tests for uncovered code paths
-4. Focus on core logic and error handling
-5. Run: `npm test` to verify tests pass
-6. Re-run quality gate: `sh .github/skills/metrics-validator/validate-metrics.sh`
-
-#### "Failed to extract metrics from coverage output"
-**Error:** The script couldn't parse test count or coverage percentage
-
-**Solutions:**
-1. Verify npm run coverage works locally: `npm run coverage`
-2. Check that vitest is installed: `npm list vitest`
-3. Ensure coverage script runs successfully without errors
-4. Try running manually: `sh .github/skills/metrics-validator/validate-metrics.sh`
-
-#### "Coverage extraction returned wrong number"
-**Error:** The script extracted incorrect metrics
-
-**Solutions:**
-1. Check test output format matches expected pattern
-2. Verify "XXXX passed" appears in test output
-3. Verify "All files | XX.XX %" appears in coverage output
-4. Check file permissions: `ls -la .github/skills/metrics-validator/validate-metrics.sh`
-5. Ensure script is executable: `chmod +x .github/skills/metrics-validator/validate-metrics.sh`
-
----
 
 ### LLM Server Issues
 
@@ -1103,6 +615,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**💎 v2.13.0 - Enterprise-Grade Local AI Orchestrator | 🧪 3,597 Tests Passing, 3 Skipped (3,600 Total) | 📊 81.14% Coverage (Diamond Tier) | 🎯 Quality Gates Enforced | 🔒 100% Private | 🚀 Zero-Telemetry | 🏆 Production Ready
+**v2.14.0** — Local AI Code Orchestrator | 🧪 2,891 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
 
 Created by [@odanree](https://github.com/odanree)
