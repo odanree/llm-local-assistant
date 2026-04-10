@@ -331,10 +331,32 @@ export function validateCommonPatternsPure(content: string, filePath: string): s
     return '';
   });
 
-  // Collect destructured variables
+  // Collect destructured variables (object)
   content.replace(/(?:const|let|var)\s+{\s*([^}]+)\s*}/g, (_, vars) => {
     vars.split(',').forEach((v: string) => {
       const cleaned = v.trim().split(/[:=]/)[0].trim();
+      if (cleaned) {
+        localVariables.add(cleaned);
+      }
+    });
+    return '';
+  });
+
+  // Collect array-destructured variables: const [email, setEmail] = ...
+  content.replace(/(?:const|let|var)\s+\[\s*([^\]]+)\s*\]/g, (_, vars) => {
+    vars.split(',').forEach((v: string) => {
+      const cleaned = v.trim().split(/[:=\s]/)[0].trim();
+      if (cleaned) {
+        localVariables.add(cleaned);
+      }
+    });
+    return '';
+  });
+
+  // Collect named function declaration parameters
+  content.replace(/function\s+\w*\s*\(([^)]*)\)/g, (_, params) => {
+    params.split(',').forEach((param: string) => {
+      const cleaned = param.trim().split(/[:\s=]/)[0].trim();
       if (cleaned) {
         localVariables.add(cleaned);
       }
@@ -358,6 +380,10 @@ export function validateCommonPatternsPure(content: string, filePath: string): s
       'document',
       'this',
       'super',
+      'event',
+      'ev',
+      'err',
+      'error',
     ];
     const isSingleLetter = namespace.length === 1;
     const isLocal = localVariables.has(namespace);

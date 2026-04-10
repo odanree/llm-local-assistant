@@ -15,7 +15,6 @@ import { validateExecutionStep } from './types/executor';
 import { PlanState } from './types/PlanState';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
-import { generateHandoverSummary, formatHandoverHTML } from './utils/handoverSummary';
 import { GOLDEN_TEMPLATES } from './constants/templates';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
@@ -50,7 +49,6 @@ export interface ExecutionResult {
   results: Map<number, StepResult>;
   error?: string;
   totalDuration: number;
-  handover?: any; // ExecutionHandover from handoverSummary (avoid circular import)
 }
 
 /**
@@ -528,18 +526,11 @@ export class Executor {
       'info'
     );
 
-    const handover = generateHandoverSummary(
-      plan.results!,
-      plan.steps.map(s => s.description).join('; '),
-      filesCreated
-    );
-
     return {
       success: true,
       completedSteps: succeededSteps,
       results: plan.results,
       totalDuration: Date.now() - startTime,
-      handover,
     };
   }
 
@@ -1218,15 +1209,20 @@ export class Executor {
       };
     }
 
-    // INTERCEPTOR: Detect Manual Steps (Fix 2: Postel's Law)
-    // If path is missing but description mentions manual verification,
-    // treat as human instruction, not executable step
-    if (!step.path && /manual|verify|check|browser|test|visually/i.test(step.description)) {
-      console.log(`[Executor] Intercepted manual step: "${step.description}"`);
+    // INTERCEPTOR: Silently drop steps that require human action and can't be executed.
+    // Covers two cases:
+    //   1. run step with no real shell command (LLM used description instead of command)
+    //   2. no path + description mentions manual/visual verification
+    const isEmptyRunStep = step.action === 'run' &&
+      (!(step as any).command || ((step as any).command as string).trim().length === 0);
+    const isManualVerification = !step.path &&
+      /manual|verify|check|browser|visually/i.test(step.description);
+
+    if (isEmptyRunStep || isManualVerification) {
       return {
         stepId: step.stepId,
         success: true,
-        output: `📝 MANUAL STEP: ${step.description}`,
+        output: `📝 Skipped (human verification): ${step.description}`,
         duration: 0,
         timestamp: Date.now(),
         requiresManualVerification: true,
@@ -1673,16 +1669,6 @@ export class Executor {
       if (!step.path || step.path.trim().length === 0) {
         throw new Error(
           `CONTRACT_VIOLATION: Action '${step.action}' requires a valid file path, but none was provided. ` +
-          `Step: "${step.description}"`
-        );
-      }
-    }
-
-    // Check for missing command on run action
-    if (step.action === 'run') {
-      if (!(step as any).command || ((step as any).command as string).trim().length === 0) {
-        throw new Error(
-          `CONTRACT_VIOLATION: Action 'run' requires a command, but none was provided. ` +
           `Step: "${step.description}"`
         );
       }

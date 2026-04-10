@@ -26,3 +26,6 @@ llm-local-assistant-*.vsix
 coverage/
 .nyc_output/
 *.lcov
+
+# RAG embedding cache (auto-generated, workspace-local)
+.lla-embeddings.json

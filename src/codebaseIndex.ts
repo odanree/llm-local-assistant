@@ -88,6 +88,12 @@ export interface DependencyGraph {
   [filePath: string]: string[]; // Maps file to files it depends on
 }
 
+export interface EmbeddingsCache {
+  model: string;
+  savedAt: number;
+  files: Array<{ path: string; embeddings: number[] }>;
+}
+
 export interface PatternRegistry {
   [patternName: string]: {
     count: number;
@@ -545,6 +551,17 @@ export class CodebaseIndex {
   /**
    * Add a new file to the index (called during plan execution)
    */
+  /** Optional embedding client — set once via setEmbeddingClient() after embedAll(). */
+  private embeddingClient?: EmbeddingClient;
+  /** Debounce timer for cache saves triggered by addFile(). */
+  private saveCacheTimer?: ReturnType<typeof setTimeout>;
+  /** Path to the on-disk embeddings cache file. */
+  private cacheFilePath?: string;
+
+  setEmbeddingClient(client: EmbeddingClient): void {
+    this.embeddingClient = client;
+  }
+
   addFile(filePath: string, content: string): void {
     try {
       const relativePath = path.relative(this.projectRoot, filePath);
@@ -554,9 +571,18 @@ export class CodebaseIndex {
       });
 
       const imports: string[] = [];
+      const exports: string[] = [];
       traverse(ast, {
         ImportDeclaration(nodePath) {
           imports.push(nodePath.node.source.value);
+        },
+        ExportNamedDeclaration(nodePath) {
+          if (t.isIdentifier(nodePath.node.declaration?.id)) {
+            exports.push((nodePath.node.declaration as any).id.name);
+          }
+        },
+        ExportDefaultDeclaration() {
+          exports.push('default');
         },
       });
 
@@ -565,14 +591,14 @@ export class CodebaseIndex {
         name: path.basename(filePath),
         purpose: this.determinePurpose(filePath, ast),
         imports,
-        exports: [],
+        exports,
         dependencies: [],
         patterns: this.detectFilePatterns({
           path: relativePath,
           name: path.basename(filePath),
           purpose: 'unknown',
           imports,
-          exports: [],
+          exports,
           dependencies: [],
           patterns: [],
           lastUpdated: Date.now(),
@@ -583,6 +609,18 @@ export class CodebaseIndex {
       this.files.set(relativePath, fileEntry);
       this.extractDependencies();
       this.detectPatterns();
+
+      // Fire-and-forget embed so resolveExportSource works immediately for this file
+      if (this.embeddingClient && exports.length > 0) {
+        const client = this.embeddingClient;
+        const text = `exports: ${exports.join(', ')}  path: ${relativePath}`;
+        client.embed(text).then(vec => {
+          fileEntry.embeddings = vec;
+          // Debounce cache save — flush 3s after the last addFile embed
+          if (this.saveCacheTimer) { clearTimeout(this.saveCacheTimer); }
+          this.saveCacheTimer = setTimeout(() => this.saveEmbeddingsCache(), 3000);
+        }).catch(() => { /* Ollama unavailable — exact-match still works */ });
+      }
     } catch (error) {
       console.error(`[CodebaseIndex] Error adding file ${filePath}:`, error);
     }
@@ -660,6 +698,64 @@ export class CodebaseIndex {
     }
 
     return result;
+  }
+
+  // ============================================================
+  // RAG: embedding cache (persist vectors across restarts)
+  // ============================================================
+
+  /**
+   * Load previously saved embeddings from disk into matching FileEntry objects.
+   * Call before embedAll() — entries with embeddings already populated are skipped.
+   *
+   * @param cacheFile  Absolute path to the cache file (e.g. `<workspace>/.lla-embeddings.json`)
+   * @param model      Model name; cache is ignored if it was built with a different model
+   * @returns Number of entries restored from cache
+   */
+  loadEmbeddingsCache(cacheFile: string, model = 'nomic-embed-text'): number {
+    this.cacheFilePath = cacheFile;
+    try {
+      const raw = this.fs.readFileSync(cacheFile, 'utf-8');
+      const cache = JSON.parse(raw) as EmbeddingsCache;
+      if (cache.model !== model) {
+        console.log(`[CodebaseIndex] Cache model mismatch (${cache.model} vs ${model}), ignoring`);
+        return 0;
+      }
+      let restored = 0;
+      for (const entry of cache.files) {
+        const fileEntry = this.files.get(entry.path);
+        if (fileEntry && entry.embeddings.length > 0) {
+          fileEntry.embeddings = entry.embeddings;
+          restored++;
+        }
+      }
+      console.log(`[CodebaseIndex] Restored ${restored} embeddings from cache (${cacheFile})`);
+      return restored;
+    } catch {
+      return 0; // Cache missing or corrupt — embedAll() will regenerate
+    }
+  }
+
+  /**
+   * Persist current embeddings to disk.
+   * Safe to call repeatedly — overwrites the previous cache.
+   *
+   * @param cacheFile  Absolute path to write (defaults to the path set by loadEmbeddingsCache)
+   * @param model      Model name to tag the cache with
+   */
+  saveEmbeddingsCache(cacheFile?: string, model = 'nomic-embed-text'): void {
+    const target = cacheFile ?? this.cacheFilePath;
+    if (!target) return;
+    const files = Array.from(this.files.values())
+      .filter(e => e.embeddings && e.embeddings.length > 0)
+      .map(e => ({ path: e.path, embeddings: e.embeddings! }));
+    const cache: EmbeddingsCache = { model, savedAt: Date.now(), files };
+    try {
+      this.fs.writeFileSync(target, JSON.stringify(cache));
+      console.log(`[CodebaseIndex] Saved ${files.length} embeddings to cache`);
+    } catch (err) {
+      console.warn('[CodebaseIndex] Failed to save embeddings cache:', err);
+    }
   }
 
   // ============================================================

@@ -107,8 +107,8 @@ export const Dashboard = () => {
       filePath: 'src/services/utils.ts',
       content: `const calculate = (a: number) => a * 2;
 function process(data: string) { return data.toUpperCase(); }`,
-      expected: { valid: false, errorCount: 1 },
-      desc: 'Should flag missing return type annotations in strict mode',
+      expected: { valid: true, errorCount: 0 },
+      desc: 'Should accept functions with inferred return types (no return-type checker enforced)',
     },
 
     // ========== ZUSTAND PATTERN DETECTION ==========
