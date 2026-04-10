@@ -58,7 +58,6 @@ export function getWebviewContent(): string {
       '/reject',
       '/refactor',
       '/extract-service',
-      '/design-system',
       '/rate-architecture',
       '/suggest-patterns',
       '/context',

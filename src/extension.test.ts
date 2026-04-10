@@ -414,20 +414,6 @@ describe('All Command Patterns (v2.5.0 Parity)', () => {
     });
   });
 
-  describe('/design-system command', () => {
-    const pattern = /^\/design-system\s+(.+)$/;
-
-    it('should parse /design-system command', () => {
-      const match = '/design-system user authentication'.match(pattern);
-      expect(match).not.toBeNull();
-      expect(match?.[1]).toBe('user authentication');
-    });
-
-    it('should require a feature name', () => {
-      expect('/design-system'.match(pattern)).toBeNull();
-    });
-  });
-
   describe('/suggest-patterns command', () => {
     const pattern = /^\/suggest-patterns$/;
 
@@ -580,18 +566,17 @@ describe('All Command Patterns (v2.5.0 Parity)', () => {
         /^\/refactor\s+(.+)$/,                          // 5
         /^\/rate-architecture$/,                        // 6
         /^\/help$/,                                     // 7
-        /^\/design-system\s+(.+)$/,                     // 8
-        /^\/suggest-patterns$/,                         // 9
-        /^\/extract-service\s+(.+)$/,                   // 10
-        /^\/context\s+(.+)$/,                           // 11
-        /^\/approve$/,                                  // 12
-        /^\/reject$/,                                   // 13
-        /^\/execute$/,                                  // 14
-        /^\/check-model$/,                              // 15
+        /^\/suggest-patterns$/,                         // 8
+        /^\/extract-service\s+(.+)$/,                   // 9
+        /^\/context\s+(.+)$/,                           // 10
+        /^\/approve$/,                                  // 11
+        /^\/reject$/,                                   // 12
+        /^\/execute$/,                                  // 13
+        /^\/check-model$/,                              // 14
       ];
 
-      // Verify we have 15 command patterns
-      expect(commands.length).toBe(15);
+      // Verify we have 14 command patterns
+      expect(commands.length).toBe(14);
 
       // Verify each pattern is a RegExp
       commands.forEach((cmd) => {
