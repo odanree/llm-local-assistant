@@ -1415,6 +1415,9 @@ export class SmartAutoCorrection {
   /**
    * Infer where an import should come from based on naming and usage
    */
+  // TODO(RAG): replace this entire method with a codebaseIndex vector lookup.
+  // Query: "which file in this project exports <name>?" → returns the real path.
+  // The hardcoded dict below is a blind guess that breaks on any project-local symbol.
   private static inferImportSource(code: string, name: string): string | null {
     console.log('[SmartAutoCorrection.inferImportSource] Looking up:', name);
     // Common patterns
