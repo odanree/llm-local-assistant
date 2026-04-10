@@ -36,6 +36,10 @@ assets/**
 # esbuild analysis artifacts
 meta.json
 
+# Runtime-generated cache files (user-specific, not for distribution)
+.lla-embeddings.json
+*.vsix
+
 # Tokenizer/model files — not loaded at runtime
 asset/**
 
