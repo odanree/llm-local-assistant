@@ -42,22 +42,12 @@ export interface PatternRegistry {
   };
 }
 
-export interface SuspendedExecutionState {
-  planId: string;
-  stepIndex: number;
-  currentStep: any;
-  remainingSteps: any[];
-  fileSnapshot: Record<string, string>;
-  context: any;
-}
-
 export class CodebaseIndex {
   private files: Map<string, FileEntry> = new Map();
   private dependencies: DependencyGraph = {};
   private patterns: PatternRegistry = {};
   private projectRoot: string = '';
   private fs: IFileSystem;
-  private suspendedStates: Map<string, SuspendedExecutionState> = new Map();
 
   constructor(projectRoot?: string, fs?: IFileSystem) {
     this.projectRoot = projectRoot || process.cwd();
@@ -544,39 +534,80 @@ export class CodebaseIndex {
     }
   }
 
+  // ============================================================
+  // RAG Bridge: flat metadata + chunking (prep for vector store)
+  // ============================================================
+
   /**
-   * Save suspended execution state for a plan
-   * Used when execution pauses waiting for user input
+   * Return all indexed files as a flat metadata array.
+   * Swap `embeddings` in later when a local embedding model is available.
    */
-  setSuspendedState(planId: string, state: SuspendedExecutionState | null): void {
-    if (state === null) {
-      this.suspendedStates.delete(planId);
-    } else {
-      this.suspendedStates.set(planId, state);
+  getMetadataJSON(): Array<{
+    path: string;
+    name: string;
+    purpose: string;
+    imports: string[];
+    exports: string[];
+    patterns: string[];
+    lastUpdated: number;
+  }> {
+    return Array.from(this.files.values()).map(f => ({
+      path: f.path,
+      name: f.name,
+      purpose: f.purpose,
+      imports: f.imports,
+      exports: f.exports,
+      patterns: f.patterns,
+      lastUpdated: f.lastUpdated,
+    }));
+  }
+
+  /**
+   * Split text into overlapping chunks suitable for embedding.
+   * Default: 512-char chunks with 64-char overlap.
+   */
+  static chunkText(
+    text: string,
+    chunkSize = 512,
+    overlap = 64
+  ): Array<{ text: string; start: number; end: number }> {
+    const chunks: Array<{ text: string; start: number; end: number }> = [];
+    let start = 0;
+    while (start < text.length) {
+      const end = Math.min(start + chunkSize, text.length);
+      chunks.push({ text: text.slice(start, end), start, end });
+      start += chunkSize - overlap;
+      if (start >= text.length) break;
     }
+    return chunks;
   }
 
   /**
-   * Retrieve suspended execution state for a plan
-   * Returns null if plan is not suspended
+   * Chunk all indexed file contents for downstream embedding.
+   * Returns file path + chunk array pairs.
    */
-  getSuspendedState(planId: string): SuspendedExecutionState | null {
-    return this.suspendedStates.get(planId) || null;
+  async getFileChunks(
+    chunkSize = 512,
+    overlap = 64
+  ): Promise<Array<{ path: string; chunks: Array<{ text: string; start: number; end: number }> }>> {
+    const result: Array<{ path: string; chunks: Array<{ text: string; start: number; end: number }> }> = [];
+
+    for (const [relativePath] of this.files) {
+      try {
+        const absolutePath = path.join(this.projectRoot, relativePath);
+        const content = this.fs.readFileSync(absolutePath, 'utf-8');
+        result.push({
+          path: relativePath,
+          chunks: CodebaseIndex.chunkText(content, chunkSize, overlap),
+        });
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    return result;
   }
 
-  /**
-   * Check if a plan is currently suspended
-   */
-  isSuspended(planId: string): boolean {
-    return this.suspendedStates.has(planId);
-  }
-
-  /**
-   * Clear all suspended states
-   */
-  clearAllSuspendedStates(): void {
-    this.suspendedStates.clear();
-  }
 }
 
 export default CodebaseIndex;

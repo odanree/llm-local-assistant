@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ArchitectureValidator, LayerValidationResult } from '../architectureValidator';
+import { ArchitectureValidator, LayerValidationResult } from '../CodeAnalyzer';
 
 describe('Phase 10D: ArchitectureValidator Deep Branch Coverage', () => {
   let validator: ArchitectureValidator;

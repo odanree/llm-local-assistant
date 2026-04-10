@@ -1,0 +1,530 @@
+﻿[
+    {
+        "rank":  1,
+        "description":  "Plan Execution Core",
+        "file":  "executor.test.ts",
+        "count":  233
+    },
+    {
+        "rank":  2,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "executor-validation-consolidated.test.ts",
+        "count":  194
+    },
+    {
+        "rank":  3,
+        "description":  "Plan Execution Core",
+        "file":  "executor-internals.test.ts",
+        "count":  96
+    },
+    {
+        "rank":  4,
+        "description":  "Smart Error Handling \u0026 Recovery",
+        "file":  "smartAutoCorrection-comprehensive.test.ts",
+        "count":  95
+    },
+    {
+        "rank":  5,
+        "description":  "Smart Error Handling \u0026 Recovery",
+        "file":  "smartAutoCorrection.test.ts",
+        "count":  92
+    },
+    {
+        "rank":  6,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "refactoringExecutor-consolidated.test.ts",
+        "count":  81
+    },
+    {
+        "rank":  7,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "smartValidator-extended-consolidated.test.ts",
+        "count":  80
+    },
+    {
+        "rank":  8,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "pathSanitizer-consolidated.test.ts",
+        "count":  80
+    },
+    {
+        "rank":  9,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "architectureValidator-consolidated.test.ts",
+        "count":  79
+    },
+    {
+        "rank":  10,
+        "description":  "",
+        "file":  "retryContext-comprehensive.test.ts",
+        "count":  68
+    },
+    {
+        "rank":  11,
+        "description":  "Plan Execution Core",
+        "file":  "refactoringExecutor-comprehensive.test.ts",
+        "count":  64
+    },
+    {
+        "rank":  12,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "planner-private-methods-consolidated.test.ts",
+        "count":  63
+    },
+    {
+        "rank":  13,
+        "description":  "",
+        "file":  "extension.test.ts",
+        "count":  63
+    },
+    {
+        "rank":  14,
+        "description":  "Plan Generation \u0026 Validation",
+        "file":  "planner-coverage-focus.test.ts",
+        "count":  62
+    },
+    {
+        "rank":  15,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "executor-private-methods-consolidated.test.ts",
+        "count":  60
+    },
+    {
+        "rank":  16,
+        "description":  "",
+        "file":  "handoverSummary.test.ts",
+        "count":  58
+    },
+    {
+        "rank":  17,
+        "description":  "",
+        "file":  "gitClient-comprehensive.test.ts",
+        "count":  58
+    },
+    {
+        "rank":  18,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "jsonSanitizer-consolidated.test.ts",
+        "count":  56
+    },
+    {
+        "rank":  19,
+        "description":  "Smart Error Handling \u0026 Recovery",
+        "file":  "smartValidator-matrix.test.ts",
+        "count":  54
+    },
+    {
+        "rank":  20,
+        "description":  "",
+        "file":  "semanticAnalyzer.test.ts",
+        "count":  52
+    },
+    {
+        "rank":  21,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "smartAutoCorrection-consolidated.test.ts",
+        "count":  51
+    },
+    {
+        "rank":  22,
+        "description":  "",
+        "file":  "refiner-comprehensive.test.ts",
+        "count":  50
+    },
+    {
+        "rank":  23,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "gitClient-consolidated.test.ts",
+        "count":  49
+    },
+    {
+        "rank":  24,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "smartValidator-consolidated.test.ts",
+        "count":  48
+    },
+    {
+        "rank":  25,
+        "description":  "Smart Error Handling \u0026 Recovery",
+        "file":  "smartAutoCorrection-branch-coverage.test.ts",
+        "count":  48
+    },
+    {
+        "rank":  26,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "smartValidator-private-methods-consolidated.test.ts",
+        "count":  47
+    },
+    {
+        "rank":  27,
+        "description":  "Architecture Analysis \u0026 Detection",
+        "file":  "architectureValidator-deep-branch.test.ts",
+        "count":  46
+    },
+    {
+        "rank":  28,
+        "description":  "LLM Client \u0026 Streaming",
+        "file":  "llmClient-branch-coverage.test.ts",
+        "count":  46
+    },
+    {
+        "rank":  29,
+        "description":  "Architecture Analysis \u0026 Detection",
+        "file":  "architectureValidator-branch-coverage.test.ts",
+        "count":  45
+    },
+    {
+        "rank":  30,
+        "description":  "Code Validation \u0026 Pattern Enforcement",
+        "file":  "validation-comprehensive.test.ts",
+        "count":  42
+    },
+    {
+        "rank":  31,
+        "description":  "Architecture Analysis \u0026 Detection",
+        "file":  "architectureValidator-toxic-project.test.ts",
+        "count":  41
+    },
+    {
+        "rank":  32,
+        "description":  "",
+        "file":  "codebaseIndex-branch-coverage.test.ts",
+        "count":  40
+    },
+    {
+        "rank":  33,
+        "description":  "Smart Error Handling \u0026 Recovery",
+        "file":  "smart-auto-correction-extended.test.ts",
+        "count":  39
+    },
+    {
+        "rank":  34,
+        "description":  "",
+        "file":  "gitClient-quick-strike.test.ts",
+        "count":  38
+    },
+    {
+        "rank":  35,
+        "description":  "End-to-End Orchestration Chaos Testing",
+        "file":  "refactoring-executor-chaos.test.ts",
+        "count":  38
+    },
+    {
+        "rank":  36,
+        "description":  "End-to-End Orchestration Chaos Testing",
+        "file":  "refiner-orchestration-chaos.test.ts",
+        "count":  38
+    },
+    {
+        "rank":  37,
+        "description":  "",
+        "file":  "services-consolidation-matrix.test.ts",
+        "count":  37
+    },
+    {
+        "rank":  38,
+        "description":  "End-to-End Orchestration Chaos Testing",
+        "file":  "smartAutoCorrection-chaos.test.ts",
+        "count":  35
+    },
+    {
+        "rank":  39,
+        "description":  "Plan Generation \u0026 Validation",
+        "file":  "planner-internals.test.ts",
+        "count":  35
+    },
+    {
+        "rank":  40,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "layerValidator-consolidated.test.ts",
+        "count":  35
+    },
+    {
+        "rank":  41,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "refactoringValidator-consolidated.test.ts",
+        "count":  34
+    },
+    {
+        "rank":  42,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "architectureRuleValidator-consolidated.test.ts",
+        "count":  31
+    },
+    {
+        "rank":  43,
+        "description":  "",
+        "file":  "DomainAwareAuditor.test.ts",
+        "count":  31
+    },
+    {
+        "rank":  44,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "extractionCandidateFinder-consolidated.test.ts",
+        "count":  31
+    },
+    {
+        "rank":  45,
+        "description":  "Architecture Analysis \u0026 Detection",
+        "file":  "architecturePatterns.test.ts",
+        "count":  30
+    },
+    {
+        "rank":  46,
+        "description":  "Plan Execution Core",
+        "file":  "executorFactory.test.ts",
+        "count":  30
+    },
+    {
+        "rank":  47,
+        "description":  "",
+        "file":  "services-edge-cases.test.ts",
+        "count":  30
+    },
+    {
+        "rank":  48,
+        "description":  "",
+        "file":  "contextBuilder-fault-injection.test.ts",
+        "count":  29
+    },
+    {
+        "rank":  49,
+        "description":  "Plan Execution Core",
+        "file":  "executor.lifecycle.test.ts",
+        "count":  28
+    },
+    {
+        "rank":  50,
+        "description":  "",
+        "file":  "generationModeDetector-fault-injection.test.ts",
+        "count":  28
+    },
+    {
+        "rank":  51,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "planner-validation-consolidated.test.ts",
+        "count":  28
+    },
+    {
+        "rank":  52,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "planner-parsing-consolidated.test.ts",
+        "count":  27
+    },
+    {
+        "rank":  53,
+        "description":  "LLM Client \u0026 Streaming",
+        "file":  "llmClient.test.ts",
+        "count":  27
+    },
+    {
+        "rank":  54,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "integration-workflows-consolidated.test.ts",
+        "count":  26
+    },
+    {
+        "rank":  55,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "executor-integration-consolidated.test.ts",
+        "count":  26
+    },
+    {
+        "rank":  56,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "diffSummarizer-consolidated.test.ts",
+        "count":  26
+    },
+    {
+        "rank":  57,
+        "description":  "Plan Execution Core",
+        "file":  "executor-fault-injection.test.ts",
+        "count":  25
+    },
+    {
+        "rank":  58,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "planner-generation-consolidated.test.ts",
+        "count":  25
+    },
+    {
+        "rank":  59,
+        "description":  "",
+        "file":  "v1.2.0.features.test.ts",
+        "count":  25
+    },
+    {
+        "rank":  60,
+        "description":  "Plan Generation \u0026 Validation",
+        "file":  "planner-llm-workflow.test.ts",
+        "count":  25
+    },
+    {
+        "rank":  61,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "codePatternMatcher-consolidated.test.ts",
+        "count":  24
+    },
+    {
+        "rank":  62,
+        "description":  "End-to-End Orchestration Chaos Testing",
+        "file":  "orchestration-chaos-suite.test.ts",
+        "count":  24
+    },
+    {
+        "rank":  63,
+        "description":  "",
+        "file":  "codebaseIndex-fault-injection.test.ts",
+        "count":  23
+    },
+    {
+        "rank":  64,
+        "description":  "",
+        "file":  "workspaceDetector-fault-injection.test.ts",
+        "count":  23
+    },
+    {
+        "rank":  65,
+        "description":  "",
+        "file":  "refiner-fault-injection.test.ts",
+        "count":  23
+    },
+    {
+        "rank":  66,
+        "description":  "",
+        "file":  "PromptEngine.test.ts",
+        "count":  22
+    },
+    {
+        "rank":  67,
+        "description":  "Smart Error Handling \u0026 Recovery",
+        "file":  "smartValidator-executor-workflow.test.ts",
+        "count":  22
+    },
+    {
+        "rank":  68,
+        "description":  "",
+        "file":  "featureAnalyzer.test.ts",
+        "count":  22
+    },
+    {
+        "rank":  69,
+        "description":  "",
+        "file":  "patternDetector.test.ts",
+        "count":  21
+    },
+    {
+        "rank":  70,
+        "description":  "",
+        "file":  "ValidatorProfiles.test.ts",
+        "count":  20
+    },
+    {
+        "rank":  71,
+        "description":  "",
+        "file":  "semanticValidator.test.ts",
+        "count":  20
+    },
+    {
+        "rank":  72,
+        "description":  "",
+        "file":  "diffGenerator.test.ts",
+        "count":  19
+    },
+    {
+        "rank":  73,
+        "description":  "Code Validation \u0026 Pattern Enforcement",
+        "file":  "dag-validation.test.ts",
+        "count":  18
+    },
+    {
+        "rank":  74,
+        "description":  "Plan Generation \u0026 Validation",
+        "file":  "planner.test.ts",
+        "count":  18
+    },
+    {
+        "rank":  75,
+        "description":  "",
+        "file":  "virtualFileState.test.ts",
+        "count":  17
+    },
+    {
+        "rank":  76,
+        "description":  "Advanced Error Recovery Scenarios",
+        "file":  "executor-advanced-recovery.test.ts",
+        "count":  17
+    },
+    {
+        "rank":  77,
+        "description":  "",
+        "file":  "leanParser-comprehensive.test.ts",
+        "count":  17
+    },
+    {
+        "rank":  78,
+        "description":  "",
+        "file":  "serviceExtractor.test.ts",
+        "count":  17
+    },
+    {
+        "rank":  79,
+        "description":  "Plan Execution Core",
+        "file":  "executor-timeout-rollback.test.ts",
+        "count":  16
+    },
+    {
+        "rank":  80,
+        "description":  "Execution Flow \u0026 Integration",
+        "file":  "planner-dependencies-consolidated.test.ts",
+        "count":  15
+    },
+    {
+        "rank":  81,
+        "description":  "",
+        "file":  "workspaceDetector.test.ts",
+        "count":  14
+    },
+    {
+        "rank":  82,
+        "description":  "Architecture Analysis \u0026 Detection",
+        "file":  "architectureValidator-nested-patterns.test.ts",
+        "count":  14
+    },
+    {
+        "rank":  83,
+        "description":  "",
+        "file":  "state-injection-demo.test.ts",
+        "count":  14
+    },
+    {
+        "rank":  84,
+        "description":  "Plan Generation \u0026 Validation",
+        "file":  "executor-planner-workflow.test.ts",
+        "count":  14
+    },
+    {
+        "rank":  85,
+        "description":  "LLM Client \u0026 Streaming",
+        "file":  "llmClient-sseCorruption.test.ts",
+        "count":  14
+    },
+    {
+        "rank":  86,
+        "description":  "",
+        "file":  "patternRefactoringGenerator.test.ts",
+        "count":  11
+    },
+    {
+        "rank":  87,
+        "description":  "End-to-End Orchestration Chaos Testing",
+        "file":  "executor-chaos-deep-dive.test.ts",
+        "count":  11
+    },
+    {
+        "rank":  88,
+        "description":  "",
+        "file":  "semanticValidator.test.ts",
+        "count":  6
+    }
+]

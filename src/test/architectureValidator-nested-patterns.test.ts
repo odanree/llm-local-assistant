@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ArchitectureValidator } from '../architectureValidator';
+import { ArchitectureValidator } from '../CodeAnalyzer';
 
 describe('Phase 6.4 Wave 3: ArchitectureValidator Nested Patterns', () => {
   let validator: ArchitectureValidator;

@@ -5,11 +5,11 @@ import { IFileSystem } from './providers/IFileSystem';
 import { ICommandRunner } from './providers/ICommandRunner';
 import { FileSystemProvider } from './providers/FileSystemProvider';
 import { CommandRunnerProvider } from './providers/CommandRunnerProvider';
-import SmartAutoCorrection from './smartAutoCorrection';
+import SmartAutoCorrection from './CodeAnalyzer';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
 import CodebaseIndex from './codebaseIndex';
-import { ArchitectureValidator } from './architectureValidator';
+import { ArchitectureValidator } from './CodeAnalyzer';
 import { TaskPlan, PlanStep, StepResult } from './planner';
 import { validateExecutionStep } from './types/executor';
 import { PlanState } from './types/PlanState';
@@ -228,26 +228,6 @@ export class Executor {
     this.paused = false;
     this.cancelled = false;
 
-    // ✅ PHASE 3 SUSPEND/RESUME HOOK: Check for previously suspended execution
-    // If this plan was suspended waiting for user input, we need to resume it
-    if (plan.status === PlanState.SUSPENDED_FOR_PERMISSION && this.codebaseIndex) {
-      const suspendedState = this.codebaseIndex.getSuspendedState(plan.taskId);
-      if (suspendedState) {
-        console.log(`[Executor] Found suspended plan ${plan.taskId} - will resume from step ${suspendedState.stepIndex + 1}`);
-
-        // Detect any file modifications that occurred while suspended
-        const fileModifications = await this.detectFileModifications(suspendedState);
-        if (fileModifications.length > 0) {
-          const msg = `⚠️ Detected ${fileModifications.length} file modification(s) during suspension`;
-          this.config.onMessage?.(msg, 'info');
-          console.log(`[Executor] Modified files: ${fileModifications.join(', ')}`);
-        }
-
-        // Note: Actual resume is handled separately - this is just initialization
-        // The UI will call resume() with user input to continue
-      }
-    }
-
     plan.status = PlanState.EXECUTING;
 
     // CRITICAL: Initialize results Map if not already present
@@ -362,23 +342,6 @@ export class Executor {
 
           result = await this.executeStep(plan, step.stepId, planWorkspaceUri);
 
-          // ✅ PHASE 2 CIRCUIT BREAKER: Check for suspension BEFORE retry logic
-          // If suspended, DON'T treat as failure - just pause and wait for user input
-          const isSuspended = (result as any).suspended === true || (plan.status as any) === PlanState.SUSPENDED_FOR_PERMISSION;
-          if (isSuspended) {
-            console.log(`[Executor] Step ${step.stepId} suspended for user input - pausing execution`);
-            plan.status = PlanState.SUSPENDED_FOR_PERMISSION;
-            this.config.onMessage?.(`⏸️ Step ${step.stepId} waiting for user input...`, 'info');
-            // Return with suspended status (will be handled by calling code)
-            return {
-              success: false, // Not success, but not a failure either
-              completedSteps: succeededSteps,
-              results: plan.results,
-              error: `Execution paused: ${(result as any).promptText || 'Awaiting user input'}`,
-              totalDuration: Date.now() - startTime,
-              ...(isSuspended && { suspended: true }),
-            };
-          }
 
           if (result.success) {
             // Success! Show retry info if retries happened
@@ -2790,9 +2753,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         timeout: this.config.timeout,
       });
 
-      // Flag to track if prompt was detected (Circuit Breaker)
-      let promptDetected = false;
-      let suspendedPromptText = '';
       let output = '';
 
       return new Promise<StepResult>((resolve, reject) => {
@@ -2823,41 +2783,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           // 3. Pass output to UI in real-time (only non-empty)
           this.config.onStepOutput?.(step.stepId || 0, chunk, false);
 
-          // THE CIRCUIT BREAKER: Check for prompts mid-stream
-          // If prompt detected, don't trigger retry - just transition state
-          if (!promptDetected && this.streamingIO) {
-            const detectedPrompt = this.streamingIO.detectPrompt(chunk);
-            if (detectedPrompt) {
-              promptDetected = true;
-              suspendedPromptText = chunk;
-
-              console.log(`[Executor] 🚨 Mid-stream prompt detected: "${chunk.substring(0, 50)}..."`);
-              console.log(`[Executor] Circuit Breaker activated - suspending execution`);
-
-              // Transition to SUSPENDED_FOR_PERMISSION state
-              if (this.plan) {
-                this.plan.status = PlanState.SUSPENDED_FOR_PERMISSION;
-              }
-
-              // Save suspended state to codebaseIndex
-              if (this.codebaseIndex && this.plan) {
-                const suspendedState = {
-                  planId: this.plan.taskId,
-                  stepIndex: this.plan.steps.indexOf(step),
-                  currentStep: step,
-                  remainingSteps: this.plan.steps.slice(
-                    this.plan.steps.indexOf(step) + 1
-                  ),
-                  fileSnapshot: this.captureFileSnapshot(),
-                  context: {
-                    promptText: suspendedPromptText,
-                    suggestedInputs: this.streamingIO?.getSuggestedInputs?.(suspendedPromptText) || [],
-                  },
-                };
-                this.codebaseIndex.setSuspendedState(this.plan.taskId, suspendedState);
-              }
-            }
-          }
         });
 
         // 2. Handle error stream
@@ -2883,24 +2808,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           }
         });
 
-        // 3. Handle process exit - THE KEY FIX
-        // Check if suspended BEFORE treating as failure
+        // 3. Handle process exit
         handle.onExit?.((code: number) => {
-          // If suspended, return suspended status (not failure!)
-          if (promptDetected || this.plan?.status === PlanState.SUSPENDED_FOR_PERMISSION) {
-            console.log(`[Executor] Process paused at prompt - returning SUSPENDED status`);
-            resolve({
-              stepId: step.stepId,
-              success: false, // Technically not "success" but intentionally paused
-              output: output || '(awaiting user input)',
-              duration: Date.now() - startTime,
-              // Add custom property to indicate suspension vs failure
-              ...(promptDetected && { suspended: true, promptText: suspendedPromptText }),
-            });
-            return;
-          }
-
-          // Normal exit handling (not suspended)
           if (code === 0) {
             resolve({
               stepId: step.stepId,
@@ -2928,63 +2837,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       console.error(`[Executor] executeRun error: ${errorMsg}`);
       throw error;
     }
-  }
-
-  /**
-   * Capture current file hashes for integrity verification on resume
-   */
-  private captureFileSnapshot(): Record<string, string> {
-    // TODO: Implement file hash capture
-    // For now, return empty snapshot - will be enhanced in M4 integration
-    return {};
-  }
-
-  /**
-   * ✅ PHASE 3 HELPER: Detect file modifications during suspension
-   * Compares current file state with snapshot from when execution was suspended
-   * @param suspendedState The saved execution state from suspension
-   * @returns Array of file paths that were modified
-   */
-  private async detectFileModifications(suspendedState: any): Promise<string[]> {
-    const modifications: string[] = [];
-
-    if (!suspendedState.fileSnapshots) {
-      return modifications; // No snapshot, can't detect modifications
-    }
-
-    try {
-      // For each file in the snapshot, check if it was modified
-      for (const [filePath, originalHash] of Object.entries(suspendedState.fileSnapshots)) {
-        try {
-          const content = this.fs.readFileSync(filePath);
-          const currentHash = content ? this.simpleHash(content) : '';
-
-          if (currentHash !== originalHash) {
-            modifications.push(filePath);
-          }
-        } catch (err) {
-          // File may have been deleted or moved - count as modification
-          modifications.push(filePath);
-        }
-      }
-    } catch (err) {
-      console.warn(`[Executor] Error detecting file modifications: ${err}`);
-    }
-
-    return modifications;
-  }
-
-  /**
-   * Simple hash function for file comparison
-   */
-  private simpleHash(content: string): string {
-    let hash = 0;
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return hash.toString(16);
   }
 
   /**
@@ -3083,101 +2935,4 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     };
   }
 
-  /**
-   * Resume execution after user provides input to a suspended prompt
-   * @param planId The ID of the plan to resume
-   * @param options Resume options including user input and conflict resolution
-   */
-  async resume(
-    planId: string,
-    options: { userInput: string; conflictResolution?: string }
-  ): Promise<{
-    success: boolean;
-    error?: string;
-    resumedFrom?: number;
-    stepsCompleted?: number;
-    conflictResolution?: string;
-  }> {
-    // Retrieve suspended state
-    const suspendedState = this.codebaseIndex.getSuspendedState(planId);
-    if (!suspendedState) {
-      return {
-        success: false,
-        error: `No suspended plan found with ID: ${planId}`,
-      };
-    }
-
-    try {
-      // Send user input to the suspended process
-      if (this.commandRunner) {
-        const handle = (this.commandRunner as any).lastHandle;
-        if (handle && typeof handle.sendInput === 'function') {
-          handle.sendInput(options.userInput + '\n');
-        }
-      }
-
-      // Execute remaining steps
-      let stepsCompleted = 0;
-      for (const step of suspendedState.remainingSteps || []) {
-        if (this.cancelled) {
-          break;
-        }
-
-        // Execute step (simplified for M3 tests)
-        // In full implementation, would call executeRun(step)
-        stepsCompleted++;
-      }
-
-      // Clear suspended state on successful resume
-      this.codebaseIndex.setSuspendedState(planId, null);
-
-      return {
-        success: true,
-        resumedFrom: suspendedState.stepIndex,
-        stepsCompleted,
-        conflictResolution: options.conflictResolution,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Failed to resume plan: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  }
-
-  /**
-   * Cancel a suspended execution plan
-   * @param planId The ID of the plan to cancel
-   */
-  async cancel(planId: string): Promise<{ cancelled: boolean; error?: string }> {
-    try {
-      // Retrieve suspended state
-      const suspendedState = this.codebaseIndex.getSuspendedState(planId);
-      if (!suspendedState) {
-        return {
-          cancelled: false,
-          error: `No suspended plan found with ID: ${planId}`,
-        };
-      }
-
-      // Kill any running process
-      if (this.commandRunner) {
-        const handle = (this.commandRunner as any).lastHandle;
-        if (handle && typeof handle.kill === 'function') {
-          handle.kill();
-        }
-      }
-
-      // Clear suspended state
-      this.codebaseIndex.setSuspendedState(planId, null);
-      this.cancelled = true;
-
-      return { cancelled: true };
-    } catch (error) {
-      return {
-        cancelled: false,
-        error: `Failed to cancel plan: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  }
 }

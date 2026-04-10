@@ -9,8 +9,6 @@ import CodebaseIndex from './codebaseIndex';
 import { getWebviewContent } from './webviewContent';
 import { ArchitecturePatterns } from './architecturePatterns';
 import { FeatureAnalyzer } from './featureAnalyzer';
-import { ServiceExtractor } from './serviceExtractor';
-import { RefactoringExecutor } from './refactoringExecutor';
 import { PatternDetector } from './patternDetector';
 import { PatternRefactoringGenerator } from './patternRefactoringGenerator';
 import { Refiner } from './refiner';
@@ -19,8 +17,6 @@ import { WorkspaceDetector } from './utils';
 import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
 import { registerDiagnostics } from './diagnostics';
 import * as path from 'path';
-import { registerVoiceCommands, getVoiceSettings } from './commands/voiceCommands';
-import { getTTSService } from './services/ttsService';
 
 let llmClient: LLMClient;
 let executor: Executor;
@@ -29,8 +25,6 @@ let architecturePatterns: ArchitecturePatterns;
 let patternDetector: PatternDetector;
 let patternRefactoringGenerator: PatternRefactoringGenerator;
 let featureAnalyzer: FeatureAnalyzer;
-let serviceExtractor: ServiceExtractor;
-let refactoringExecutor: RefactoringExecutor;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -153,55 +147,6 @@ function getLLMConfig(): LLMConfig {
   };
 }
 
-/**
- * Strip markdown formatting from text for voice narration
- * Removes: bold (**), italic (*_), code (`), links ([]), headers (#), etc.
- */
-function stripMarkdownForTTS(text: string): string {
-  let clean = text;
-  
-  // Remove bold: **text** → text
-  clean = clean.replace(/\*\*([^*]+)\*\*/g, '$1');
-  clean = clean.replace(/__([^_]+)__/g, '$1');
-  
-  // Remove italic: *text* → text, _text_ → text
-  clean = clean.replace(/\*([^*]+)\*/g, '$1');
-  clean = clean.replace(/_([^_]+)_/g, '$1');
-  
-  // Remove strikethrough: ~~text~~ → text
-  clean = clean.replace(/~~([^~]+)~~/g, '$1');
-  
-  // Remove code blocks (multiline)
-  clean = clean.replace(/```[\s\S]*?```/g, '');
-  
-  // Remove inline code: `code` → code
-  clean = clean.replace(/`([^`]+)`/g, '$1');
-  
-  // Remove links: [text](url) → text
-  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-  
-  // Remove headers: ### Header → Header
-  clean = clean.replace(/^#+\s+/gm, '');
-  
-  // Remove horizontal rules
-  clean = clean.replace(/^---+$/gm, '');
-  clean = clean.replace(/^\*\*\*+$/gm, '');
-  clean = clean.replace(/^___+$/gm, '');
-  
-  // Remove list markers
-  clean = clean.replace(/^\s*[-*+]\s+/gm, '');
-  clean = clean.replace(/^\s*\d+\.\s+/gm, '');
-  
-  // Remove blockquotes
-  clean = clean.replace(/^\s*>\s+/gm, '');
-  
-  // Clean up extra whitespace
-  clean = clean.replace(/\n\n+/g, '\n');
-  clean = clean.replace(/\s+/g, ' ');
-  clean = clean.trim();
-  
-  return clean;
-}
 
 /**
  * Helper to post message to chat and store in history
@@ -255,26 +200,22 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**LLM Local Assistant - v2.13.0** 💎 Diamond Tier\n` +
-          `⚡ **Latest Achievement:** 81.61% code coverage with 3,637 comprehensive tests\n` +
-          `📊 Quality metrics: 102 test files, 74.22% branch coverage, ~61s test execution\n\n` +
+        text: `**LLM Local Assistant - v2.13.1**\n` +
+          `📊 89 test files, 3,251 tests passing\n\n` +
           `📋 **Planning & Execution:**\n` +
           `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
           `- /approve → Acknowledge and approve the plan\n` +
           `- /reject → Discard the current plan\n\n` +
-          `🔊 **Code Explanation with Voice Narration:**\n` +
-          `- /explain <path> → Generate detailed code explanation WITH automatic voice narration\n` +
-          `- Audio player embedded in chat with play/pause controls\n` +
-          `- Beautiful markdown-formatted code insights\n\n` +
+          `📝 **Code Explanation:**\n` +
+          `- /explain <path> → Generate detailed code explanation with markdown formatting\n\n` +
           `🔍 **Codebase Context & Analysis:**\n` +
           `- /context show structure → Show project file organization\n` +
           `- /context show patterns → Show detected code patterns\n` +
           `- /context show dependencies → Show file dependencies\n` +
           `- /context find similar <file> → Find similar files\n\n` +
-          `🔧 **Advanced Refactoring & Architecture:**\n` +
+          `🔧 **Refactoring & Architecture:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n` +
-          `- /extract-service <hook> <name> → Extract business logic to service\n` +
           `- /design-system <feature> → Generate full feature architecture with validation\n` +
           `- /rate-architecture → Score codebase quality (0-10)\n` +
           `- /suggest-patterns → Show pattern improvements\n\n` +
@@ -285,12 +226,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `📚 **Git Integration:**\n` +
           `- /git-commit-msg → Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] → Review code changes with AI\n\n` +
-          `🧪 **Diagnostics & Quality Assurance:**\n` +
-          `- /check-model → Verify LLM server connection\n` +
-          `- Run: npm test -- --coverage (for test coverage reports)\n` +
-          `- Quality gate enforced at 81.61% coverage threshold\n\n` +
+          `🧪 **Diagnostics:**\n` +
+          `- /check-model → Verify LLM server connection\n\n` +
           `📖 **Documentation:**\n` +
-          `- See /docs/MAINTENANCE.md for deployment, troubleshooting, and production operations`,
+          `- See docs/MAINTENANCE.md for deployment and troubleshooting`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
@@ -1330,37 +1269,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   report += `**Suggested Extractions:**\n${
                     semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
                   }\n\n`;
-                  
-                  // Add command line options for each extraction
-                  report += `**Quick Extract Commands:**\n`;
-                  semanticAnalysis.suggestedExtractions.forEach((extraction, idx) => {
-                    // Parse extraction suggestion to get service name
-                    // e.g., "Extract API logic to useApi hook" -> "useApi"
-                    // Try to find camelCase words (useXxx) or PascalCase (Xxx)
-                    let serviceName = '';
-                    
-                    // First try: match 'to <serviceName>' pattern
-                    const toMatch = extraction.match(/\bto\s+(\w+)/i);
-                    if (toMatch && toMatch[1]) {
-                      serviceName = toMatch[1];
-                    }
-                    
-                    // Second try: match camelCase starting with 'use' (useApi, useFilter)
-                    if (!serviceName) {
-                      const useMatch = extraction.match(/\b(use\w+)\b/i);
-                      if (useMatch && useMatch[1]) {
-                        serviceName = useMatch[1];
-                      }
-                    }
-                    
-                    // Fallback
-                    if (!serviceName) {
-                      serviceName = `service${idx + 1}`;
-                    }
-                    
-                    report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
-                  });
-                  report += `\n`;
                 } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
                   // File is a service - show architectural guidance instead of extraction suggestions
                   report += `** Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
@@ -2006,74 +1914,11 @@ ${fileContent}
                   }
                 }
 
-                // Generate voice narration if enabled (v2.6.0 feature)
-                const voiceConfig = vscode.workspace.getConfiguration('llm-assistant.voice');
-                const voiceEnabled = voiceConfig.get<boolean>('enabled', false);
-                const voiceLanguage = voiceConfig.get<string>('language', 'en');
-                
-                let audioBase64: string | undefined;
-                let audioMetadata: any;
-
-                if (voiceEnabled && explanation) {
-                  try {
-                    chatPanel?.webview.postMessage({
-                      command: 'status',
-                      text: '🎧 Synthesizing voice narration... (may take a moment)',
-                      type: 'info',
-                    });
-
-                    const ttsService = getTTSService({
-                      extensionPath: context.extensionPath,
-                      language: voiceLanguage,
-                    });
-                    
-                    // Synthesize explanation to audio with timeout
-                    let audioResult: any = null;
-                    try {
-                      // Strip markdown from explanation for cleaner narration
-                      const cleanExplanation = stripMarkdownForTTS(explanation);
-                      console.log(`[Extension] TTS input: ${cleanExplanation.length} chars (was ${explanation.length})`);
-                      
-                      const synthesizePromise = ttsService.synthesize(cleanExplanation, voiceLanguage);
-                      
-                      // Wrap in timeout (60 seconds max for TTS processing)
-                      const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Voice synthesis timeout (60s exceeded)')), 60000)
-                      );
-                      
-                      audioResult = await Promise.race([synthesizePromise, timeoutPromise]);
-                    } catch (synthesisErr) {
-                      console.warn(`[Extension] Voice synthesis error: ${synthesisErr instanceof Error ? synthesisErr.message : String(synthesisErr)}`);
-                      chatPanel?.webview.postMessage({
-                        command: 'status',
-                        text: `⚠️ Voice narration skipped: ${synthesisErr instanceof Error ? synthesisErr.message : 'Unknown error'}`,
-                        type: 'info',
-                      });
-                      audioResult = null;
-                    }
-                    
-                    if (audioResult && audioResult.audio) {
-                      // Convert buffer to base64 for webview
-                      audioBase64 = audioResult.audio.toString('base64');
-                      audioMetadata = audioResult.metadata || {};
-                      
-                      console.log(`[Extension] Voice narration ready (${audioBase64.length} chars, ${audioMetadata.duration || '?'}s)`);
-                    }
-                  } catch (voiceErr) {
-                    // Voice narration is optional - don't fail the entire explain command
-                    const errorMsg = voiceErr instanceof Error ? voiceErr.message : String(voiceErr);
-                    console.warn(`[Extension] Voice narration error: ${errorMsg}`);
-                  }
-                }
-
-                // Post explanation message WITH audio if available
                 postChatMessage({
                   command: 'addMessage',
                   text: `## Code Explanation: ${relPath}\n\n${explanation}`,
                   isMarkdown: true,
                   isExplanation: true,
-                  audioBase64: audioBase64,
-                  audioMetadata: audioMetadata,
                   success: true,
                 });
               } catch (err) {
@@ -2808,18 +2653,6 @@ export async function activate(context: vscode.ExtensionContext) {
   llmClient = new LLMClient(config);
   console.log('[Extension] ✅ LLM Client initialized');
 
-  // Register voice narration commands and initialize TTS service (v2.6.0 feature)
-  registerVoiceCommands(context);
-  console.log('[Extension] ✅ Voice commands registered');
-
-  // Initialize TTS service (lazy loading)
-  getTTSService({
-    extensionPath: context.extensionPath,
-    language: getVoiceSettings().language,
-    maxChunkLength: getVoiceSettings().maxChunkLength,
-  });
-  console.log('[Extension] ✅ TTS service initialized');
-
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();
   console.log(`[Extension] Workspace: ${wsFolder?.fsPath || 'none'}`);
@@ -2928,8 +2761,6 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(workspaceFolderListener);
   featureAnalyzer = new FeatureAnalyzer(architecturePatterns, llmClient);
-  serviceExtractor = new ServiceExtractor(featureAnalyzer, architecturePatterns, llmClient);
-  refactoringExecutor = new RefactoringExecutor(llmClient, serviceExtractor);
 
   // Register commands
   const openChatCommand = vscode.commands.registerCommand('llm-assistant.open-chat', () => {

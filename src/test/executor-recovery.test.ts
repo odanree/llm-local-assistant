@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Executor } from '../executor';
-import SmartAutoCorrection from '../smartAutoCorrection';
+import SmartAutoCorrection from '../CodeAnalyzer';
 
 // Mock the vscode module
 vi.mock('vscode', () => ({

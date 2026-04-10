@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SmartAutoCorrection } from '../smartAutoCorrection';
+import { SmartAutoCorrection } from '../CodeAnalyzer';
 
 describe('SmartAutoCorrection Extended Coverage', () => {
   describe('Circular Import Detection', () => {

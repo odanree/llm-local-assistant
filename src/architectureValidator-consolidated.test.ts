@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ArchitectureValidator, LayerValidationResult, LayerViolation } from './architectureValidator';
+import { ArchitectureValidator, LayerValidationResult, LayerViolation } from './CodeAnalyzer';
 
 // ============================================================
 // Mock Factory
