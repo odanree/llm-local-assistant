@@ -688,7 +688,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Find all namespace.method() patterns
                   const namespaceUsages = new Set<string>();
                   generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
-                    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e'];
+                    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e', 'err', 'error', 'ev'];
                     if (!globalKeywords.includes(namespace)) {
                       namespaceUsages.add(namespace);
                     }

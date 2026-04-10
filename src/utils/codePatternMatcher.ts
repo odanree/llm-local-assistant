@@ -389,10 +389,24 @@ export function findImportAndSyntaxIssuesPure(
     return '';
   });
 
+  // Array destructuring: const [x, y] = ...
+  code.replace(/(?:const|let|var)\s+\[\s*([^\]]+)\s*\]/g, (_, vars) => {
+    vars.split(',').forEach((v: string) => {
+      const cleaned = v.trim().split(/[:=\s]/)[0].trim();
+      if (cleaned) { localVariables.add(cleaned); }
+    });
+    return '';
+  });
+
   // Find namespace usages
   const namespaceUsages = new Set<string>();
   code.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
-    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super'];
+    const globalKeywords = [
+      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date',
+      'window', 'document', 'this', 'super',
+      // Common event/error parameter names
+      'event', 'e', 'err', 'error', 'ev',
+    ];
     const isSingleLetter = namespace.length === 1;
     const isLocal = localVariables.has(namespace);
 
