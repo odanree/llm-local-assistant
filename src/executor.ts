@@ -1130,6 +1130,21 @@ export class Executor {
     if (action === 'run' && step.command) {
       const command = step.command.toLowerCase();
 
+      // Pre-check: skip bare `npm install` / `yarn install` if node_modules already exists
+      const isBareInstall = /^(?:npm\s+install|yarn\s+install|pnpm\s+install)\s*$/i.test(step.command.trim());
+      if (isBareInstall) {
+        try {
+          const nmUri = vscode.Uri.joinPath(this.config.workspace, 'node_modules');
+          await vscode.workspace.fs.stat(nmUri);
+          // node_modules exists — no need to reinstall
+          console.log(`[Executor] Skipping bare install — node_modules already exists`);
+          this.config.onMessage?.(`⏭ Skipped install — node_modules already exists`, 'info');
+          return null;
+        } catch {
+          // node_modules doesn't exist — proceed with the install
+        }
+      }
+
       // Pre-check: skip npm/yarn/pnpm install for packages already in package.json
       const installMatch = step.command.match(/^(?:npm\s+install|yarn\s+add|pnpm\s+add)\s+(.+)/i);
       if (installMatch) {
