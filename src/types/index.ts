@@ -7,9 +7,7 @@
 // Executor contract types
 export * from './executor';
 
-// v2.12.0: Streaming I/O types
+// Streaming I/O types
 export * from './PlanState';
 export * from './ProcessHandle';
-export * from './SuspendedExecutionState';
 export * from './StreamingIO';
-export * from './ExecutorExtensions';

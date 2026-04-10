@@ -42,22 +42,12 @@ export interface PatternRegistry {
   };
 }
 
-export interface SuspendedExecutionState {
-  planId: string;
-  stepIndex: number;
-  currentStep: any;
-  remainingSteps: any[];
-  fileSnapshot: Record<string, string>;
-  context: any;
-}
-
 export class CodebaseIndex {
   private files: Map<string, FileEntry> = new Map();
   private dependencies: DependencyGraph = {};
   private patterns: PatternRegistry = {};
   private projectRoot: string = '';
   private fs: IFileSystem;
-  private suspendedStates: Map<string, SuspendedExecutionState> = new Map();
 
   constructor(projectRoot?: string, fs?: IFileSystem) {
     this.projectRoot = projectRoot || process.cwd();
@@ -544,39 +534,6 @@ export class CodebaseIndex {
     }
   }
 
-  /**
-   * Save suspended execution state for a plan
-   * Used when execution pauses waiting for user input
-   */
-  setSuspendedState(planId: string, state: SuspendedExecutionState | null): void {
-    if (state === null) {
-      this.suspendedStates.delete(planId);
-    } else {
-      this.suspendedStates.set(planId, state);
-    }
-  }
-
-  /**
-   * Retrieve suspended execution state for a plan
-   * Returns null if plan is not suspended
-   */
-  getSuspendedState(planId: string): SuspendedExecutionState | null {
-    return this.suspendedStates.get(planId) || null;
-  }
-
-  /**
-   * Check if a plan is currently suspended
-   */
-  isSuspended(planId: string): boolean {
-    return this.suspendedStates.has(planId);
-  }
-
-  /**
-   * Clear all suspended states
-   */
-  clearAllSuspendedStates(): void {
-    this.suspendedStates.clear();
-  }
 }
 
 export default CodebaseIndex;
