@@ -365,7 +365,7 @@ BENEFIT OF DECOUPLING:
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires command. Executes shell commands.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead.
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -381,9 +381,11 @@ DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
 
 MANUAL VERIFICATION (IMPORTANT):
 - If a step requires human intervention (e.g., "test in browser", "verify visually"):
-  * Do NOT create a step with action='read' or 'manual'
+  * Do NOT create a step with action='read', 'run', or 'manual'
   * Instead, put instructions in the plan summary
   * CRITICAL: Do NOT use 'manual' as action or in path field
+  * CRITICAL: Do NOT use 'run' with a description instead of a real shell command
+  * Example WRONG: Step 4: run, Command: "Manual verification: Test Counter in browser"
   * Example WRONG: Step 4: read, Path: manual verification
   * Example RIGHT: Add to summary: "Manual verification: Test button in browser"
 
@@ -418,7 +420,7 @@ ${contextSection}
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires command. Executes shell commands.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead.
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -434,9 +436,11 @@ DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
 
 MANUAL VERIFICATION (IMPORTANT):
 - If a step requires human intervention (e.g., "test in browser", "verify visually"):
-  * Do NOT create a step with action='read' or 'manual'
+  * Do NOT create a step with action='read', 'run', or 'manual'
   * Instead, put instructions in the plan summary
   * CRITICAL: Do NOT use 'manual' as action or in path field
+  * CRITICAL: Do NOT use 'run' with a description instead of a real shell command
+  * Example WRONG: Step 4: run, Command: "Manual verification: Test Counter in browser"
   * Example WRONG: Step 4: read, Path: manual verification
   * Example RIGHT: Add to summary: "Manual verification: Test button in browser"
 
