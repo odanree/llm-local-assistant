@@ -1,12 +1,10 @@
 /**
- * Explain Command with Optional Voice Narration
- * 
- * Generates code explanation with optional audio narration
+ * Explain Command
+ *
+ * Generates a code explanation and renders it in a webview panel.
  */
 
 import * as vscode from 'vscode';
-import { getTTSService } from '../services/ttsService';
-import { TTSSettings, DEFAULT_TTS_SETTINGS } from '../types/tts';
 
 /**
  * Handle /explain command
@@ -16,14 +14,9 @@ export async function handleExplain(
   code: string,
   context?: { file?: string; range?: vscode.Range }
 ): Promise<void> {
-  const config = vscode.workspace.getConfiguration('llm-assistant');
-  const ttsSettings = getTTSSettings(config);
-
   try {
-    // Generate explanation from LLM
     const explanation = await generateExplanation(llm, code, context);
 
-    // Show explanation in webview
     const panel = vscode.window.createWebviewPanel(
       'llm-explanation',
       'Code Explanation',
@@ -31,23 +24,7 @@ export async function handleExplain(
       { enableScripts: true }
     );
 
-    // If TTS is enabled, synthesize audio
-    let audioData: { buffer: Buffer; metadata: any } | null = null;
-    if (ttsSettings.enabled) {
-      try {
-        audioData = await synthesizeExplanation(explanation, ttsSettings);
-      } catch (error) {
-        // Log but don't fail - explanation still available as text
-        console.warn(`Voice narration failed: ${String(error)}`);
-      }
-    }
-
-    // Render webview with explanation ± audio
-    panel.webview.html = renderExplanationPanel(
-      explanation,
-      audioData,
-      ttsSettings
-    );
+    panel.webview.html = renderExplanationPanel(explanation);
   } catch (error) {
     vscode.window.showErrorMessage(`Explanation failed: ${String(error)}`);
   }
@@ -73,82 +50,14 @@ Focus on:
 3. Important patterns
 4. Potential issues`;
 
-  // Call LLM provider (implementation depends on provider)
   const explanation = await llm.generate(prompt);
   return explanation;
 }
 
 /**
- * Synthesize explanation to audio
+ * Render webview panel with explanation
  */
-async function synthesizeExplanation(
-  explanation: string,
-  settings: TTSSettings
-): Promise<{ buffer: Buffer; metadata: any }> {
-  const ttsService = getTTSService({
-    language: settings.language,
-    maxChunkLength: settings.maxChunkLength,
-  });
-
-  // Check if TTS is available (Python + model installed)
-  const available = await ttsService.isAvailable();
-  if (!available) {
-    throw new Error('Voice narration not set up. Run /setup-voice to enable.');
-  }
-
-  // Synthesize text
-  const result = await ttsService.synthesize(explanation, settings.language);
-  return { buffer: result.audio, metadata: result.metadata };
-}
-
-/**
- * Get TTS settings from VS Code config
- */
-function getTTSSettings(config: vscode.WorkspaceConfiguration): TTSSettings {
-  return {
-    enabled: config.get('voice.enabled', DEFAULT_TTS_SETTINGS.enabled),
-    speed: config.get('voice.speed', DEFAULT_TTS_SETTINGS.speed),
-    language: config.get('voice.language', DEFAULT_TTS_SETTINGS.language) as
-      | 'en'
-      | 'zh',
-    maxChunkLength: config.get(
-      'voice.maxChunkLength',
-      DEFAULT_TTS_SETTINGS.maxChunkLength
-    ),
-    cacheEnabled: config.get(
-      'voice.cacheEnabled',
-      DEFAULT_TTS_SETTINGS.cacheEnabled
-    ),
-  };
-}
-
-/**
- * Render webview panel with explanation + audio player
- */
-function renderExplanationPanel(
-  explanation: string,
-  audioData: { buffer: Buffer; metadata: any } | null,
-  settings: TTSSettings
-): string {
-  const audioHtml = audioData
-    ? `
-    <div class="audio-player">
-      <h3>🎧 Narration</h3>
-      <audio controls style="width: 100%;">
-        <source 
-          src="data:audio/wav;base64,${audioData.buffer.toString('base64')}"
-          type="audio/wav"
-        />
-        Your browser does not support audio playback.
-      </audio>
-      <div class="audio-info">
-        Duration: ${audioData.metadata.duration.toFixed(1)}s | 
-        Sample Rate: ${audioData.metadata.sample_rate} Hz
-      </div>
-    </div>
-    `
-    : '';
-
+function renderExplanationPanel(explanation: string): string {
   return `
     <!DOCTYPE html>
     <html>
@@ -180,35 +89,16 @@ function renderExplanationPanel(
           margin: 12px 0;
           border-radius: 4px;
         }
-        .audio-player {
-          background-color: var(--vscode-textBlockQuote-background);
-          padding: 16px;
-          border-radius: 4px;
-          margin: 16px 0;
-        }
-        .audio-info {
-          font-size: 12px;
-          color: var(--vscode-descriptionForeground);
-          margin-top: 8px;
-        }
-        audio {
-          border-radius: 4px;
-        }
       </style>
     </head>
     <body>
       <h2>📝 Code Explanation</h2>
-      
-      ${audioHtml}
-      
       <div class="explanation">
         <h3>Explanation</h3>
         <div>${escapeHtml(explanation).replace(/\n/g, '<br>')}</div>
       </div>
-      
       <div style="font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 32px;">
-        Generated with LLM Local Assistant v2.6
-        ${audioData ? ' • Voice narration powered by ChatTTS' : ''}
+        Generated with LLM Local Assistant
       </div>
     </body>
     </html>

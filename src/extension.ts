@@ -19,8 +19,6 @@ import { WorkspaceDetector } from './utils';
 import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
 import { registerDiagnostics } from './diagnostics';
 import * as path from 'path';
-import { registerVoiceCommands, getVoiceSettings } from './commands/voiceCommands';
-import { getTTSService } from './services/ttsService';
 
 let llmClient: LLMClient;
 let executor: Executor;
@@ -153,55 +151,6 @@ function getLLMConfig(): LLMConfig {
   };
 }
 
-/**
- * Strip markdown formatting from text for voice narration
- * Removes: bold (**), italic (*_), code (`), links ([]), headers (#), etc.
- */
-function stripMarkdownForTTS(text: string): string {
-  let clean = text;
-  
-  // Remove bold: **text** → text
-  clean = clean.replace(/\*\*([^*]+)\*\*/g, '$1');
-  clean = clean.replace(/__([^_]+)__/g, '$1');
-  
-  // Remove italic: *text* → text, _text_ → text
-  clean = clean.replace(/\*([^*]+)\*/g, '$1');
-  clean = clean.replace(/_([^_]+)_/g, '$1');
-  
-  // Remove strikethrough: ~~text~~ → text
-  clean = clean.replace(/~~([^~]+)~~/g, '$1');
-  
-  // Remove code blocks (multiline)
-  clean = clean.replace(/```[\s\S]*?```/g, '');
-  
-  // Remove inline code: `code` → code
-  clean = clean.replace(/`([^`]+)`/g, '$1');
-  
-  // Remove links: [text](url) → text
-  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-  
-  // Remove headers: ### Header → Header
-  clean = clean.replace(/^#+\s+/gm, '');
-  
-  // Remove horizontal rules
-  clean = clean.replace(/^---+$/gm, '');
-  clean = clean.replace(/^\*\*\*+$/gm, '');
-  clean = clean.replace(/^___+$/gm, '');
-  
-  // Remove list markers
-  clean = clean.replace(/^\s*[-*+]\s+/gm, '');
-  clean = clean.replace(/^\s*\d+\.\s+/gm, '');
-  
-  // Remove blockquotes
-  clean = clean.replace(/^\s*>\s+/gm, '');
-  
-  // Clean up extra whitespace
-  clean = clean.replace(/\n\n+/g, '\n');
-  clean = clean.replace(/\s+/g, ' ');
-  clean = clean.trim();
-  
-  return clean;
-}
 
 /**
  * Helper to post message to chat and store in history
@@ -263,10 +212,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /execute → Execute the current plan step-by-step\n` +
           `- /approve → Acknowledge and approve the plan\n` +
           `- /reject → Discard the current plan\n\n` +
-          `🔊 **Code Explanation with Voice Narration:**\n` +
-          `- /explain <path> → Generate detailed code explanation WITH automatic voice narration\n` +
-          `- Audio player embedded in chat with play/pause controls\n` +
-          `- Beautiful markdown-formatted code insights\n\n` +
+          `📝 **Code Explanation:**\n` +
+          `- /explain <path> → Generate detailed code explanation with markdown formatting\n\n` +
           `🔍 **Codebase Context & Analysis:**\n` +
           `- /context show structure → Show project file organization\n` +
           `- /context show patterns → Show detected code patterns\n` +
@@ -2006,74 +1953,11 @@ ${fileContent}
                   }
                 }
 
-                // Generate voice narration if enabled (v2.6.0 feature)
-                const voiceConfig = vscode.workspace.getConfiguration('llm-assistant.voice');
-                const voiceEnabled = voiceConfig.get<boolean>('enabled', false);
-                const voiceLanguage = voiceConfig.get<string>('language', 'en');
-                
-                let audioBase64: string | undefined;
-                let audioMetadata: any;
-
-                if (voiceEnabled && explanation) {
-                  try {
-                    chatPanel?.webview.postMessage({
-                      command: 'status',
-                      text: '🎧 Synthesizing voice narration... (may take a moment)',
-                      type: 'info',
-                    });
-
-                    const ttsService = getTTSService({
-                      extensionPath: context.extensionPath,
-                      language: voiceLanguage,
-                    });
-                    
-                    // Synthesize explanation to audio with timeout
-                    let audioResult: any = null;
-                    try {
-                      // Strip markdown from explanation for cleaner narration
-                      const cleanExplanation = stripMarkdownForTTS(explanation);
-                      console.log(`[Extension] TTS input: ${cleanExplanation.length} chars (was ${explanation.length})`);
-                      
-                      const synthesizePromise = ttsService.synthesize(cleanExplanation, voiceLanguage);
-                      
-                      // Wrap in timeout (60 seconds max for TTS processing)
-                      const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Voice synthesis timeout (60s exceeded)')), 60000)
-                      );
-                      
-                      audioResult = await Promise.race([synthesizePromise, timeoutPromise]);
-                    } catch (synthesisErr) {
-                      console.warn(`[Extension] Voice synthesis error: ${synthesisErr instanceof Error ? synthesisErr.message : String(synthesisErr)}`);
-                      chatPanel?.webview.postMessage({
-                        command: 'status',
-                        text: `⚠️ Voice narration skipped: ${synthesisErr instanceof Error ? synthesisErr.message : 'Unknown error'}`,
-                        type: 'info',
-                      });
-                      audioResult = null;
-                    }
-                    
-                    if (audioResult && audioResult.audio) {
-                      // Convert buffer to base64 for webview
-                      audioBase64 = audioResult.audio.toString('base64');
-                      audioMetadata = audioResult.metadata || {};
-                      
-                      console.log(`[Extension] Voice narration ready (${audioBase64.length} chars, ${audioMetadata.duration || '?'}s)`);
-                    }
-                  } catch (voiceErr) {
-                    // Voice narration is optional - don't fail the entire explain command
-                    const errorMsg = voiceErr instanceof Error ? voiceErr.message : String(voiceErr);
-                    console.warn(`[Extension] Voice narration error: ${errorMsg}`);
-                  }
-                }
-
-                // Post explanation message WITH audio if available
                 postChatMessage({
                   command: 'addMessage',
                   text: `## Code Explanation: ${relPath}\n\n${explanation}`,
                   isMarkdown: true,
                   isExplanation: true,
-                  audioBase64: audioBase64,
-                  audioMetadata: audioMetadata,
                   success: true,
                 });
               } catch (err) {
@@ -2807,18 +2691,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
   llmClient = new LLMClient(config);
   console.log('[Extension] ✅ LLM Client initialized');
-
-  // Register voice narration commands and initialize TTS service (v2.6.0 feature)
-  registerVoiceCommands(context);
-  console.log('[Extension] ✅ Voice commands registered');
-
-  // Initialize TTS service (lazy loading)
-  getTTSService({
-    extensionPath: context.extensionPath,
-    language: getVoiceSettings().language,
-    maxChunkLength: getVoiceSettings().maxChunkLength,
-  });
-  console.log('[Extension] ✅ TTS service initialized');
 
   // Get workspace folder for codebase awareness
   wsFolder = getActiveWorkspace();

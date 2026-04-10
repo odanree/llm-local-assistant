@@ -241,41 +241,6 @@ export function getWebviewContent(): string {
             div.textContent = msg.text;
           }
           
-          // Add embedded audio player if audio data is provided (from /explain with voice)
-          if (msg.audioBase64 && msg.audioMetadata) {
-            console.log('[Webview] Received audio base64 length:', msg.audioBase64.length);
-            console.log('[Webview] Audio metadata:', msg.audioMetadata);
-            
-            const audioContainer = document.createElement('div');
-            audioContainer.style.marginTop = '12px';
-            audioContainer.style.padding = '12px';
-            audioContainer.style.backgroundColor = 'rgba(0, 102, 204, 0.1)';
-            audioContainer.style.borderRadius = '4px';
-            audioContainer.style.borderLeft = '3px solid #0066cc';
-            
-            const audioLabel = document.createElement('div');
-            audioLabel.style.fontSize = '12px';
-            audioLabel.style.fontWeight = '500';
-            audioLabel.style.marginBottom = '8px';
-            audioLabel.textContent = '🎧 Voice Narration';
-            audioContainer.appendChild(audioLabel);
-            
-            const audio = document.createElement('audio');
-            audio.controls = true;
-            audio.style.width = '100%';
-            audio.src = 'data:audio/mpeg;base64,' + msg.audioBase64;
-            audioContainer.appendChild(audio);
-            
-            const audioInfo = document.createElement('div');
-            audioInfo.style.fontSize = '11px';
-            audioInfo.style.color = '#666';
-            audioInfo.style.marginTop = '6px';
-            const duration = msg.audioMetadata.duration || 0;
-            audioInfo.textContent = duration > 0 ? 'Duration: ' + duration.toFixed(1) + 's' : 'Synthesized with edge-tts';
-            audioContainer.appendChild(audioInfo);
-            
-            div.appendChild(audioContainer);
-          }
         }
         
         // Add buttons if options are provided
