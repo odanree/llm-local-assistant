@@ -1129,6 +1129,43 @@ export class Executor {
     // Pattern 2: Run command ambiguity - ask for confirmation on various command types
     if (action === 'run' && step.command) {
       const command = step.command.toLowerCase();
+
+      // Pre-check: skip npm/yarn/pnpm install for packages already in package.json
+      const installMatch = step.command.match(/^(?:npm\s+install|yarn\s+add|pnpm\s+add)\s+(.+)/i);
+      if (installMatch) {
+        const requestedPkgs = installMatch[1]
+          .split(/\s+/)
+          .filter(p => p && !p.startsWith('-'))  // strip flags like --save-dev
+          .map(p => p.replace(/@[^@]+$/, ''));    // strip version specifiers like pkg@1.0.0
+        try {
+          const pkgJsonUri = vscode.Uri.joinPath(this.config.workspace, 'package.json');
+          const raw = await vscode.workspace.fs.readFile(pkgJsonUri);
+          const pkgJson = JSON.parse(new TextDecoder().decode(raw)) as {
+            dependencies?: Record<string, string>;
+            devDependencies?: Record<string, string>;
+          };
+          const installed = new Set([
+            ...Object.keys(pkgJson.dependencies ?? {}),
+            ...Object.keys(pkgJson.devDependencies ?? {}),
+          ]);
+          const alreadyInstalled = requestedPkgs.filter(p => installed.has(p));
+          const notInstalled = requestedPkgs.filter(p => !installed.has(p));
+          if (notInstalled.length === 0) {
+            console.log(`[Executor] Skipping install — all packages already in package.json: ${alreadyInstalled.join(', ')}`);
+            this.config.onMessage?.(`⏭ Skipped install — already in package.json: ${alreadyInstalled.join(', ')}`, 'info');
+            return null; // signals "skip this step" to the caller
+          }
+          if (alreadyInstalled.length > 0) {
+            console.log(`[Executor] Partial skip — already installed: ${alreadyInstalled.join(', ')}; will install: ${notInstalled.join(', ')}`);
+            // Rewrite the command to only install the missing packages
+            const pm = step.command.match(/^(npm\s+install|yarn\s+add|pnpm\s+add)/i)?.[1] ?? 'npm install';
+            const flags = installMatch[1].split(/\s+/).filter(p => p.startsWith('-')).join(' ');
+            step = { ...step, command: `${pm} ${notInstalled.join(' ')}${flags ? ' ' + flags : ''}` };
+          }
+        } catch {
+          // Can't read package.json — proceed normally
+        }
+      }
       
       // Patterns that warrant user confirmation (potentially long-running or risky)
       const confirmationPatterns = [
