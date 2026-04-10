@@ -1248,6 +1248,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 let ragSection = '';
                 if (codebaseIndex) {
                   const similar = await codebaseIndex.findSimilarByPath(filepath, 4);
+                  console.log(`[RAG] findSimilarByPath matched ${similar.length} file(s): ${similar.map(f => f.path).join(', ') || 'none'}`);
                   const ctx = codebaseIndex.getMetadataContext(similar);
                   if (ctx) {
                     ragSection = `\n\nRelated files in this codebase:\n${ctx}\n`;
