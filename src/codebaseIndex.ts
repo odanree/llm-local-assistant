@@ -1,7 +1,4 @@
 import * as path from 'path';
-import * as t from '@babel/types';
-import { parse } from '@babel/parser';
-import traverse from '@babel/traverse';
 import { IFileSystem } from './providers/IFileSystem';
 import { FileSystemProvider } from './providers/FileSystemProvider';
 
@@ -248,32 +245,30 @@ export class CodebaseIndex {
       const content = this.fs.readFileSync(filePath, 'utf-8');
       const relativePath = path.relative(this.projectRoot, filePath);
 
-      const ast = parse(content, {
-        sourceType: 'module',
-        plugins: ['typescript', 'jsx'],
-      });
-
       const imports: string[] = [];
       const exports: string[] = [];
-      const purpose = this.determinePurpose(filePath, ast);
 
-      traverse(ast, {
-        ImportDeclaration(nodePath) {
-          const source = nodePath.node.source.value;
-          if (!source.startsWith('.')) {
-            // External import (react, zod, etc.)
-            imports.push(source);
-          }
-        },
-        ExportNamedDeclaration(nodePath) {
-          if (t.isIdentifier(nodePath.node.declaration?.id)) {
-            exports.push(nodePath.node.declaration.id.name);
-          }
-        },
-        ExportDefaultDeclaration(nodePath) {
-          exports.push('default');
-        },
-      });
+      // Extract external imports via regex (avoids heavy babel dependency)
+      const importRe = /^import\s+.*?\s+from\s+['"]([^'"]+)['"]/gm;
+      let m: RegExpExecArray | null;
+      while ((m = importRe.exec(content)) !== null) {
+        if (!m[1].startsWith('.')) { imports.push(m[1]); }
+      }
+
+      // Extract named exports
+      const namedExportRe = /^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)/gm;
+      while ((m = namedExportRe.exec(content)) !== null) { exports.push(m[1]); }
+      // export { foo, bar as baz }
+      const reExportRe = /^export\s+\{([^}]+)\}/gm;
+      while ((m = reExportRe.exec(content)) !== null) {
+        m[1].split(',').forEach(name => {
+          const alias = name.trim().split(/\s+as\s+/).pop()?.trim();
+          if (alias) { exports.push(alias); }
+        });
+      }
+      if (/^export\s+default\b/m.test(content)) { exports.push('default'); }
+
+      const purpose = this.determinePurpose(filePath);
 
       const fileEntry: FileEntry = {
         path: relativePath,
@@ -295,7 +290,7 @@ export class CodebaseIndex {
   /**
    * Determine file purpose from path and content
    */
-  private determinePurpose(filePath: string, ast: t.File): string {
+  private determinePurpose(filePath: string): string {
     const fileName = path.basename(filePath).toLowerCase();
     const dirName = path.dirname(filePath).toLowerCase();
 
@@ -565,31 +560,28 @@ export class CodebaseIndex {
   addFile(filePath: string, content: string): void {
     try {
       const relativePath = path.relative(this.projectRoot, filePath);
-      const ast = parse(content, {
-        sourceType: 'module',
-        plugins: ['typescript', 'jsx'],
-      });
-
       const imports: string[] = [];
       const exports: string[] = [];
-      traverse(ast, {
-        ImportDeclaration(nodePath) {
-          imports.push(nodePath.node.source.value);
-        },
-        ExportNamedDeclaration(nodePath) {
-          if (t.isIdentifier(nodePath.node.declaration?.id)) {
-            exports.push((nodePath.node.declaration as any).id.name);
-          }
-        },
-        ExportDefaultDeclaration() {
-          exports.push('default');
-        },
-      });
+
+      const importRe2 = /^import\s+.*?\s+from\s+['"]([^'"]+)['"]/gm;
+      let m2: RegExpExecArray | null;
+      while ((m2 = importRe2.exec(content)) !== null) { imports.push(m2[1]); }
+
+      const namedExportRe2 = /^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)/gm;
+      while ((m2 = namedExportRe2.exec(content)) !== null) { exports.push(m2[1]); }
+      const reExportRe2 = /^export\s+\{([^}]+)\}/gm;
+      while ((m2 = reExportRe2.exec(content)) !== null) {
+        m2[1].split(',').forEach(name => {
+          const alias = name.trim().split(/\s+as\s+/).pop()?.trim();
+          if (alias) { exports.push(alias); }
+        });
+      }
+      if (/^export\s+default\b/m.test(content)) { exports.push('default'); }
 
       const fileEntry: FileEntry = {
         path: relativePath,
         name: path.basename(filePath),
-        purpose: this.determinePurpose(filePath, ast),
+        purpose: this.determinePurpose(filePath),
         imports,
         exports,
         dependencies: [],

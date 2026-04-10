@@ -2,7 +2,7 @@
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
   "description": "Local LLM code generation, refactoring, and explanation",
-  "version": "2.13.1",
+  "version": "2.14.0",
   "publisher": "odanree",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -131,7 +131,7 @@
     "coverage": "vitest run --coverage",
     "lint": "eslint src",
     "format": "prettier --write src/**/*.ts",
-    "package": "vsce package"
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.0",
@@ -142,6 +142,7 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vitest/coverage-v8": "^4.0.18",
+    "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.27.3",
     "eslint": "^8.0.0",
     "happy-dom": "^20.6.1",
@@ -149,8 +150,5 @@
     "typescript": "^5.0.0",
     "vitest": "^4.0.18"
   },
-  "dependencies": {
-    "marked": "^17.0.2",
-    "typescript-eslint": "^8.55.0"
-  }
+  "dependencies": {}
 }

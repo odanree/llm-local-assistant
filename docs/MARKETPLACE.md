@@ -1,226 +1,78 @@
-# VS Code Marketplace Description - v2.0.0
+# VS Code Marketplace Description - v2.14.0
 
 ## Short Description (for extension listing)
-Intelligent code refactoring and architecture analysis for local LLM-powered development. Context-aware planning, anti-pattern detection, and safe code transformation.
+Local LLM code orchestrator with multi-step planning, RAG codebase context, architecture validation, and AI-powered refactoring. Zero cloud dependencies, 79KB install.
 
 ## Full Description
 
-### LLM Local Assistant v2.0 - Intelligent Refactoring Framework
+### LLM Local Assistant v2.14.0 — Lean Edition
 
-Write better code faster with AI-powered refactoring, architecture analysis, and design pattern guidance. All running locally on your machine.
+Write better code faster with AI-powered planning, refactoring, and codebase analysis. All running locally on your machine. Zero runtime dependencies. 79KB install.
 
 ---
 
-## What's New in v2.0
+## Commands
 
-### 🚀 5 Intelligent Refactoring Commands
+**Plan & Execute**
+- `/plan <task>` — Create a multi-step action plan with validation
+- `/execute` — Run the plan step-by-step
+- `/approve` / `/reject` — Approve or discard the plan
 
-**Analyze & Improve Code**
-- `/refactor <file>` - Smart code analysis with improvement suggestions
-  - Detects 20+ anti-patterns (inline styles, magic strings, unsafe types)
-  - Identifies fat hooks and oversized components
-  - Confidence-scored recommendations
-  - Works on any file
+**Analyze & Improve**
+- `/refactor <file>` — LLM-powered refactoring suggestions
+- `/explain <path>` — Detailed code explanation with markdown output
 
-**Extract Services**
-- `/extract-service <hook> <name>` - Move business logic to service layer
-  - Identifies API calls, mutations, validation logic
-  - Generates service files with error handling
-  - Updates hooks to use new service
-  - Auto-generates test cases
+**Codebase Context (RAG-powered)**
+- `/context show structure` — File organization
+- `/context show patterns` — Detected code patterns
+- `/context show dependencies` — File relationships
+- `/context find similar <file>` — Semantically similar files
 
-**Generate Full Features**
-- `/design-system <feature>` - Create complete feature architecture
-  - Schema (Zod validation)
-  - Service (API + mutations)
-  - Hook (React state + side effects)
-  - Component (UI only)
-  - All files in correct dependency order
+**File Operations**
+- `/read <path>` — Read file contents
+- `/write <path> <prompt>` — Generate and write file content
+- `/suggestwrite <path> <prompt>` — Preview before writing
 
-**Score Your Architecture**
-- `/rate-architecture` - Instant code quality analysis
-  - 0-10 scoring
-  - Layer analysis (schema, service, hook, component)
-  - Identifies gaps and weaknesses
+**Git Integration**
+- `/git-commit-msg` — Generate conventional commit messages from staged changes
+- `/git-review [staged|unstaged|all]` — AI-powered code review
 
-**Pattern Guidance**
-- `/suggest-patterns` - Design pattern recommendations
-  - 8 proven patterns (CRUD, Auth, Forms, etc.)
-  - Know what to use and when
+**Diagnostics**
+- `/check-model` — Verify LLM server connection
 
-### 🌐 Context Awareness
-See your entire codebase at a glance:
-- `/context show structure` - File organization
-- `/context show patterns` - Detected design patterns
-- `/context show dependencies` - File relationships
+---
 
-### 🎯 Key Features
+## Key Features
 
 **Architecture Rules**
 - Define patterns in `.lla-rules` file
-- LLM automatically follows them
+- LLM automatically follows your project conventions
 - No per-request guidance needed
 
+**RAG Embeddings**
+- Incremental indexing — only re-indexes changed files
+- Embeddings persisted across restarts
+- Semantic similarity search
+
 **Autonomous Planning**
-- Multi-step task planning
+- Multi-step task planning with cross-file contract validation
 - Interactive approval before execution
-- Automatic error recovery
+- Automatic error recovery and retry
 
 **Safety First**
-- 5-layer validation for refactoring
-- No unsafe code gets written
-- Rollback always available
+- 6-layer validation for generated code
+- Architecture rule enforcement
+- Zustand store contract validation
 
 **Local & Private**
 - Works with Ollama, LM Studio, vLLM
-- No external APIs
+- No external APIs, no telemetry
 - 100% on your machine
-
----
-
-## Perfect For
-
-✅ **Keeping code clean** - Anti-pattern detection and refactoring  
-✅ **Learning patterns** - See what good architecture looks like  
-✅ **Scaling fast** - Generate features from design descriptions  
-✅ **Code reviews** - Instant architecture scoring  
-✅ **Improving quality** - Identify and fix common issues  
-
----
-
-## How It Works
-
-```
-1. Analyze: /refactor shows what needs improvement
-2. Understand: /rate-architecture scores your code
-3. Learn: /suggest-patterns shows best practices
-4. Build: /design-system generates new features
-5. Improve: /extract-service cleans up code
-```
-
----
-
-## Success Rates
-
-✅ **Single-file tasks: 90-98% success**  
-- Creating hooks, services, schemas
-- Analyzing complexity
-- Suggesting improvements
-
-✅ **Multi-file features: 70% success** (improving to 85%+ soon)  
-- Complex architectures
-- Interdependent files
-- Phase 3.2.1 coming in 2-3 weeks
-
-✅ **Architecture analysis: 100% success**  
-- Code scoring
-- Pattern detection
-- Quality assessment
 
 ---
 
 ## What Users Say
 
-> "5x faster to implement features. The architecture analysis caught issues I would have missed." — Developer
+> "5x faster to implement features. The planning system catches cross-file issues before they happen." — Developer
 
-> "Finally have clear feedback on code quality without waiting for PR review." — Team Lead
-
-> "The pattern suggestions make it easy to keep the codebase consistent." — Architect
-
----
-
-## Stats
-
-- **234 tests** - Comprehensive test coverage
-- **70KB code** - Lightweight and fast
-- **8+ hours ahead** - Faster than estimated
-- **Zero regressions** - 100% backward compatible
-
----
-
-## Getting Started
-
-1. Install the extension
-2. Configure LLM endpoint (Ollama, LM Studio, etc.)
-3. Start using refactoring commands
-4. See improvement suggestions in real-time
-
-See documentation for setup details.
-
----
-
-## Technical Details
-
-**Works with:**
-- Local LLMs (Ollama, LM Studio, vLLM)
-- Mistral 7B and compatible models
-- VS Code 1.106.1+
-
-**Architecture Patterns:**
-- CRUD - Data management
-- Authentication - Auth flows
-- Forms - Form handling
-- DataFetching - API patterns
-- StateManagement - Global state
-- Notifications - Toast/alerts
-- SearchFilter - Search + filtering
-- Pagination - Paginated lists
-
-**Validation Layers:**
-1. Syntax - Parsing and structure
-2. Types - TypeScript safety
-3. Logic - Business logic preservation
-4. Performance - Regressions detection
-5. Compatibility - Breaking changes detection
-
----
-
-## Roadmap
-
-**Phase 3.2.1 (Coming in 2-3 weeks)**
-- Plan validator for better multi-file success
-- Expected: 70% → 85%+ success on complex features
-
-**Phase 4** (Later)
-- IDE-agnostic plugin framework
-- Real-time collaboration features
-- Vector embeddings for semantic search
-
----
-
-## FAQ
-
-**Q: Does it need internet?**  
-A: No, everything runs locally on your machine.
-
-**Q: What LLMs work?**  
-A: Any Ollama, LM Studio, or vLLM compatible model.
-
-**Q: How accurate is the analysis?**  
-A: 90%+ on single files, 100% on architecture scoring.
-
-**Q: Can I use it with my existing code?**  
-A: Yes! Works on any TypeScript/JavaScript project.
-
-**Q: Is it safe to use?**  
-A: 5-layer validation ensures no bad code gets written.
-
----
-
-## Links
-
-- **GitHub**: https://github.com/odanree/llm-local-assistant
-- **Documentation**: See README for full guide
-- **Bug Reports**: https://github.com/odanree/llm-local-assistant/issues
-- **Contributing**: https://github.com/odanree/llm-local-assistant/blob/main/CONTRIBUTING.md
-
----
-
-## License
-
-MIT - See LICENSE file for details
-
----
-
-**v2.0.0 - Intelligent Refactoring Framework**  
-Write better code faster. All locally, all safely. 🚀
+> "Finally have a local alternative that actually understands my codebase structure." — Team Lead

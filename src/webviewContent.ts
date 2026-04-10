@@ -57,12 +57,13 @@ export function getWebviewContent(): string {
       '/approve',
       '/reject',
       '/refactor',
-      '/extract-service',
-      '/rate-architecture',
-      '/suggest-patterns',
       '/context',
       '/check-model',
       '/read',
+      '/write',
+      '/suggestwrite',
+      '/git-commit-msg',
+      '/git-review',
     ];
     function flushTokenBuffer() {
       if (tokenBuffer) {

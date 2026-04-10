@@ -5,11 +5,6 @@
  */
 
 export {
-  SemanticValidator,
-  SemanticValidationError,
-} from '../semanticValidator';
-
-export {
   ValidatorProfile,
   VALIDATOR_PROFILES,
   getApplicableProfiles,
