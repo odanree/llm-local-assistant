@@ -369,7 +369,7 @@ BENEFIT OF DECOUPLING:
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -424,7 +424,7 @@ ${contextSection}
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
