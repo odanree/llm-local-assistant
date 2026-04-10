@@ -200,9 +200,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**LLM Local Assistant - v2.13.0** 💎 Diamond Tier\n` +
-          `⚡ **Latest Achievement:** 81.61% code coverage with 3,637 comprehensive tests\n` +
-          `📊 Quality metrics: 102 test files, 74.22% branch coverage, ~61s test execution\n\n` +
+        text: `**LLM Local Assistant - v2.13.1**\n` +
+          `📊 89 test files, 3,251 tests passing\n\n` +
           `📋 **Planning & Execution:**\n` +
           `- /plan <task> → Create a multi-step action plan with validation\n` +
           `- /execute → Execute the current plan step-by-step\n` +
@@ -215,9 +214,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /context show patterns → Show detected code patterns\n` +
           `- /context show dependencies → Show file dependencies\n` +
           `- /context find similar <file> → Find similar files\n\n` +
-          `🔧 **Advanced Refactoring & Architecture:**\n` +
+          `🔧 **Refactoring & Architecture:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n` +
-          `- /extract-service <hook> <name> → Extract business logic to service\n` +
           `- /design-system <feature> → Generate full feature architecture with validation\n` +
           `- /rate-architecture → Score codebase quality (0-10)\n` +
           `- /suggest-patterns → Show pattern improvements\n\n` +
@@ -228,12 +226,10 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `📚 **Git Integration:**\n` +
           `- /git-commit-msg → Generate commit message from staged changes\n` +
           `- /git-review [staged|unstaged|all] → Review code changes with AI\n\n` +
-          `🧪 **Diagnostics & Quality Assurance:**\n` +
-          `- /check-model → Verify LLM server connection\n` +
-          `- Run: npm test -- --coverage (for test coverage reports)\n` +
-          `- Quality gate enforced at 81.61% coverage threshold\n\n` +
+          `🧪 **Diagnostics:**\n` +
+          `- /check-model → Verify LLM server connection\n\n` +
           `📖 **Documentation:**\n` +
-          `- See /docs/MAINTENANCE.md for deployment, troubleshooting, and production operations`,
+          `- See docs/MAINTENANCE.md for deployment and troubleshooting`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
@@ -1273,37 +1269,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   report += `**Suggested Extractions:**\n${
                     semanticAnalysis.suggestedExtractions.map(s => `- ${s}`).join('\n')
                   }\n\n`;
-                  
-                  // Add command line options for each extraction
-                  report += `**Quick Extract Commands:**\n`;
-                  semanticAnalysis.suggestedExtractions.forEach((extraction, idx) => {
-                    // Parse extraction suggestion to get service name
-                    // e.g., "Extract API logic to useApi hook" -> "useApi"
-                    // Try to find camelCase words (useXxx) or PascalCase (Xxx)
-                    let serviceName = '';
-                    
-                    // First try: match 'to <serviceName>' pattern
-                    const toMatch = extraction.match(/\bto\s+(\w+)/i);
-                    if (toMatch && toMatch[1]) {
-                      serviceName = toMatch[1];
-                    }
-                    
-                    // Second try: match camelCase starting with 'use' (useApi, useFilter)
-                    if (!serviceName) {
-                      const useMatch = extraction.match(/\b(use\w+)\b/i);
-                      if (useMatch && useMatch[1]) {
-                        serviceName = useMatch[1];
-                      }
-                    }
-                    
-                    // Fallback
-                    if (!serviceName) {
-                      serviceName = `service${idx + 1}`;
-                    }
-                    
-                    report += `\`/extract-service ${filepath} ${serviceName}\`\n`;
-                  });
-                  report += `\n`;
                 } else if (isAlreadyService && semanticAnalysis.suggestedExtractions.length > 0) {
                   // File is a service - show architectural guidance instead of extraction suggestions
                   report += `** Architectural Note:**\nThis file is already a service layer (in \`src/services/\`). Further extraction is not recommended as it may create circular dependencies or duplicate abstractions.\n\n`;
