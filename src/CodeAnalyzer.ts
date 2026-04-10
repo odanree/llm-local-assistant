@@ -499,6 +499,11 @@ export class ArchitectureValidator {
         const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
         let resolvedPath = imp.source;
 
+        // Skip npm packages — they don't start with . or / and live in node_modules
+        if (!resolvedPath.startsWith('.') && !resolvedPath.startsWith('/')) {
+          continue;
+        }
+
         // Handle different path formats
         if (resolvedPath.startsWith('.')) {
           // ✅ Relative paths: ../utils/cn, ./helpers
