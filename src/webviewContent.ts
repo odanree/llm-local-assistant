@@ -257,7 +257,7 @@ export function getWebviewContent(): string {
               // Create approval button (Execute/Reject/WaitRAG/SkipRAG)
               const btn = document.createElement('button');
               btn.className = 'question-btn';
-              const labelMap: Record<string, string> = {
+              const labelMap = {
                 Execute: '▶ Execute Plan',
                 Reject: '✕ Reject Plan',
                 WaitRAG: '⏳ Wait for RAG Index',
