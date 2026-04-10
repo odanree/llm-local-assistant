@@ -685,11 +685,43 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     return '';
                   });
                   
+                  // Collect locally defined names so we don't flag them as missing imports
+                  const localNames = new Set<string>();
+                  // Arrow function params: (email, password) =>
+                  generatedContent.replace(/\(([^)]*)\)\s*=>/g, (_: string, params: string) => {
+                    params.split(',').forEach((p: string) => {
+                      const name = p.trim().split(/[:\s=]/)[0].trim();
+                      if (name) { localNames.add(name); }
+                    });
+                    return '';
+                  });
+                  // Simple declarations: const email =
+                  generatedContent.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_: string, name: string) => {
+                    localNames.add(name.trim());
+                    return '';
+                  });
+                  // Array destructuring: const [email, setEmail] =
+                  generatedContent.replace(/(?:const|let|var)\s+\[\s*([^\]]+)\s*\]/g, (_: string, vars: string) => {
+                    vars.split(',').forEach((v: string) => {
+                      const name = v.trim().split(/[:=\s]/)[0].trim();
+                      if (name) { localNames.add(name); }
+                    });
+                    return '';
+                  });
+                  // Object destructuring: const { email, password } =
+                  generatedContent.replace(/(?:const|let|var)\s+\{\s*([^}]+)\s*\}/g, (_: string, vars: string) => {
+                    vars.split(',').forEach((v: string) => {
+                      const name = v.trim().split(/[:=\s]/)[0].trim();
+                      if (name) { localNames.add(name); }
+                    });
+                    return '';
+                  });
+
                   // Find all namespace.method() patterns
                   const namespaceUsages = new Set<string>();
-                  generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+                  generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
                     const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e', 'err', 'error', 'ev'];
-                    if (!globalKeywords.includes(namespace)) {
+                    if (!globalKeywords.includes(namespace) && !localNames.has(namespace)) {
                       namespaceUsages.add(namespace);
                     }
                     return '';
