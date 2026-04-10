@@ -251,13 +251,19 @@ export function getWebviewContent(): string {
           
           msg.options.forEach((option) => {
             // Check if this is a special execute/reject button for plan approval
-            const isApprovalButton = ['Execute', 'Reject'].includes(option);
-            
+            const isApprovalButton = ['Execute', 'Reject', 'WaitRAG', 'SkipRAG'].includes(option);
+
             if (isApprovalButton) {
-              // Create approval button (Execute/Reject from plan)
+              // Create approval button (Execute/Reject/WaitRAG/SkipRAG)
               const btn = document.createElement('button');
               btn.className = 'question-btn';
-              btn.textContent = option === 'Execute' ? '▶ Execute Plan' : '✕ Reject Plan';
+              const labelMap: Record<string, string> = {
+                Execute: '▶ Execute Plan',
+                Reject: '✕ Reject Plan',
+                WaitRAG: '⏳ Wait for RAG Index',
+                SkipRAG: '▶ Skip RAG',
+              };
+              btn.textContent = labelMap[option] ?? option;
               btn.style.marginRight = '8px';
               btn.onclick = () => {
                 console.log('[Webview] User clicked:', option);

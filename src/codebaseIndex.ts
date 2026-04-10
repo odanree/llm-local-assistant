@@ -662,6 +662,29 @@ export class CodebaseIndex {
   /** Path to the on-disk embeddings cache file. */
   private cacheFilePath?: string;
 
+  // ---- readiness tracking ----
+  private _isReady = false;
+  private _readyResolve!: () => void;
+  /** Resolves once scan() + embedAll() have both completed. */
+  readonly readyPromise: Promise<void> = new Promise<void>(resolve => { this._readyResolve = resolve; });
+
+  /** True once embeddings are fully built and ready for semantic search. */
+  get isReady(): boolean { return this._isReady; }
+
+  /** True if any files have been indexed (from cache or live scan). Token-overlap RAG works at this point. */
+  get hasIndex(): boolean { return this.files.size > 0; }
+
+  /** Called by extension.ts after scan + embedAll complete. Resolves readyPromise. */
+  markReady(): void {
+    this._isReady = true;
+    this._readyResolve?.();
+  }
+
+  /** Awaitable: resolves when the index is fully ready (scan + embedAll done). */
+  async waitForReady(): Promise<void> {
+    return this.readyPromise;
+  }
+
   setEmbeddingClient(client: EmbeddingClient): void {
     this.embeddingClient = client;
   }
