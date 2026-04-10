@@ -208,7 +208,6 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /context find similar <file> → Find similar files\n\n` +
           `🔧 **Refactoring & Architecture:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n` +
-          `- /design-system <feature> → Generate full feature architecture with validation\n` +
           `\n` +
           `📝 **File Operations:**\n` +
           `- /read <path> → Read a file from workspace\n` +
@@ -714,9 +713,9 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     return '';
                   });
 
-                  // Find all namespace.method() patterns
+                  // Find all namespace.method() patterns — (?<!\.) excludes chained access like foo.bar.baz()
                   const namespaceUsages = new Set<string>();
-                  generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
+                  generatedContent.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
                     const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e', 'err', 'error', 'ev'];
                     if (!globalKeywords.includes(namespace) && !localNames.has(namespace)) {
                       namespaceUsages.add(namespace);
@@ -1259,78 +1258,6 @@ Keep the response focused and practical.`;
             }
 
             
-            // Check for /design-system command
-            const designMatch = text.match(/^\/design-system\s+(.+)$/);
-            
-            // QUICK FIX: Simple direct LLM call (bypasses complex Refiner validation loop)
-            if (designMatch) {
-              const featureRequest = designMatch[1];
-
-              postChatMessage({
-                command: 'addMessage',
-                text: `🏗️ Generating system design for: "${featureRequest}"\n\n→ Calling language model...`,
-                type: 'info',
-              });
-
-              try {
-                const systemPrompt = `You are an expert software architect. Design concise, actionable system architectures organized by layers.`;
-
-                const designPrompt = `Design a concise system architecture for: "${featureRequest}"
-
-CRITICAL: Use this EXACT format using layer structure:
-
-🏗️ **Architecture: [Feature Name]**
-
-[Schema Layer]
-- File.ts (brief description of what it defines)
-- File2.ts (fields or key types)
-
-[Service Layer]
-- service.ts (methods/responsibilities)
-- service2.ts (methods/responsibilities)
-
-[Hook Layer]
-- useCustom.ts (what it manages)
-- useCustom2.ts (what it manages)
-
-[Component Layer]
-- Component.tsx (purpose)
-- Component2.tsx (purpose)
-
-[Validation]
-✨ All layers defined
-✨ File contracts validated
-✨ Import paths calculated
-✨ Ready for generation
-
-Next: Use /write to create files
-
-KEEP IT CONCISE - Max 40 lines total. List only essential files per layer. No code examples, just file names and brief descriptions.`;
-
-                const response = await llmClient.sendMessage(systemPrompt + '\n\n' + designPrompt);
-
-                if (response.success && response.message) {
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `✨ System design generated successfully!\n\n${response.message}`,
-                    success: true,
-                  });
-                } else {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Failed to generate design: ${response.error || 'Unknown error'}`,
-                    success: false,
-                  });
-                }
-              } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Error generating design: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
-              }
-              return;
-            }
             const readMatch = text.match(/\/read\s+(\S+)/);
 
             // AGENT MODE: /read <path>

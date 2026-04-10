@@ -399,9 +399,9 @@ export function findImportAndSyntaxIssuesPure(
     return '';
   });
 
-  // Find namespace usages
+  // Find namespace usages — (?<!\.) prevents false positives from chained access like foo.bar.baz()
   const namespaceUsages = new Set<string>();
-  code.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+  code.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
     const globalKeywords = [
       'console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date',
       'window', 'document', 'this', 'super',

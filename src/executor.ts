@@ -25,23 +25,34 @@ import { validateArchitectureRulePure } from './utils/architectureRuleValidator'
  * Executes plans step-by-step with state management and error handling
  */
 
-export interface ExecutorConfig {
+/** Core dependencies the Executor needs to do its job */
+export interface ExecutorDependencies {
   extension: vscode.ExtensionContext;
   llmClient: LLMClient;
-  gitClient?: GitClient;
   workspace: vscode.Uri;
-  codebaseIndex?: CodebaseIndex; // Phase 3.3.2: Track files being created
-  embeddingClient?: EmbeddingClient; // RAG: resolves symbol → file path
-  maxRetries?: number;      // Default: 2
-  timeout?: number;         // Default: 30000ms
+  gitClient?: GitClient;
+  codebaseIndex?: CodebaseIndex;
+  embeddingClient?: EmbeddingClient;
+  fs?: IFileSystem;
+  commandRunner?: ICommandRunner;
+}
+
+/** Event callbacks — all optional; Executor works without any of them */
+export interface ExecutorCallbacks {
   onProgress?: (step: number, total: number, description: string) => void;
   onMessage?: (message: string, type: 'info' | 'error') => void;
-  onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;  // Stream step output
-  onQuestion?: (question: string, options: string[], timeoutMs?: number) => Promise<string | undefined>;  // Ask clarification question (Priority 2.2)
-  // Phase 3A: Dependency Injection for side effects
-  fs?: IFileSystem;         // Default: FileSystemProvider (production)
-  commandRunner?: ICommandRunner;  // Default: CommandRunnerProvider (production)
+  onStepOutput?: (stepId: number, output: string, isStart: boolean) => void;
+  onQuestion?: (question: string, options: string[], timeoutMs?: number) => Promise<string | undefined>;
 }
+
+/** Tuning knobs with sensible defaults */
+export interface ExecutorOptions {
+  maxRetries?: number;  // Default: 2
+  timeout?: number;     // Default: 30000ms
+}
+
+/** Full config = all three concerns combined (backwards-compatible) */
+export interface ExecutorConfig extends ExecutorDependencies, ExecutorCallbacks, ExecutorOptions {}
 
 export interface ExecutionResult {
   success: boolean;
