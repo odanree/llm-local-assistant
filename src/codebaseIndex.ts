@@ -534,6 +534,80 @@ export class CodebaseIndex {
     }
   }
 
+  // ============================================================
+  // RAG Bridge: flat metadata + chunking (prep for vector store)
+  // ============================================================
+
+  /**
+   * Return all indexed files as a flat metadata array.
+   * Swap `embeddings` in later when a local embedding model is available.
+   */
+  getMetadataJSON(): Array<{
+    path: string;
+    name: string;
+    purpose: string;
+    imports: string[];
+    exports: string[];
+    patterns: string[];
+    lastUpdated: number;
+  }> {
+    return Array.from(this.files.values()).map(f => ({
+      path: f.path,
+      name: f.name,
+      purpose: f.purpose,
+      imports: f.imports,
+      exports: f.exports,
+      patterns: f.patterns,
+      lastUpdated: f.lastUpdated,
+    }));
+  }
+
+  /**
+   * Split text into overlapping chunks suitable for embedding.
+   * Default: 512-char chunks with 64-char overlap.
+   */
+  static chunkText(
+    text: string,
+    chunkSize = 512,
+    overlap = 64
+  ): Array<{ text: string; start: number; end: number }> {
+    const chunks: Array<{ text: string; start: number; end: number }> = [];
+    let start = 0;
+    while (start < text.length) {
+      const end = Math.min(start + chunkSize, text.length);
+      chunks.push({ text: text.slice(start, end), start, end });
+      start += chunkSize - overlap;
+      if (start >= text.length) break;
+    }
+    return chunks;
+  }
+
+  /**
+   * Chunk all indexed file contents for downstream embedding.
+   * Returns file path + chunk array pairs.
+   */
+  async getFileChunks(
+    chunkSize = 512,
+    overlap = 64
+  ): Promise<Array<{ path: string; chunks: Array<{ text: string; start: number; end: number }> }>> {
+    const result: Array<{ path: string; chunks: Array<{ text: string; start: number; end: number }> }> = [];
+
+    for (const [relativePath] of this.files) {
+      try {
+        const absolutePath = path.join(this.projectRoot, relativePath);
+        const content = this.fs.readFileSync(absolutePath, 'utf-8');
+        result.push({
+          path: relativePath,
+          chunks: CodebaseIndex.chunkText(content, chunkSize, overlap),
+        });
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    return result;
+  }
+
 }
 
 export default CodebaseIndex;
