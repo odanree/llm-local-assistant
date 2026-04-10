@@ -385,9 +385,9 @@ export function validateCommonPatternsPure(content: string, filePath: string): s
     return '';
   });
 
-  // Find namespace usages
+  // Find namespace usages — (?<!\.) prevents false positives from chained access like foo.bar.baz()
   const namespaceUsages = new Set<string>();
-  content.replace(/(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
+  content.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
     const globalKeywords = [
       'console',
       'Math',

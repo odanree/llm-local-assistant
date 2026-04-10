@@ -713,9 +713,9 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     return '';
                   });
 
-                  // Find all namespace.method() patterns
+                  // Find all namespace.method() patterns — (?<!\.) excludes chained access like foo.bar.baz()
                   const namespaceUsages = new Set<string>();
-                  generatedContent.replace(/(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
+                  generatedContent.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
                     const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e', 'err', 'error', 'ev'];
                     if (!globalKeywords.includes(namespace) && !localNames.has(namespace)) {
                       namespaceUsages.add(namespace);
