@@ -1758,10 +1758,15 @@ export class SmartAutoCorrection {
           ?? error.match(/Missing import:\s+(\w+)/);
         if (m) {
           const name = m[1];
-          const source = (await resolver(name)) ?? this.inferImportSource(fixed, name);
+          const ragSource = await resolver(name);
+          const dictSource = ragSource === null ? this.inferImportSource(fixed, name) : null;
+          const source = ragSource ?? dictSource;
           if (source) {
             fixed = this.addImport(fixed, name, source);
-            console.log(`[SmartAutoCorrection] Added import for ${name} from '${source}'`);
+            const via = ragSource ? '🔍 RAG index' : '📖 hardcoded dict';
+            console.log(`[SmartAutoCorrection] Added import for '${name}' from '${source}' (via ${via})`);
+          } else {
+            console.warn(`[SmartAutoCorrection] ❌ Could not resolve import for '${name}' — neither RAG nor dict matched`);
           }
         }
         continue;
