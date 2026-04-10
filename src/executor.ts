@@ -2210,7 +2210,7 @@ For any React component using hooks, you MUST include these imports at the top:
 
 - If using useState: \`import { useState } from 'react';\`
 - If using React.FC or React.ReactNode: \`import React from 'react';\`
-- If using form events: \`import { FormEvent } from 'react';\`
+- If using form events: \`import { FormEvent, FormEventHandler } from 'react';\`
 - If using components from external libs: \`import { Library } from 'library-name';\`
 
 CRITICAL: Every hook you use MUST be imported. The validator will reject any hook that isn't imported.
@@ -2250,9 +2250,9 @@ Validator will REJECT if any pattern is missing.
 ## REQUIRED: Form Component Patterns (7 Mandatory)
 
 1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
-2. **Event Typing** - Use FormEvent types:
+2. **Event Typing** - Use FormEventHandler for submit, FormEvent for inputs:
    - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
-   - Form: const handleSubmit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); ... }
+   - Form: const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => { event.preventDefault(); ... }
 3. **Consolidator Pattern** - Single handleChange function that updates state: setFormData(prev => ({ ...prev, [name]: value }))
 4. **Submit Handler** - Use onSubmit on <form> element: <form onSubmit={handleSubmit}>
 5. **Error Tracking** - Use local error state: const [errors, setErrors] = useState<Record<string, string>>({})

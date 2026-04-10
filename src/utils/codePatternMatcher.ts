@@ -352,8 +352,8 @@ export function findImportAndSyntaxIssuesPure(
     return '';
   });
 
-  // Default imports: import React from 'react'
-  code.replace(/import\s+(\w+)\s+from/g, (_, name) => {
+  // Default imports: import React from 'react' OR import React, { ... } from 'react'
+  code.replace(/import\s+(\w+)\s*(?:,\s*\{[^}]*\})?\s+from/g, (_, name) => {
     importedNamespaces.add(name.trim());
     return '';
   });
