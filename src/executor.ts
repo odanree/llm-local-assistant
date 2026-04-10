@@ -1309,6 +1309,26 @@ export class Executor {
 
     // VALIDATOR GATE 2: Contract Enforcement (Danh's Fix B)
     // Catch "Manual" hallucinations and missing path errors BEFORE execution
+
+    // Pre-check: read/write/delete with no path whose description looks like manual verification
+    // → auto-skip gracefully instead of failing the plan
+    const isManualVerificationMisfire = (
+      ['read', 'write', 'delete'].includes(step.action) &&
+      (!step.path || step.path.trim().length === 0) &&
+      /manual|verif|test\s+in\s+browser|check\s+in\s+browser/i.test(step.description)
+    );
+    if (isManualVerificationMisfire) {
+      console.warn(`[Executor] Manual verification step disguised as '${step.action}' — auto-skipping: "${step.description}"`);
+      this.config.onMessage?.(`📋 Manual verification (skipped by executor): ${step.description}`, 'info');
+      return {
+        stepId,
+        success: true,
+        output: `Manual verification note: ${step.description}`,
+        duration: 0,
+        timestamp: Date.now(),
+      };
+    }
+
     try {
       this.validateStepContract(step);
     } catch (err) {
