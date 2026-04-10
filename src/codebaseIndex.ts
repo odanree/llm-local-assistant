@@ -5,6 +5,60 @@ import traverse from '@babel/traverse';
 import { IFileSystem } from './providers/IFileSystem';
 import { FileSystemProvider } from './providers/FileSystemProvider';
 
+// ---------------------------------------------------------------------------
+// EmbeddingClient — thin wrapper around Ollama /api/embeddings
+// ---------------------------------------------------------------------------
+
+export interface EmbeddingClientConfig {
+  endpoint?: string;       // default: http://localhost:11434
+  model?: string;          // default: nomic-embed-text
+}
+
+export class EmbeddingClient {
+  private endpoint: string;
+  private model: string;
+
+  constructor(config: EmbeddingClientConfig = {}) {
+    this.endpoint = (config.endpoint ?? 'http://localhost:11434').replace(/\/$/, '');
+    this.model = config.model ?? 'nomic-embed-text';
+  }
+
+  /** Embed a single string. Returns a float vector or throws on network error. */
+  async embed(text: string): Promise<number[]> {
+    const res = await fetch(`${this.endpoint}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: this.model, prompt: text }),
+    });
+    if (!res.ok) {
+      throw new Error(`Ollama embed failed: ${res.status} ${res.statusText}`);
+    }
+    const json = await res.json() as { embedding: number[] };
+    return json.embedding;
+  }
+
+  /** Embed multiple strings in sequence. Returns same-order vectors. */
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    const results: number[][] = [];
+    for (const text of texts) {
+      results.push(await this.embed(text));
+    }
+    return results;
+  }
+}
+
+/** Cosine similarity between two equal-length vectors (range −1 … 1). */
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
 /**
  * CodebaseIndex: Tracks and indexes the codebase for context-aware code generation
  *
@@ -606,6 +660,76 @@ export class CodebaseIndex {
     }
 
     return result;
+  }
+
+  // ============================================================
+  // RAG: embedding + symbol resolution
+  // ============================================================
+
+  /**
+   * Embed every indexed file's export list and store the vector on its FileEntry.
+   * Call once at startup (or after re-index). Safe to call repeatedly — only
+   * re-embeds files whose `embeddings` field is still unset.
+   *
+   * @param client  EmbeddingClient pointing at a running Ollama instance
+   */
+  async embedAll(client: EmbeddingClient): Promise<void> {
+    for (const [, entry] of this.files) {
+      if (entry.embeddings && entry.embeddings.length > 0) continue; // already done
+      if (entry.exports.length === 0) continue;                       // nothing to embed
+      // Represent the file as "exports: X, Y, Z  path: src/foo/bar.ts"
+      const text = `exports: ${entry.exports.join(', ')}  path: ${entry.path}`;
+      try {
+        entry.embeddings = await client.embed(text);
+      } catch {
+        // Skip — Ollama may not be running; degrades gracefully to dict fallback
+      }
+    }
+  }
+
+  /**
+   * Find which file in the index exports a given symbol name.
+   * Uses cosine similarity against pre-embedded export lists.
+   * Falls back to an exact-string scan if no embeddings are available.
+   *
+   * @param symbolName  e.g. "cn", "SmartAutoCorrection", "useAuthStore"
+   * @param client      EmbeddingClient (needed for query embedding)
+   * @param threshold   Minimum similarity score (default 0.75)
+   * @returns Relative file path, or null if not found
+   */
+  async resolveExportSource(
+    symbolName: string,
+    client: EmbeddingClient,
+    threshold = 0.75
+  ): Promise<string | null> {
+    // 1. Exact match — fast path, no embedding needed
+    for (const [, entry] of this.files) {
+      if (entry.exports.includes(symbolName)) {
+        return entry.path;
+      }
+    }
+
+    // 2. Semantic match — embed the query and find closest file
+    let queryVec: number[];
+    try {
+      queryVec = await client.embed(`exports: ${symbolName}`);
+    } catch {
+      return null; // Ollama unavailable
+    }
+
+    let bestScore = -1;
+    let bestPath: string | null = null;
+
+    for (const [, entry] of this.files) {
+      if (!entry.embeddings || entry.embeddings.length === 0) continue;
+      const score = cosineSimilarity(queryVec, entry.embeddings);
+      if (score > bestScore) {
+        bestScore = score;
+        bestPath = entry.path;
+      }
+    }
+
+    return bestScore >= threshold ? bestPath : null;
   }
 
 }

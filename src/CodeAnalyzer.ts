@@ -499,6 +499,11 @@ export class ArchitectureValidator {
         const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
         let resolvedPath = imp.source;
 
+        // Skip npm packages — they don't start with . or / and live in node_modules
+        if (!resolvedPath.startsWith('.') && !resolvedPath.startsWith('/')) {
+          continue;
+        }
+
         // Handle different path formats
         if (resolvedPath.startsWith('.')) {
           // ✅ Relative paths: ../utils/cn, ./helpers
@@ -1712,6 +1717,72 @@ export class SmartAutoCorrection {
         console.log('[SmartAutoCorrection] Cannot auto-fix brace mismatch');
       }
     });
+
+    return fixed;
+  }
+
+  /**
+   * Async variant of fixCommonPatterns — uses RAG resolver for unknown symbols.
+   *
+   * @param resolver  `(symbolName) => Promise<filePath | null>` — call
+   *                  `codebaseIndex.resolveExportSource(name, embeddingClient)`.
+   *                  Falls back to the hardcoded dict when resolver returns null.
+   */
+  static async fixCommonPatternsAsync(
+    code: string,
+    validationErrors: string[],
+    resolver: (name: string) => Promise<string | null>,
+    filePath?: string
+  ): Promise<string> {
+    let fixed = code;
+
+    if (filePath) {
+      fixed = this.fixCircularImports(fixed, filePath);
+    }
+
+    for (const error of validationErrors) {
+      // React hook not imported
+      let hookMatch = error.match(/React hook '(\w+)' is used but not imported from React/)
+        ?? error.match(/^(\w+) is used but not imported from React/);
+      if (hookMatch && fixed.includes(hookMatch[1])) {
+        fixed = this.addImport(fixed, hookMatch[1], 'react');
+        continue;
+      }
+
+      // Hook imported but never called
+      if (error.includes('Hook') && error.includes('imported but never called')) {
+        const m = error.match(/Hook '(\w+)' is imported but never called/);
+        if (m) { fixed = this.removeUnusedImport(fixed, m[1]); }
+        continue;
+      }
+
+      // Missing import — try RAG first, then dict fallback
+      if (error.includes('Missing import')) {
+        const m = error.match(/Missing import: '(\w+)'/)
+          ?? error.match(/Missing import: (\w+) is used but not imported/)
+          ?? error.match(/Missing import:\s+(\w+)/);
+        if (m) {
+          const name = m[1];
+          const ragSource = await resolver(name);
+          const dictSource = ragSource === null ? this.inferImportSource(fixed, name) : null;
+          const source = ragSource ?? dictSource;
+          if (source) {
+            fixed = this.addImport(fixed, name, source);
+            const via = ragSource ? '🔍 RAG index' : '📖 hardcoded dict';
+            console.log(`[SmartAutoCorrection] Added import for '${name}' from '${source}' (via ${via})`);
+          } else {
+            console.warn(`[SmartAutoCorrection] ❌ Could not resolve import for '${name}' — neither RAG nor dict matched`);
+          }
+        }
+        continue;
+      }
+
+      // Any types → unknown
+      if (error.includes('any')) {
+        fixed = fixed.replace(/:\s*any\b/g, ': unknown');
+        fixed = fixed.replace(/\bas\s+any\b/g, 'as unknown');
+      }
+    }
 
     return fixed;
   }
