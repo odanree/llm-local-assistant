@@ -2666,7 +2666,8 @@ export async function activate(context: vscode.ExtensionContext) {
       console.log('[Extension] ✅ Codebase index scanned');
       return codebaseIndex.embedAll(embeddingClient);
     }).then(() => {
-      console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text)');
+      codebaseIndex.setEmbeddingClient(embeddingClient);
+      console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text) — incremental indexing active');
     }).catch((err: unknown) => {
       console.warn('[Extension] RAG embed skipped (Ollama unavailable?):', err);
     });

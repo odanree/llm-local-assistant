@@ -545,6 +545,13 @@ export class CodebaseIndex {
   /**
    * Add a new file to the index (called during plan execution)
    */
+  /** Optional embedding client — set once via setEmbeddingClient() after embedAll(). */
+  private embeddingClient?: EmbeddingClient;
+
+  setEmbeddingClient(client: EmbeddingClient): void {
+    this.embeddingClient = client;
+  }
+
   addFile(filePath: string, content: string): void {
     try {
       const relativePath = path.relative(this.projectRoot, filePath);
@@ -554,9 +561,18 @@ export class CodebaseIndex {
       });
 
       const imports: string[] = [];
+      const exports: string[] = [];
       traverse(ast, {
         ImportDeclaration(nodePath) {
           imports.push(nodePath.node.source.value);
+        },
+        ExportNamedDeclaration(nodePath) {
+          if (t.isIdentifier(nodePath.node.declaration?.id)) {
+            exports.push((nodePath.node.declaration as any).id.name);
+          }
+        },
+        ExportDefaultDeclaration() {
+          exports.push('default');
         },
       });
 
@@ -565,14 +581,14 @@ export class CodebaseIndex {
         name: path.basename(filePath),
         purpose: this.determinePurpose(filePath, ast),
         imports,
-        exports: [],
+        exports,
         dependencies: [],
         patterns: this.detectFilePatterns({
           path: relativePath,
           name: path.basename(filePath),
           purpose: 'unknown',
           imports,
-          exports: [],
+          exports,
           dependencies: [],
           patterns: [],
           lastUpdated: Date.now(),
@@ -583,6 +599,15 @@ export class CodebaseIndex {
       this.files.set(relativePath, fileEntry);
       this.extractDependencies();
       this.detectPatterns();
+
+      // Fire-and-forget embed so resolveExportSource works immediately for this file
+      if (this.embeddingClient && exports.length > 0) {
+        const client = this.embeddingClient;
+        const text = `exports: ${exports.join(', ')}  path: ${relativePath}`;
+        client.embed(text).then(vec => {
+          fileEntry.embeddings = vec;
+        }).catch(() => { /* Ollama unavailable — exact-match still works */ });
+      }
     } catch (error) {
       console.error(`[CodebaseIndex] Error adding file ${filePath}:`, error);
     }
