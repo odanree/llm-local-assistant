@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Executor } from '../executor';
-import { ArchitectureValidator } from '../architectureValidator';
+import { ArchitectureValidator } from '../CodeAnalyzer';
 import type { TaskPlan, PlanStep } from '../planner';
 
 vi.mock('vscode', () => ({

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import SmartAutoCorrection from '../smartAutoCorrection';
+import SmartAutoCorrection from '../CodeAnalyzer';
 
 /**
  * Phase 10G: SmartAutoCorrection Comprehensive Branch Coverage

@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import SmartAutoCorrection from '../smartAutoCorrection';
+import SmartAutoCorrection from '../CodeAnalyzer';
 
 describe('Phase 6B: SmartAutoCorrection Chaos - Decision Logic Testing', () => {
   describe('Import Inference - Known Libraries', () => {

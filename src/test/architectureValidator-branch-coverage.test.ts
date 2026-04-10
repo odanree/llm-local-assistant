@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ArchitectureValidator } from '../architectureValidator';
+import { ArchitectureValidator } from '../CodeAnalyzer';
 
 describe('Phase 8A: ArchitectureValidator Branch Coverage - Decision Logic', () => {
   const validator = new ArchitectureValidator();

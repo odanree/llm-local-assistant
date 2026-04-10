@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ArchitectureValidator } from '../architectureValidator';
+import { ArchitectureValidator } from '../CodeAnalyzer';
 
 // =========================================================
 // VSCODE MOCK SETUP (Phase 6.2 Wave 3: Mock Strike)
