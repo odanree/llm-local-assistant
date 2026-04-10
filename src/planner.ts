@@ -31,7 +31,6 @@ import {
 import { PlanStateString } from './types/PlanState';
 import { sanitizeJson, safeParse } from './utils/jsonSanitizer';
 import { TEMPLATE_FEATURES, TEMPLATE_METADATA } from './constants/templates';
-import { SemanticValidator } from './services/semanticValidator';
 
 /**
  * Re-export StepResult for backward compatibility with executor imports
