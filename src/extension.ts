@@ -2683,6 +2683,7 @@ export async function activate(context: vscode.ExtensionContext) {
     gitClient,
     workspace: wsFolder || vscode.Uri.file('/'),
     codebaseIndex, // Phase 3.3.2: Track files created during execution
+    embeddingClient, // RAG: resolves symbol → file path in fixCommonPatternsAsync
     maxRetries: 2,
     timeout: 30000,
     onProgress: (step: number, total: number, description: string) => {

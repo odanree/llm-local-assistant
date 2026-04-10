@@ -8,7 +8,7 @@ import { CommandRunnerProvider } from './providers/CommandRunnerProvider';
 import SmartAutoCorrection from './CodeAnalyzer';
 import { LLMClient } from './llmClient';
 import { GitClient } from './gitClient';
-import CodebaseIndex from './codebaseIndex';
+import CodebaseIndex, { EmbeddingClient } from './codebaseIndex';
 import { ArchitectureValidator } from './CodeAnalyzer';
 import { TaskPlan, PlanStep, StepResult } from './planner';
 import { validateExecutionStep } from './types/executor';
@@ -32,6 +32,7 @@ export interface ExecutorConfig {
   gitClient?: GitClient;
   workspace: vscode.Uri;
   codebaseIndex?: CodebaseIndex; // Phase 3.3.2: Track files being created
+  embeddingClient?: EmbeddingClient; // RAG: resolves symbol → file path
   maxRetries?: number;      // Default: 2
   timeout?: number;         // Default: 30000ms
   onProgress?: (step: number, total: number, description: string) => void;
@@ -2435,7 +2436,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 `🧠 Attempting smart auto-correction (circular imports, missing/unused imports, etc.)...`,
                 'info'
               );
-              const smartFixed = SmartAutoCorrection.fixCommonPatterns(currentContent, lastCriticalErrors, step.path);
+              const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
+                ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
+                : () => Promise.resolve(null);
+              const smartFixed = await SmartAutoCorrection.fixCommonPatternsAsync(
+                currentContent, lastCriticalErrors, ragResolver, step.path
+              );
 
               // 🔴 CRITICAL: Try Zustand mismatch fix if component imports from stores
               let zustandFixed = smartFixed;
