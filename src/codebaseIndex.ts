@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import { IFileSystem } from './providers/IFileSystem';
 import { FileSystemProvider } from './providers/FileSystemProvider';
 
@@ -493,17 +494,125 @@ export class CodebaseIndex {
   }
 
   /**
-   * Find similar files (stub for Phase 3.3.2 - embeddings)
+   * Find files similar to a given file path using embeddings when available,
+   * falling back to purpose-matching when embeddings are absent.
    */
-  async findSimilar(filePath: string, limit: number = 5): Promise<FileEntry[]> {
-    // TODO: Phase 3.3.2 - implement embedding-based similarity search
-    // For now, return files with similar purpose
-    const file = this.files.get(filePath);
-    if (!file) {return [];}
+  async findSimilarByPath(filePath: string, limit = 5): Promise<FileEntry[]> {
+    const relative = path.isAbsolute(filePath)
+      ? path.relative(this.projectRoot, filePath)
+      : filePath;
+    const file = this.files.get(relative);
+    if (!file) { return []; }
 
+    if (file.embeddings && file.embeddings.length > 0) {
+      return Array.from(this.files.values())
+        .filter(f => f.path !== relative && f.embeddings && f.embeddings.length > 0)
+        .map(f => ({ f, score: cosineSimilarity(file.embeddings!, f.embeddings!) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(({ f }) => f);
+    }
+
+    // Fallback: same-purpose files
     return Array.from(this.files.values())
-      .filter(f => f.purpose === file.purpose && f.path !== filePath)
+      .filter(f => f.purpose === file.purpose && f.path !== relative)
       .slice(0, limit);
+  }
+
+  /**
+   * Find files most relevant to a free-text query (e.g. a /plan request).
+   * Uses embedding similarity when available; falls back to token overlap.
+   */
+  async queryByText(query: string, limit = 5): Promise<FileEntry[]> {
+    if (this.embeddingClient) {
+      try {
+        const queryVec = await this.embeddingClient.embed(query);
+        return Array.from(this.files.values())
+          .filter(f => f.embeddings && f.embeddings.length > 0)
+          .map(f => ({ f, score: cosineSimilarity(queryVec, f.embeddings!) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit)
+          .map(({ f }) => f);
+      } catch {
+        // Fall through to keyword fallback
+      }
+    }
+
+    // Fallback: score by token overlap between query tokens and path+exports
+    const tokens = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+    return Array.from(this.files.values())
+      .map(f => {
+        const haystack = (f.path + ' ' + f.exports.join(' ')).toLowerCase();
+        const score = tokens.filter(t => haystack.includes(t)).length;
+        return { f, score };
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ f }) => f);
+  }
+
+  /**
+   * Build a compact context string from a list of files for prompt injection.
+   * Format: "path (purpose) — exports: foo, bar"
+   */
+  getMetadataContext(files: FileEntry[]): string {
+    if (files.length === 0) { return ''; }
+    return files
+      .map(f => {
+        const exports = f.exports.length ? `exports: ${f.exports.slice(0, 6).join(', ')}` : 'no exports';
+        return `- ${f.path} (${f.purpose}) — ${exports}`;
+      })
+      .join('\n');
+  }
+
+  /**
+   * Persist a lightweight metadata index (path → exports/purpose) to disk.
+   * Used as a fast-startup fallback before embeddings finish loading.
+   */
+  saveMetadataIndex(indexPath: string): void {
+    const index: Record<string, { purpose: string; exports: string[]; imports: string[] }> = {};
+    this.files.forEach((entry, relPath) => {
+      index[relPath] = { purpose: entry.purpose, exports: entry.exports, imports: entry.imports };
+    });
+    try {
+      fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+    } catch {
+      // Non-fatal — embeddings cache is the primary persistence
+    }
+  }
+
+  /**
+   * Load a previously saved metadata index into the files map.
+   * Fills in purpose/exports/imports without requiring a full re-scan.
+   */
+  loadMetadataIndex(indexPath: string): boolean {
+    try {
+      const raw = fs.readFileSync(indexPath, 'utf-8');
+      const index = JSON.parse(raw) as Record<string, { purpose: string; exports: string[]; imports: string[] }>;
+      Object.entries(index).forEach(([relPath, meta]) => {
+        if (!this.files.has(relPath)) {
+          this.files.set(relPath, {
+            path: relPath,
+            name: path.basename(relPath),
+            purpose: meta.purpose,
+            exports: meta.exports,
+            imports: meta.imports,
+            dependencies: [],
+            patterns: [],
+            lastUpdated: 0,
+          });
+        }
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** @deprecated Use findSimilarByPath instead */
+  async findSimilar(filePath: string, limit: number = 5): Promise<FileEntry[]> {
+    return this.findSimilarByPath(filePath, limit);
   }
 
   /**

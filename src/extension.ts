@@ -322,11 +322,20 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   const contextBuilder = new ContextBuilder();
                   const projectContext = contextBuilder.buildContext(selectedFolder.uri.fsPath);
 
+                  // RAG: find files relevant to this task and inject as context
+                  let ragContext = '';
+                  if (codebaseIndex) {
+                    const relevant = await codebaseIndex.queryByText(userRequest, 5);
+                    const ctx = codebaseIndex.getMetadataContext(relevant);
+                    if (ctx) { ragContext = ctx; }
+                  }
+
                   const plan = await planner.generatePlan(
                     userRequest,
                     selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
                     selectedFolder.name,        // CRITICAL: Pass workspace name
-                    projectContext              // CONTEXT-AWARE: Pass project context
+                    projectContext,             // CONTEXT-AWARE: Pass project context
+                    ragContext                  // RAG: relevant files for this task
                   );
                   
                   // Store plan for /execute command
@@ -1222,10 +1231,19 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
+                // RAG: inject context from similar files
+                let ragSection = '';
+                if (codebaseIndex) {
+                  const similar = await codebaseIndex.findSimilarByPath(filepath, 4);
+                  const ctx = codebaseIndex.getMetadataContext(similar);
+                  if (ctx) {
+                    ragSection = `\n\nRelated files in this codebase:\n${ctx}\n`;
+                  }
+                }
+
                 const refactorPrompt = `You are an expert code reviewer. Analyze this file and suggest concrete refactoring improvements.
 
-File: ${filepath}
-
+File: ${filepath}${ragSection}
 \`\`\`
 ${code}
 \`\`\`
@@ -1955,8 +1973,13 @@ export async function activate(context: vscode.ExtensionContext) {
     embeddingClient = new EmbeddingClient({ endpoint: config.endpoint });
     codebaseIndex = new CodebaseIndex(wsFolder.fsPath);
     const cacheFile = path.join(wsFolder.fsPath, '.lla-embeddings.json');
+    const metaFile = path.join(wsFolder.fsPath, '.lla-index.json');
+    // Fast startup: load metadata index immediately (no Ollama needed)
+    codebaseIndex.loadMetadataIndex(metaFile);
+
     codebaseIndex.scan().then(() => {
       console.log('[Extension] ✅ Codebase index scanned');
+      codebaseIndex.saveMetadataIndex(metaFile);
       const restored = codebaseIndex.loadEmbeddingsCache(cacheFile);
       if (restored > 0) {
         console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
@@ -2055,6 +2078,18 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
+
+  // Background incremental indexing — re-index any saved TypeScript/JavaScript file
+  if (wsFolder) {
+    const saveWatcher = vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (!/\.[jt]sx?$/.test(doc.fileName)) { return; }
+      if (!codebaseIndex) { return; }
+      const content = doc.getText();
+      codebaseIndex.addFile(doc.fileName, content);
+      console.log(`[Extension] ♻️ Incremental index update: ${path.relative(wsFolder!.fsPath, doc.fileName)}`);
+    });
+    context.subscriptions.push(saveWatcher);
+  }
 
   // CRITICAL FIX (Issue #2): Listen for workspace folder changes
   // Update executor config globally when user selects a different folder

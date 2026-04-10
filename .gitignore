@@ -27,5 +27,6 @@ coverage/
 .nyc_output/
 *.lcov
 
-# RAG embedding cache (auto-generated, workspace-local)
+# RAG cache files (auto-generated, workspace-local)
 .lla-embeddings.json
+.lla-index.json
