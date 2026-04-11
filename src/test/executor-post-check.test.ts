@@ -75,10 +75,6 @@ describe('Phase 11: Executor Post-Check & Lifecycle (Lines 2579-2883)', () => {
         }),
       };
 
-      vi.spyOn(executor as any, 'validateArchitectureRules').mockReturnValue({
-        violations: [],
-      });
-
       // When recommendation is 'skip', file should be excluded
       const recommendation = architectureValidator.validate('src/api.ts', 'fetch API code').recommendation;
       expect(recommendation).toBe('skip');
@@ -480,11 +476,6 @@ describe('Phase 11: Executor Post-Check & Lifecycle (Lines 2579-2883)', () => {
       vi.spyOn(executor as any, 'filterCriticalErrors')
         .mockReturnValueOnce({ critical: ['Architecture violation'], suggestions: [] })
         .mockReturnValueOnce({ critical: [], suggestions: [] });
-
-      // Step 3: Decide to fix
-      vi.spyOn(executor as any, 'validateArchitectureRules').mockReturnValue({
-        violations: [],
-      });
 
       // Step 4: Fix via LLM
       mockLLMClient.sendMessage.mockResolvedValueOnce({

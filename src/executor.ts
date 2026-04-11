@@ -16,9 +16,9 @@ import { PlanState } from './types/PlanState';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
 import { GOLDEN_TEMPLATES } from './constants/templates';
+import { ProjectProfile } from './projectProfile';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
-import { validateArchitectureRulePure } from './utils/architectureRuleValidator';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -33,6 +33,7 @@ export interface ExecutorDependencies {
   gitClient?: GitClient;
   codebaseIndex?: CodebaseIndex;
   embeddingClient?: EmbeddingClient;
+  projectProfile?: ProjectProfile;
   fs?: IFileSystem;
   commandRunner?: ICommandRunner;
 }
@@ -308,7 +309,10 @@ export class Executor {
             completedStepIds.add(plan.steps[completed.stepId - 1].id);
           }
         }
-        this.validateDependencies(step, completedStepIds);
+        // Build the set of step IDs that are actually in this plan (after filtering)
+        const planStepOrder = plan.steps.map(s => s.id).filter((id): id is string => !!id);
+        const planStepIds = new Set<string>(planStepOrder);
+        this.validateDependencies(step, completedStepIds, planStepIds, planStepOrder);
 
         // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
         // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
@@ -557,7 +561,8 @@ export class Executor {
   private async validateGeneratedCode(
     filePath: string,
     content: string,
-    step: PlanStep
+    step: PlanStep,
+    criteria: string[] = []
   ): Promise<{ valid: boolean; errors?: string[] }> {
     const errors: string[] = [];
 
@@ -569,11 +574,6 @@ export class Executor {
       }
     }
 
-    // Check 2: Architecture rule violations
-    const ruleErrors = await this.validateArchitectureRules(content, filePath);
-    if (ruleErrors.length > 0) {
-      errors.push(...ruleErrors);
-    }
 
     // Check 3: Common patterns (imports, syntax)
     const patternErrors = this.validateCommonPatterns(content, filePath);
@@ -671,9 +671,20 @@ export class Executor {
       }
     }
 
+    // Check 5: LLM semantic validation — only when no ❌ structural errors
+    // When criteria[] is provided: structured YES/NO per acceptance criterion (Reviewer pattern)
+    // When criteria[] is empty: open-ended "find problems" fallback
+    const hasCriticalStructural = errors.some(e => e.includes('❌'));
+    if (!hasCriticalStructural) {
+      const llmIssues = await this.llmValidate(filePath, content, step, criteria);
+      if (llmIssues.length > 0) {
+        errors.push(...llmIssues);
+      }
+    }
+
     // ✅ NEW: Ensure all errors are treated as block if they contain ❌
     const finalValid = !errors.some(e => e.includes('❌ Zustand'));
-    
+
     return {
       valid: finalValid && errors.length === 0,
       errors: errors.length > 0 ? errors : undefined,
@@ -736,33 +747,7 @@ export class Executor {
   }
 
   /**
-   * Check generated code against architecture rules
-   */
-  private async validateArchitectureRules(content: string, filePath?: string): Promise<string[]> {
-    const errors: string[] = [];
-
-    // Get architecture rules if available
-    const rules = this.config.llmClient && (this.config.llmClient as any).config?.architectureRules;
-    if (!rules) {
-      return errors; // No rules to validate against
-    }
-
-    // Orchestration: Call the pure validator to extract all violations
-    const violations = validateArchitectureRulePure(content, rules, filePath || '');
-
-    // Map and Wrap: Convert violations to error messages
-    // This keeps the orchestration layer thin while using the pure logic
-    violations.forEach(violation => {
-      const message = violation.message +
-        (violation.suggestion ? ` ${violation.suggestion}` : '');
-      errors.push(message);
-    });
-
-    return errors;
-  }
-
-  /**
-   * Validate form components against .lla-rules 7 required patterns
+   * Validate form components against required patterns
    */
   private validateFormComponentPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
@@ -862,6 +847,19 @@ export class Executor {
       );
     }
 
+    // Controlled component check: inputs with onChange MUST have value prop.
+    // An input with onChange but no value is uncontrolled — state updates but the UI
+    // doesn't reflect the current state value, breaking the controlled component contract.
+    const hasOnChangeOnInput = /onChange\s*=\s*\{/.test(content);
+    const hasValueBinding = /\bvalue\s*=\s*\{[^}]+\}/.test(content);
+    if (hasInputElements && hasOnChangeOnInput && !hasValueBinding) {
+      errors.push(
+        `❌ Uncontrolled input: inputs have onChange but no value prop. ` +
+        `Add value={formData.fieldName} to each controlled input. ` +
+        `Without value= the input is uncontrolled and state changes won't reflect in the UI.`
+      );
+    }
+
     return errors;
   }
 
@@ -884,6 +882,224 @@ export class Executor {
       const prefix = issue.severity === 'error' ? '❌' : '⚠️';
       errors.push(`${prefix} ${issue.message}`);
     });
+
+    // ----------------------------------------------------------------
+    // CSS module import detection
+    // Flags `import styles from '*.module.css'` in projects that don't use CSS modules.
+    // ProjectProfile tracks hasCssModules; if false, any *.module.css import is fabricated.
+    // We check regardless of profile because CSS modules are rarely added mid-component.
+    // ----------------------------------------------------------------
+    const cssModuleImport = content.match(/import\s+\w+\s+from\s+['"]([^'"]*\.module\.css)['"]/);
+    if (cssModuleImport) {
+      errors.push(
+        `❌ Fabricated CSS module: \`${cssModuleImport[1]}\` was imported but this project uses Tailwind, not CSS modules. ` +
+        `Remove the CSS module import and replace all \`styles.xxx\` references with Tailwind classes via cn().`
+      );
+    }
+
+    // ----------------------------------------------------------------
+    // Cross-layer dependency violation (catches circular imports)
+    // Rule: utility/lib/store files must NOT import from component layer.
+    // Components depend on utils, never the other way around.
+    // ----------------------------------------------------------------
+    const utilityLayerPattern = /\bsrc[\\/](?:utils|lib|helpers|constants|stores)[\\/]/i;
+    const isUtilityLayerFile = utilityLayerPattern.test(filePath) ||
+      /[\\/](cn|utils|helpers|classnames)\.[tj]s$/.test(filePath);
+
+    if (isUtilityLayerFile) {
+      const componentImport = content.match(
+        /from\s+['"]([^'"]*(?:components|pages|app|routes|views|screens)[^'"]*)['"]/i
+      );
+      if (componentImport) {
+        errors.push(
+          `❌ Circular dependency: \`${filePath}\` is a utility/lib file but imports from "${componentImport[1]}". ` +
+          `Utility files must never import from the component layer — this will crash the module loader at runtime. ` +
+          `Remove the component import; if you need shared logic, extract it to a separate utility.`
+        );
+      }
+    }
+
+    // TSX component-specific checks
+    if (filePath.endsWith('.tsx')) {
+      // Detect React.ReactNode / React.ReactElement used as a runtime value (not a type)
+      // e.g. "React.ReactNode.propTypes ? React.ReactNode : children" — always falsy, renders nothing
+      if (/React\.ReactNode\s*[\?:\.](?!.*:)/.test(content) ||
+          /React\.ReactElement\s*[\?:\.](?!.*:)/.test(content)) {
+        errors.push(
+          `❌ Runtime bug: React.ReactNode or React.ReactElement used as a value expression. ` +
+          `These are TypeScript types — they don't exist at runtime. ` +
+          `Replace the ternary with just \`{children}\` or the actual JSX.`
+        );
+      }
+
+      // Detect manual className string concatenation when cn() is imported
+      const importsCn = /import\s+.*\bcn\b.*from/.test(content);
+      const hasManualConcat = /className\s*=\s*[`'"][^`'"]*\$\{/.test(content) ||
+                              /className\s*=\s*\{[^}]*\+\s*['"`]/.test(content);
+      if (importsCn && hasManualConcat) {
+        errors.push(
+          `❌ Style bug: cn() is imported but className uses manual string concatenation. ` +
+          `Use cn() for all class merging: className={cn('base', variant === 'primary' && 'bg-indigo-600', className)}`
+        );
+      }
+
+      // Detect component file with only default export and no named export
+      // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
+      const hasDefaultExport = /export\s+default\b/.test(content);
+      const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
+      const hasNamedDefinition = /\b(?:const|function|class)\s+[A-Z]\w+/.test(content);
+      if (hasDefaultExport && !hasNamedExport && !hasNamedDefinition && filePath.includes('components/')) {
+        errors.push(
+          `⚠️ Export consistency: Component has only a default export. ` +
+          `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
+        );
+      }
+
+      // Interactive components MUST use forwardRef; forwardRef components MUST set .displayName
+      const interactiveFilePattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
+      const isInteractiveFile = interactiveFilePattern.test(filePath);
+      // Match both forwardRef( (no generics) and forwardRef<T>( (TypeScript generics)
+      const usesForwardRef = content.includes('React.forwardRef') || /\bforwardRef\s*[<(]/.test(content);
+      const hasDisplayName = /\.displayName\s*=/.test(content);
+      const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') || 'Component';
+
+      if (isInteractiveFile && !usesForwardRef) {
+        errors.push(
+          `❌ Missing forwardRef: ${componentName} is an interactive component — it MUST use React.forwardRef to support ref forwarding. ` +
+          `Wrap with: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { ... }); ` +
+          `then add ${componentName}.displayName = '${componentName}';`
+        );
+      } else if (usesForwardRef && !hasDisplayName) {
+        errors.push(
+          `❌ forwardRef missing displayName: Add \`${componentName}.displayName = '${componentName}';\` ` +
+          `after the component definition. Without it React DevTools shows "ForwardRef" instead of the component name.`
+        );
+      }
+
+      // TSX components MUST return JSX, not a plain string/expression.
+      // Auto-correction can introduce this bug by wrapping the function signature but leaving the
+      // body as a bare cn() call — returns a string, throws "Nothing was returned from render".
+      if (filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
+        const hasJsxReturn = /<[A-Za-z][\w.]*[\s/>]/.test(content);
+        if (!hasJsxReturn) {
+          errors.push(
+            `❌ Component returns no JSX: The component body has no JSX element (no <tag ...>). ` +
+            `React components MUST return JSX — e.g. return <button ref={ref} {...props} />. ` +
+            `A bare cn() call or string return will throw "Nothing was returned from render" at runtime.`
+          );
+        }
+      }
+
+      // Detect self-referential export: `export const Button = Button` or `export { Button as Button }`.
+      // Auto-correction introduces this pattern when it wraps an inner const and then re-exports by name.
+      // TypeScript throws "Block-scoped variable used before its declaration" or a circular reference.
+      // Fires for any component file (.tsx) — not just interactive files.
+      if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+        // Pattern: export const X = X  (same identifier on both sides)
+        const selfRefExportMatch = content.match(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*;/);
+        if (selfRefExportMatch && selfRefExportMatch[1] === selfRefExportMatch[2]) {
+          const name = selfRefExportMatch[1];
+          errors.push(
+            `❌ Self-referential export: \`export const ${name} = ${name};\` is a circular declaration. ` +
+            `Export the component directly: \`export const ${name} = React.forwardRef<...>(...)\` — ` +
+            `do NOT assign to an internal name and then re-export it by the same name.`
+          );
+        }
+      }
+
+      // Interactive components (Button, Input, etc.) need at least one padding utility in base styles.
+      // Lack of padding makes the component invisible/unusable until the consumer adds classes.
+      // Critical (❌) not just a warning: a button with no padding is non-functional out of the box.
+      const isInteractiveComponent = /\b(button|input|textarea|select)\b/i.test(
+        filePath.split('/').pop() || ''
+      );
+      if (isInteractiveComponent) {
+        const hasPadding = /\b(?:p|px|py|pt|pb|pl|pr)-\d/.test(content);
+        if (!hasPadding) {
+          errors.push(
+            `❌ Missing default sizing: Interactive component has no padding utilities (px-*, py-*, p-*). ` +
+            `Add \`px-4 py-2\` to the cn() base string so the component is usable without consumer overrides.`
+          );
+        }
+      }
+
+      // Detect conflicting Tailwind transition utilities.
+      // twMerge silently drops all but the last one — the component loses the intended animation.
+      // e.g. transition-colors + transition-transform → only transition-transform survives.
+      const transitionMatches = content.match(/\btransition-\w+\b/g) ?? [];
+      const uniqueTransitions = [...new Set(transitionMatches)];
+      if (uniqueTransitions.length > 1) {
+        errors.push(
+          `⚠️ Conflicting Tailwind utilities: multiple transition-* classes detected (${uniqueTransitions.join(', ')}). ` +
+          `twMerge keeps only the last one. Use a single transition utility — \`transition-colors\` is correct for most interactive components.`
+        );
+      }
+
+      // Detect initial* props destructured from params but never forwarded to a hook or used in body.
+      // Pattern: `({ initialCount = 0 }: Props)` but `useCounter()` called with no args.
+      // This creates a silent bug: the prop is accepted, the consumer passes a value, nothing happens.
+      // Heuristic: if the prop name appears ≤ 2 times in the whole file (interface def + destructuring)
+      // it was never referenced in the function body.
+      const initialPropDetector = /\(\s*\{[^}]*\b(initial[A-Z]\w*)[^}]*\}/g;
+      let ipMatch: RegExpExecArray | null;
+      while ((ipMatch = initialPropDetector.exec(content)) !== null) {
+        const propName = ipMatch[1];
+        const occurrences = (content.match(new RegExp(`\\b${propName}\\b`, 'g')) ?? []).length;
+        if (occurrences <= 2) {
+          errors.push(
+            `❌ Silent prop: \`${propName}\` is destructured from props but never referenced in the component body. ` +
+            `Pass it to the hook (e.g. \`use${propName.replace(/^initial/, '')}(${propName})\`) or remove the prop from the interface.`
+          );
+        }
+      }
+    }
+
+    // cn imported but never called — applies to both .ts and .tsx
+    // A dead `import { cn }` means copy-paste residue or scope creep; it will be tree-shaken
+    // but signals the LLM deviated from the step's intent.
+    const importsCn = /import\s+.*\bcn\b.*from/.test(content);
+    if (importsCn && !/\bcn\s*\(/.test(content)) {
+      errors.push(
+        `⚠️ Dead import: \`cn\` is imported but never called. ` +
+        `Either use it for class merging (className={cn(...)}) or remove the import.`
+      );
+    }
+
+    // cn must never appear in hook files (.ts in hooks/ directory)
+    // Hooks are pure logic — no styling concerns. Its presence here means the LLM
+    // copy-pasted from a component template and didn't strip the style utilities.
+    const isHookFile = /[\\/]hooks[\\/][^/]+\.ts$/.test(filePath) && !filePath.endsWith('.tsx');
+    if (isHookFile && importsCn) {
+      errors.push(
+        `❌ Wrong layer: \`cn\` is a style utility and must not be imported in a hook. ` +
+        `Hooks are pure logic — remove the cn import from \`${filePath.split('/').pop()}\`.`
+      );
+    }
+
+    // Hook return contract: every useState value must be in the return object.
+    // The most common failure: a hook creates `const [count, setCount] = useState(...)` but
+    // only returns the manipulation functions `{ increment, decrement, reset }`, hiding count
+    // from the consumer. The consumer then has no way to read the current value.
+    if (isHookFile) {
+      const stateVarMatches = [...content.matchAll(/const\s+\[(\w+),\s*\w+\]\s*=\s*useState/g)];
+      if (stateVarMatches.length > 0) {
+        // Find the return statement(s) in the hook
+        const returnMatch = content.match(/return\s*\{([^}]+)\}/);
+        if (returnMatch) {
+          const returnBody = returnMatch[1];
+          for (const match of stateVarMatches) {
+            const stateVar = match[1];
+            // Check if the state variable name appears in the return object
+            if (!new RegExp(`\\b${stateVar}\\b`).test(returnBody)) {
+              errors.push(
+                `❌ Hook return missing state: \`${stateVar}\` is managed by useState but not in the return object. ` +
+                `Consumers cannot read the value. Add \`${stateVar}\` to the return: return { ${stateVar}, ... }.`
+              );
+            }
+          }
+        }
+      }
+    }
 
     return errors;
   }
@@ -959,9 +1175,220 @@ export class Executor {
   }
 
   /**
+   * Build the constraint block for LLM-as-judge validation.
+   * Combines the step's scope description with detected project conventions.
+   */
+  private buildValidationConstraints(filePath: string, step: PlanStep): string {
+    const lines: string[] = [];
+
+    lines.push(`FILE: ${filePath}`);
+    lines.push(`TASK SCOPE: ${step.description}`);
+
+    const profileConstraints = this.config.projectProfile?.getGenerationConstraints();
+    if (profileConstraints) {
+      lines.push('');
+      lines.push(profileConstraints);
+    }
+
+    lines.push('');
+    lines.push('SCOPE CONSTRAINT: Implement ONLY what the TASK SCOPE explicitly describes. Props, variants, or features not mentioned are OUT OF SCOPE.');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Architect pre-flight: generate a task-specific acceptance checklist BEFORE code generation.
+   * The Reviewer (llmValidate) then checks the generated code against this list item-by-item.
+   * Non-blocking — returns [] on LLM failure, falling back to open-ended review.
+   */
+  private async generateAcceptanceCriteria(step: PlanStep): Promise<string[]> {
+    try {
+      const llmConfig = this.config.llmClient.getConfig();
+      const profileConstraints = this.config.projectProfile?.getGenerationConstraints() ?? '';
+
+      const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
+      const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+      const hookLine = isHookTarget ? ' HOOK FILE: never include cn/clsx/classnames imports in criteria — hooks are pure logic.' : '';
+      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
+
+      const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: llmConfig.model.trim(),
+          messages: [
+            { role: 'system', content: 'You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.' },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.0,
+          max_tokens: 150,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn(`[Acceptance Criteria] Server returned ${response.status} — skipping pre-flight`);
+        return [];
+      }
+
+      const data = await response.json() as any;
+      const raw: string = data?.choices?.[0]?.message?.content || '[]';
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) { return []; }
+
+      let criteria: string[];
+      try {
+        criteria = JSON.parse(match[0]);
+      } catch {
+        return [];
+      }
+      if (!Array.isArray(criteria)) { return []; }
+      const filtered = criteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
+
+      if (filtered.length > 0) {
+        this.config.onMessage?.(
+          `🎯 Acceptance criteria (${filtered.length}): ${filtered.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join(' | ')}${filtered.length > 3 ? ' ...' : ''}`,
+          'info'
+        );
+      }
+      return filtered;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * LLM-as-judge: semantic validation that regex cannot catch.
+   * When criteria[] is provided (from generateAcceptanceCriteria), uses structured YES/NO
+   * checking against the pre-generated acceptance list.
+   * When criteria[] is empty, falls back to open-ended "find problems" review.
+   * Non-blocking — returns [] on LLM failure so write proceeds.
+   * Only runs when structural checks produce no ❌ errors.
+   */
+  private async llmValidate(filePath: string, content: string, step: PlanStep, criteria: string[] = []): Promise<string[]> {
+    try {
+      const llmConfig = this.config.llmClient.getConfig();
+
+      // Truncate content to avoid overwhelming small local models
+      const truncatedContent = content.length > 2000
+        ? content.slice(0, 2000) + '\n// ... (truncated)'
+        : content;
+
+      let prompt: string;
+
+      if (criteria.length > 0) {
+        // Structured review: check code against pre-generated acceptance criteria
+        const criteriaList = criteria.map((c, i) => `${i + 1}. ${c}`).join('\n');
+        prompt = `You are a strict code reviewer. Check the code against each acceptance criterion.
+
+ACCEPTANCE CRITERIA:
+${criteriaList}
+
+CODE (${filePath}):
+\`\`\`
+${truncatedContent}
+\`\`\`
+
+For each criterion, decide: YES (passes), NO (critical failure), or WARN (minor issue).
+Output ONLY a JSON array of the failures and warnings. Use:
+- "❌ Criterion N: <brief reason>" for failures
+- "⚠️ Criterion N: <brief reason>" for warnings
+
+If all criteria pass, respond with: []
+
+JSON array only. No explanation.`;
+      } else {
+        // Open-ended fallback when no criteria were pre-generated
+        const constraints = this.buildValidationConstraints(filePath, step);
+        prompt = `You are a strict code reviewer. Evaluate the code below against the given constraints.
+
+CONSTRAINTS:
+${constraints}
+
+CODE TO REVIEW:
+\`\`\`
+${truncatedContent}
+\`\`\`
+
+OUTPUT FORMAT — respond with ONLY a JSON array of issues. Each issue must be one of:
+- "❌ <short description>" for violations that must be fixed
+- "⚠️ <short description>" for minor concerns
+
+Focus ONLY on what regex cannot catch:
+- Scope creep: props/variants/features not in TASK SCOPE
+- Invalid or non-existent Tailwind classes
+- Dead code (unused variables/imports)
+- Unnecessary variable extraction: a const that holds a single Tailwind class string and is only used once (e.g. const paddingStyle = 'px-4 py-2') — flag as ⚠️ unnecessary indirection
+- Semantic incorrectness (logic that won't work as described)
+
+Do NOT flag: structural imports, forwardRef, displayName, padding — those are checked elsewhere.
+If no issues, respond with: []
+
+JSON array only. No explanation.`;
+      }
+
+      const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s max
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: llmConfig.model.trim(),
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.0,
+          max_tokens: 300,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn(`[LLM Validator] Server returned ${response.status} — skipping semantic check`);
+        return [];
+      }
+
+      const data = await response.json() as any;
+      const raw: string = data?.choices?.[0]?.message?.content ?? '[]';
+
+      // Extract JSON array from response (LLM may wrap it in prose)
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) {
+        console.warn('[LLM Validator] Response not a JSON array — skipping');
+        return [];
+      }
+
+      const issues: string[] = JSON.parse(match[0]);
+      if (!Array.isArray(issues)) { return []; }
+
+      const filtered = issues.filter((i): i is string => typeof i === 'string' && (i.includes('❌') || i.includes('⚠️')));
+      if (filtered.length > 0) {
+        console.log(`[LLM Validator] Found ${filtered.length} issue(s) in ${filePath}:`);
+        filtered.forEach(i => console.log(`  ${i}`));
+      }
+
+      return filtered;
+    } catch (err) {
+      // Non-blocking: LLM unavailable or timed out — proceed with write
+      console.warn(`[LLM Validator] Skipped (${err instanceof Error ? err.message : String(err)})`);
+      return [];
+    }
+  }
+
+  /**
    * Filter validation errors to only return critical errors.
    * Soft suggestions are logged but not returned as validation failures.
-   * 
+   *
    * This prevents the "bully effect" where suggestions distract from hard errors.
    */
   private filterCriticalErrors(
@@ -1182,34 +1609,59 @@ export class Executor {
         }
       }
       
+      // Commands that are always safe to run without confirmation:
+      // - test runners (deterministic, bounded, expected in CI)
+      // - type-checkers (read-only)
+      // - linters (read-only or auto-fix)
+      // These NEVER prompt the user — just run.
+      const safeWithoutConfirmation = [
+        /^(?:npx\s+)?vitest(\s+run|\s+--run|\s+[^\s]+)*$/i,         // vitest, npx vitest, vitest run
+        /^(?:npx\s+)?jest(\s+--runInBand|\s+--ci|\s+[^\s]+)*$/i,    // jest, npx jest
+        /^npm\s+test$/i,                                              // npm test (bare)
+        /^yarn\s+test$/i,                                             // yarn test (bare)
+        /^(?:npx\s+)?tsc\b.*--noEmit/i,                              // tsc --noEmit (type-check only)
+        /^(?:npx\s+)?eslint\b/i,                                     // eslint
+        /^(?:npx\s+)?ruff\b/i,                                       // ruff (Python linter)
+        /^(?:npx\s+)?prettier\b.*--check/i,                          // prettier --check (read-only)
+      ];
+      const isSafeToRunDirectly = safeWithoutConfirmation.some(p => p.test(step.command.trim()));
+
+      // For vitest/jest bare commands (no --run flag), append --run to avoid watch mode hanging
+      if (isSafeToRunDirectly && /vitest|jest/i.test(step.command) && !/--run|--ci|--watch=false/i.test(step.command)) {
+        step = { ...step, command: step.command.trim() + ' --run' };
+        console.log(`[Executor] Appended --run to prevent watch mode: ${step.command}`);
+      }
+
+      if (isSafeToRunDirectly) {
+        console.log(`[Executor] Test/lint command — running without confirmation: ${step.command}`);
+        return step;
+      }
+
       // Patterns that warrant user confirmation (potentially long-running or risky)
       const confirmationPatterns = [
-        // Package managers & testing
-        /npm\s+(test|run|install|build)/,
-        /yarn\s+(test|run|install|build)/,
-        /pnpm\s+(test|run|install|build)/,
-        /bun\s+(test|run|install|build)/,
-        
-        // Testing frameworks
-        /jest|mocha|vitest|pytest|pytest-|cargo\s+test|go\s+test|mix\s+test/,
+        // Package install / build (can be slow or modify disk)
+        /npm\s+(install|run\s+build|run\s+dev)/,
+        /yarn\s+(install|add|run\s+build|run\s+dev)/,
+        /pnpm\s+(install|add|run\s+build|run\s+dev)/,
+        /bun\s+(install|add|run\s+build|run\s+dev)/,
 
-        // Build tools
-        /webpack|rollup|vite|tsc|typescript|babel/,
+        // Build tools (produce artefacts)
+        /webpack|rollup/,
         /gradle|maven|make|cmake/,
-        
+
         // Database/backend operations
         /migrate|seed|dump|restore|backup/,
         /docker\s+(build|run|compose)|docker-compose/,
-        
-        // Deployment & git operations (risky)
+
+        // Deployment & destructive git operations
         /deploy|push|merge|rebase|reset|force/,
         /git\s+(push|merge|rebase|reset|force)/,
-        
-        // Long-running operations
+
+        // Long-running server processes
         /npm\s+start|yarn\s+start|pnpm\s+start|bun\s+start/,
-        /server|dev|watch|watch-mode/,
+        /\bdev\b|\bwatch\b|\bwatch-mode\b|\bserve\b/,
       ];
-      
+
       const shouldAsk = confirmationPatterns.some(pattern => pattern.test(command));
       
       if (shouldAsk) {
@@ -1282,10 +1734,12 @@ export class Executor {
       /manual|verify|check|browser|visually/i.test(step.description);
 
     if (isEmptyRunStep || isManualVerification) {
+      const skipOutput = `📝 Skipped (human verification): ${step.description}`;
+      this.config.onStepOutput?.(stepId, skipOutput, false);
       return {
         stepId: step.stepId,
         success: true,
-        output: `📝 Skipped (human verification): ${step.description}`,
+        output: skipOutput,
         duration: 0,
         timestamp: Date.now(),
         requiresManualVerification: true,
@@ -1366,11 +1820,13 @@ export class Executor {
           const clarifiedStep = await this.askClarification(step, '');
           console.log(`[Executor] askClarification returned: ${clarifiedStep ? 'step' : 'null'}`);
           if (clarifiedStep === null) {
-            // User skipped this step
+            // User skipped this step — emit to UI so it's visible in the execution log
+            const skipOutput = `⏭ Skipped by user: ${step.description}`;
+            this.config.onStepOutput?.(stepId, skipOutput, false);
             return {
               stepId: step.stepId,
               success: true,
-              output: `Skipped: ${step.description}`,
+              output: skipOutput,
               duration: Date.now() - startTime,
               timestamp: Date.now(),
             };
@@ -1586,15 +2042,39 @@ export class Executor {
    * If Step B depends on Step A, and Step A hasn't been completed yet,
    * this throws an error to block Step B's execution.
    */
-  private validateDependencies(step: PlanStep, completedStepIds: Set<string>): void {
+  private validateDependencies(
+    step: PlanStep,
+    completedStepIds: Set<string>,
+    planStepIds?: Set<string>,
+    planStepOrder?: string[]
+  ): void {
     // Only validate if step has dependencies
     if (!step.dependsOn || step.dependsOn.length === 0) {
       return;
     }
 
+    const currentIndex = planStepOrder ? planStepOrder.indexOf(step.id ?? '') : -1;
+
     // Check each dependency
     for (const depId of step.dependsOn) {
+      // Skip dependencies that were filtered out of the plan before execution.
+      // stripStaleDependencies in the planner should remove these, but this is the
+      // executor-side safety net for any that slip through.
+      if (planStepIds && !planStepIds.has(depId)) {
+        console.log(`[Executor] Skipping stale dep "${depId}" on step "${step.id}" — not in current plan`);
+        continue;
+      }
       if (!completedStepIds.has(depId)) {
+        // If we know the plan order, check whether the dep precedes this step.
+        // If the dep appears AFTER this step in plan order, the topo sort failed —
+        // warn and skip rather than aborting the whole plan.
+        if (planStepOrder && currentIndex >= 0) {
+          const depIndex = planStepOrder.indexOf(depId);
+          if (depIndex > currentIndex) {
+            console.warn(`[Executor] Dep "${depId}" appears after "${step.id}" in plan order — topo sort anomaly, skipping`);
+            continue;
+          }
+        }
         throw new Error(
           `DEPENDENCY_VIOLATION: Step "${step.id}" depends on "${depId}" which hasn't been completed yet. ` +
           `Steps must be executed in dependency order. ` +
@@ -2295,54 +2775,63 @@ Examples of hooks that need imports:
       console.log(`[Executor] ✅ Injecting required React imports for ${fileName}`);
     }
 
-    // FORM COMPONENT PATTERN INJECTION: Critical for form generation
-    // Extract and inject form patterns from .lla-rules if this is a form component
+    // FORM COMPONENT PATTERN INJECTION
     let formPatternSection = '';
     const isFormComponent = fileName.includes('Form');
     if (isFormComponent) {
-      const llmConfig = this.config.llmClient.getConfig();
-      const architectureRules = llmConfig.architectureRules || '';
-      
-      // Extract Form Component Architecture section from .lla-rules
-      const formPatternMatch = architectureRules.match(/###\s+Form Component Architecture[\s\S]*?(?=###\s+|$)/);
-      if (formPatternMatch) {
-        formPatternSection = `
+      formPatternSection = `
 ## REQUIRED: Form Component Patterns
-
-${formPatternMatch[0]}
-
-CRITICAL: ALL 7 PATTERNS ARE MANDATORY FOR FORM COMPONENTS.
-Validator will REJECT if any pattern is missing.
-
-`;
-        console.log(`[Executor] ✅ Injecting form component patterns for ${fileName}`);
-      } else {
-        // Fallback: Inject form patterns directly if not in rules
-        formPatternSection = `
-## REQUIRED: Form Component Patterns (7 Mandatory)
 
 1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
 2. **Event Typing** - Use FormEventHandler for submit, FormEvent for inputs:
    - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
    - Form: const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => { event.preventDefault(); ... }
-3. **Consolidator Pattern** - Single handleChange function that updates state: setFormData(prev => ({ ...prev, [name]: value }))
-4. **Submit Handler** - Use onSubmit on <form> element: <form onSubmit={handleSubmit}>
-5. **Error Tracking** - Use local error state: const [errors, setErrors] = useState<Record<string, string>>({})
-6. **Input Validation** - Simple validation in handlers (NOT Zod): if (!email.includes('@')) { setErrors(...); return; }
-7. **Semantic Form Markup** - Use proper HTML: <input name="email" type="email" required /> with name attributes
+3. **Consolidator Pattern** - Single handleChange: setFormData(prev => ({ ...prev, [name]: value }))
+4. **Submit Handler** - onSubmit on the form element: <form onSubmit={handleSubmit}>
+5. **Controlled Inputs** - Every input MUST have both value AND onChange: <input value={formData.email} onChange={handleChange} name="email" />
 
 CRITICAL RULES:
-- DO NOT use Zod, yup, or external schema validation in form components
-- Validation is simple: check string length, email format, etc in event handlers
-- Keep form logic simple and lean
-- No external dependencies for validation (useState is enough)
-
-Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
+- DO NOT use Zod, yup, or any external validation library
+- Only add validation (email format checks, length checks) if the REQUIREMENT explicitly requests it
+- Keep form logic lean — implement only what the REQUIREMENT describes
 
 `;
-        console.log(`[Executor] ⚠️ Fallback: Injecting hardcoded form patterns for ${fileName}`);
+    }
+
+    // PROJECT PROFILE CONSTRAINTS: Inject detected project conventions as hard rules
+    let profileConstraintsSection = '';
+    if (this.config.projectProfile) {
+      const constraints = this.config.projectProfile.getGenerationConstraints();
+      if (constraints) {
+        profileConstraintsSection = `\n${constraints}\n`;
+        console.log(`[Executor] ✅ Injecting project profile constraints for ${fileName}`);
       }
     }
+
+    // Interactive component constraint block: injected for Button, Input, Select, etc.
+    const interactiveComponentPattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
+    const isInteractiveComponent = interactiveComponentPattern.test(step.path);
+    const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component';
+    const interactiveComponentSection = isInteractiveComponent
+      ? `\nINTERACTIVE COMPONENT RULES (mandatory — interactive elements MUST support refs):\n` +
+        `- MUST use React.forwardRef exported directly: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { return <button ref={ref} {...props} />; });\n` +
+        `- MUST set displayName: ${componentName}.displayName = '${componentName}';\n` +
+        `- MUST return JSX — the component body MUST contain a return statement with a JSX element (e.g. <button ...>). Never return a plain string or cn() call.\n` +
+        `- NEVER use an internal alias: do NOT write \`const ${componentName}Inner = ...\` then \`export const ${componentName} = ${componentName}Inner\` or \`export const ${componentName} = ${componentName}\`. Export forwardRef directly.\n\n`
+      : '';
+
+    // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
+    const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+    const hookConstraintSection = isHookTarget
+      ? `\nHOOK FILE RULES (mandatory — hooks are pure logic, no styling):\n` +
+        `- NEVER import cn, clsx, classnames, or any CSS/style utility — hooks have no className\n` +
+        `- NEVER import React UI primitives (Button, Input, etc.) — hooks return state/callbacks only\n` +
+        `- Only import: React hooks (useState, useCallback, useEffect, useRef), types, and domain utilities\n` +
+        `- RETURN CONTRACT: The return object MUST expose ALL managed state values AND their manipulation functions.\n` +
+        `  WRONG: return { increment, decrement, reset }  — hides the count value from the consumer\n` +
+        `  RIGHT:  return { count, increment, decrement, reset }  — count is the primary value, always expose it\n` +
+        `  Rule: every piece of state created with useState MUST appear in the return object.\n\n`
+      : '';
 
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
@@ -2352,7 +2841,7 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${interactiveComponentSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -2364,6 +2853,16 @@ ${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSectio
 9. This code will be parsed as pure code - nothing else matters
 10. Validate: Does this code fulfill the REQUIREMENT stated above?
 ${multiStepContext ? '11. Integration Check: Does this code properly use/import files mentioned in CONTEXT above?' : ''}
+SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly describes.
+- If the REQUIREMENT says "variant prop supporting primary and secondary", output EXACTLY those two variants — no size prop, no loading state, no icon slot, no extra variants.
+- Every prop, state variable, or feature NOT mentioned in the REQUIREMENT is OUT OF SCOPE and must be omitted.
+- Do NOT add implicit bounds, clamping (Math.max/Math.min), guard clauses, or validation unless the REQUIREMENT explicitly asks for them. "decrement" means subtract 1 — not "subtract 1 but clamp at 0".
+- Adding unrequested features is a spec violation. When in doubt, do less.
+
+TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into intermediate variables.
+- WRONG: const paddingStyle = 'px-4 py-2';  cn(paddingStyle, variantClasses[variant], className)
+- RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
+- Intermediate const variables for single class strings are dead indirection — inline them directly in cn().
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';
@@ -2374,6 +2873,19 @@ const schema = z.object({...});
 export function MyComponent() {...}
 
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
+    }
+
+    // Architect pre-flight: generate task-specific acceptance criteria before code generation.
+    // Criteria are injected into the Executor prompt (so the generator knows what will be checked)
+    // AND passed to the Reviewer (llmValidate) for structured YES/NO validation after generation.
+    const acceptanceCriteria = await this.generateAcceptanceCriteria(step);
+
+    // Inject criteria into the generation prompt so the Executor satisfies them upfront
+    if (acceptanceCriteria.length > 0) {
+      const criteriaBlock =
+        '\nACCEPTANCE CRITERIA (Reviewer will check each — your code MUST satisfy all):\n' +
+        acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n';
+      prompt += criteriaBlock;
     }
 
     // Emit that we're generating content
@@ -2436,7 +2948,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           'info'
         );
 
-        const validationResult = await this.validateGeneratedCode(step.path, content, step);
+        const validationResult = await this.validateGeneratedCode(step.path, content, step, acceptanceCriteria);
 
         // ✅ FIX: Separate critical errors from soft suggestions
         const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
@@ -2545,7 +3057,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               }
 
               // Validate the fixed code - only check CRITICAL errors
-              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step);
+              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step, acceptanceCriteria);
               const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
                 smartValidation.errors,
                 false // Don't spam logs during auto-correction
@@ -2583,7 +3095,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   return `${i + 1}. ${e}`;
                 }).join('\n');
                 
-                const fixPrompt = `The code you generated for ${step.path} has CRITICAL validation errors that MUST be fixed:\n\n${formattedErrors}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
@@ -2613,8 +3125,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 }
                 return `${i + 1}. ${e}`;
               }).join('\n');
-              
-              const fixPrompt = `The code you generated for ${step.path} has CRITICAL validation errors that MUST be fixed:\n\n${formattedErrors}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+
+              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {
@@ -2629,7 +3141,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             }
 
             // Re-validate the corrected code - only check CRITICAL errors
-            const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step, acceptanceCriteria);
             const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
               nextValidation.errors,
               false // Don't spam logs during loops
@@ -2893,6 +3405,21 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               duration: Date.now() - startTime,
             });
           } else {
+            // Special case: test runner exits code 1 because no test files exist.
+            // This is not a failure — the component simply has no tests yet.
+            const isTestCommand = /vitest|jest|npm\s+test|yarn\s+test/i.test(command);
+            const isNoTestFiles = /no test files found/i.test(output);
+            if (isTestCommand && isNoTestFiles) {
+              console.log(`[Executor] No test files found for "${command}" — treating as skip`);
+              resolve({
+                stepId: step.stepId,
+                success: true,
+                output: '⏭ No test files found — step skipped (no tests to run)',
+                duration: Date.now() - startTime,
+              });
+              return;
+            }
+
             const errorMsg = output || `Command failed with exit code ${code}`;
             const suggestion = this.suggestErrorFix('run', command, errorMsg);
             resolve({

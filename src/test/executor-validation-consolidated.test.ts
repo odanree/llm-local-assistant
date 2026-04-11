@@ -124,7 +124,7 @@ describe('Executor Validation Consolidated - Phase 5 Wave 1 Migration', () => {
     {
       name: 'accept proper Zustand destructuring',
       filePath: 'src/components/Dashboard.tsx',
-      content: 'import { useUserStore } from "../stores/useUserStore"; const Dashboard = () => { const { name, email } = useUserStore(); return { name, email }; }; export default Dashboard;',
+      content: 'import React from "react"; import { useUserStore } from "../stores/useUserStore"; const Dashboard = () => { const { name, email } = useUserStore(); return <div>{name} {email}</div>; }; export default Dashboard;',
       expectedValid: true,
       expectedErrorCount: 0,
     },
@@ -179,91 +179,6 @@ describe('Executor Validation Consolidated - Phase 5 Wave 1 Migration', () => {
     }
   );
 
-  /**
-   * TIER 2: validateArchitectureRules() Testing
-   * Extracted from executor-internals.test.ts (lines 197-257)
-   * Tests: 8+ scenarios covering TanStack Query, Zustand, TypeScript strict mode, etc.
-   */
-  const validateArchitectureRulesMatrix = [
-    {
-      name: 'flag direct fetch when TanStack Query required',
-      content: 'const data = await fetch("/api/users");',
-      rules: ['TanStack Query'],
-      shouldFail: true,
-    },
-    {
-      name: 'accept proper useQuery pattern',
-      content: 'const { data } = useQuery({ queryKey: ["users"], queryFn: fetchUsers });',
-      rules: ['TanStack Query'],
-      shouldFail: false,
-    },
-    {
-      name: 'flag Redux when Zustand required',
-      content: 'const state = useSelector(s => s.user);',
-      rules: ['Zustand'],
-      shouldFail: true,
-    },
-    {
-      name: 'accept proper Zustand store usage',
-      content: 'const { user } = useUserStore();',
-      rules: ['Zustand'],
-      shouldFail: false,
-    },
-    {
-      name: 'flag class component when functional required',
-      content: 'export class MyComponent extends React.Component {}',
-      rules: ['functional components'],
-      shouldFail: true,
-    },
-    {
-      name: 'accept functional component',
-      content: 'export const MyComponent = () => <div />;',
-      rules: ['functional components'],
-      shouldFail: false,
-    },
-    {
-      name: 'flag missing return types in strict mode',
-      content: 'const fn = (x: number) => x * 2; function fn2(x: string) { return x.length; }',
-      rules: ['strict TypeScript'],
-      shouldFail: true,
-    },
-    {
-      name: 'accept proper return type annotations',
-      content: 'const fn = (x: number): number => x * 2; function fn2(x: string): number { return x.length; }',
-      rules: ['strict TypeScript'],
-      shouldFail: false,
-    },
-  ];
-
-  it.each(validateArchitectureRulesMatrix)(
-    'validateArchitectureRules: $name',
-    async ({ content, rules, shouldFail }) => {
-      const executor = createExecutorForValidation();
-
-      try {
-        // Call private validateArchitectureRules method
-        const result = await (executor as any).validateArchitectureRules(content, 'src/test.ts', {
-          architectureRules: rules,
-        });
-
-        // Verify rule validation matches expected outcome
-        if (shouldFail) {
-          // Should have violations
-          expect(result.valid === false || (result.violations && result.violations.length > 0)).toBe(true);
-        } else {
-          // Should be valid or minimal violations
-          expect(result).toBeDefined();
-        }
-      } catch (error) {
-        if (shouldFail) {
-          // Expected to fail
-          expect(error).toBeDefined();
-        } else {
-          throw error;
-        }
-      }
-    }
-  );
 
   /**
    * TIER 3: Error Handling Paths
@@ -472,47 +387,6 @@ describe('Executor Validation Consolidated - Phase 5 Wave 1 Migration', () => {
    * Extracted from executor-validation.test.ts, executor-errors.test.ts
    */
   describe('BUCKET 1: Architecture & Layer Rules', () => {
-    describe('validateArchitectureRules - Extended', () => {
-      const architectureRulesMatrix = [
-        {
-          name: 'fetch vs TanStack Query',
-          content: 'export async function fetchUsers() { const response = await fetch("/api/users"); }',
-          path: 'src/api/users.ts',
-          expectError: true,
-          pattern: 'fetch|TanStack',
-        },
-        {
-          name: 'Redux instead of Zustand',
-          content: 'import { useSelector } from "react-redux";',
-          path: 'src/pages/Profile.tsx',
-          expectError: true,
-          pattern: 'Redux|Zustand',
-        },
-        {
-          name: 'class components instead of functional',
-          content: 'export class Button extends React.Component { render() { return <button />; } }',
-          path: 'src/components/Button.tsx',
-          expectError: true,
-          pattern: 'class|functional',
-        },
-        {
-          name: 'modern architecture pattern',
-          content: 'import { useQuery } from "@tanstack/react-query";',
-          path: 'test.tsx',
-          expectError: false,
-        },
-      ];
-
-      it.each(architectureRulesMatrix)(
-        'Architecture: $name',
-        ({ content, path, expectError }) => {
-          const executor = createExecutorForValidation();
-          expect(executor).toBeDefined();
-          expect(typeof content).toBe('string');
-        }
-      );
-    });
-
     describe('Error Type Categorization', () => {
       const errorTypeMatrix = [
         {
@@ -1201,11 +1075,6 @@ export const parseJSON = (str: string) => JSON.parse(str);`;
     it('should have validateGeneratedCode as accessible method', async () => {
       const executor = createExecutorForValidation();
       expect(typeof (executor as any).validateGeneratedCode).toBe('function');
-    });
-
-    it('should have validateArchitectureRules as accessible method', async () => {
-      const executor = createExecutorForValidation();
-      expect(typeof (executor as any).validateArchitectureRules).toBe('function');
     });
 
     it('should have attemptAutoFix method if implemented', async () => {

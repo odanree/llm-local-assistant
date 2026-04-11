@@ -6,6 +6,7 @@ import { Planner } from './planner';
 import GatekeeperValidator from './gatekeeperValidator';
 import { Executor } from './executor';
 import CodebaseIndex, { EmbeddingClient } from './codebaseIndex';
+import { ProjectProfile } from './projectProfile';
 import { getWebviewContent } from './webviewContent';
 import { PlanParser } from './planParser';
 import { WorkspaceDetector } from './utils';
@@ -17,6 +18,7 @@ let llmClient: LLMClient;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let embeddingClient: EmbeddingClient;
+let projectProfile: ProjectProfile;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -76,52 +78,6 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
   return folders[0];
 }
 
-/**
- * Load architecture rules from workspace root
- * Checks in priority order: .lla-rules (primary) → .cursorrules (migration/fallback)
- * @returns Rules content if file exists, undefined otherwise
- */
-async function loadArchitectureRules(): Promise<string | undefined> {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    console.log('[.lla-rules] No workspace folders found');
-    return undefined;
-  }
-
-  const workspace = folders[0];
-  const workspacePath = workspace.uri.fsPath;
-  console.log(`[.lla-rules] Checking workspace: ${workspacePath}`);
-
-  // Priority order:
-  // 1. .lla-rules (LLM Local Assistant - primary)
-  // 2. .cursorrules (Cursor IDE - fallback/migration support)
-  const filenames = ['.lla-rules', '.cursorrules'];
-
-  for (const filename of filenames) {
-    try {
-      const rulesUri = vscode.Uri.joinPath(workspace.uri, filename);
-      const rulesPath = rulesUri.fsPath;
-      console.log(`[.lla-rules] Attempting to read: ${rulesPath}`);
-      
-      const content = await vscode.workspace.fs.readFile(rulesUri);
-      const text = new TextDecoder().decode(content);
-      const lines = text.split('\n').length;
-
-      console.log(`✅ [.lla-rules] Successfully loaded ${filename} (${lines} lines, ${content.byteLength} bytes)`);
-      console.log(`[.lla-rules] First line: ${text.split('\n')[0].substring(0, 80)}`);
-      return text;
-    } catch (error) {
-      // File doesn't exist, try next
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.log(`[.lla-rules] ${filename} not found: ${errorMsg}`);
-      continue;
-    }
-  }
-
-  // No rules file found
-  console.log(`[.lla-rules] No .lla-rules or .cursorrules file found in workspace`);
-  return undefined;
-}
 
 /**
  * Get LLM configuration from VS Code settings
@@ -205,7 +161,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /context show structure → Show project file organization\n` +
           `- /context show patterns → Show detected code patterns\n` +
           `- /context show dependencies → Show file dependencies\n` +
-          `- /context find similar <file> → Find similar files\n\n` +
+          `- /context find similar <file> → Find similar files\n` +
+          `- /context query <text> → Show which files RAG would inject for a query\n\n` +
           `🔧 **Refactoring:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n\n` +
           `📝 **File Operations:**\n` +
@@ -340,7 +297,16 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     const relevant = await codebaseIndex.queryByText(userRequest, 5);
                     console.log(`[RAG] queryByText matched ${relevant.length} file(s): ${relevant.map(f => f.path).join(', ') || 'none'}`);
                     const ctx = codebaseIndex.getMetadataContext(relevant);
-                    if (ctx) { ragContext = ctx; }
+                    if (ctx) {
+                      // Append explicit usage hints for well-known utilities found in context
+                      const hints: string[] = [];
+                      for (const f of relevant) {
+                        if (f.exports.includes('cn') && f.purpose === 'utility') {
+                          hints.push(`IMPORTANT: Use \`cn\` from \`${f.path}\` for ALL className merging — do NOT use string concatenation or template literals for class names.`);
+                        }
+                      }
+                      ragContext = ctx + (hints.length ? '\n\n' + hints.join('\n') : '');
+                    }
                   }
 
                   const plan = await planner.generatePlan(
@@ -806,93 +772,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                   }
                   
-                  // Check 6: Architecture rules validation (if .lla-rules loaded)
-                  const architectureRules = llmClient["config"]?.architectureRules || '';
-                  console.log(`[LLM Assistant] Architecture rules loaded: ${architectureRules.length > 0 ? 'YES' : 'NO'}`);
-                  
-                  if (architectureRules) {
-                    console.log(`[LLM Assistant] Checking architecture rules...`);
-                    
-                    // Rule: No direct fetch() when TanStack Query is rule
-                    if (architectureRules.includes('TanStack Query')) {
-                      // Check for various fetch patterns
-                      const hasFetch = /fetch\s*\(|await\s+fetch|fetch\s*\{/.test(generatedContent);
-                      if (hasFetch) {
-                        validationErrors.push(
-                          `❌ Architecture rule violation: Using direct fetch() instead of TanStack Query. ` +
-                          `Use: const { data } = useQuery(...) or useMutation(...)`
-                        );
-                        console.log(`[LLM Assistant] Fetch usage detected - rule violation`);
-                      }
-                    }
-                    
-                    // Rule: No Redux when Zustand is rule
-                    if (architectureRules.includes('Zustand') && generatedContent.includes('useSelector')) {
-                      validationErrors.push(
-                        `❌ Architecture rule violation: Using Redux (useSelector) instead of Zustand. ` +
-                        `Use: const store = useStore() from your Zustand store`
-                      );
-                      console.log(`[LLM Assistant] Redux usage detected - rule violation`);
-                    }
-                    
-                    // Rule: No class components
-                    if (architectureRules.includes('functional components') && generatedContent.includes('extends React.Component')) {
-                      validationErrors.push(
-                        `❌ Architecture rule violation: Using class component instead of functional component. ` +
-                        `Convert to: export function ComponentName() { ... }`
-                      );
-                      console.log(`[LLM Assistant] Class component detected - rule violation`);
-                    }
-                    
-                    // Rule: TypeScript strict mode - return types required
-                    if (architectureRules.includes('strict TypeScript') || architectureRules.includes('Never use implicit types')) {
-                      // Check for arrow functions without return type annotation
-                      const arrowFunctionsWithoutReturnType = generatedContent.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
-                      if (arrowFunctionsWithoutReturnType) {
-                        validationErrors.push(
-                          `✅ Architecture rule: TypeScript strict mode requires return type annotations. ` +
-                          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
-                        );
-                        console.log(`[LLM Assistant] Arrow functions missing return types`);
-                      }
-
-                      // Check for function declarations without return type
-                      const functionsWithoutReturnType = generatedContent.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
-                      if (functionsWithoutReturnType) {
-                        validationErrors.push(
-                          `✅ Architecture rule: Function declarations need return type annotations. ` +
-                          `Use: function funcName(...): ReturnType { ... }`
-                        );
-                        console.log(`[LLM Assistant] Functions missing return types`);
-                      }
-                    }
-
-                    // Rule: Runtime validation with Zod for utility functions
-                    if (architectureRules.includes('Zod for all runtime validation')) {
-                      // Check for object parameters without validation
-                      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(generatedContent);
-                      const hasZodValidation = generatedContent.includes('z.parse') || generatedContent.includes('z.parseAsync');
-                      
-                      if (hasObjectParams && !hasZodValidation && !generatedContent.includes('z.object')) {
-                        validationErrors.push(
-                          `✅ Architecture rule: Functions accepting objects should validate input with Zod. ` +
-                          `Define schema: const schema = z.object({ ... }); ` +
-                          `Then validate: const validated = schema.parse(input);`
-                        );
-                        console.log(`[LLM Assistant] Object parameters without Zod validation`);
-                      }
-                    }
-
-                    // Rule: Zod validation
-                    if (architectureRules.includes('Zod') && generatedContent.includes('type ') && !generatedContent.includes('z.')) {
-                      validationErrors.push(
-                        `✅ Architecture rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-                        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-                      );
-                      console.log(`[LLM Assistant] Zod rule suggestion`);
-                    }
-                  }
-                  
                   // Check 7: React Hook Form resolver pattern
                   if ((generatedContent.includes('useForm') || generatedContent.includes('react-hook-form')) && generatedContent.includes('z.')) {
                     if (generatedContent.includes('async') && generatedContent.includes('validate')) {
@@ -1199,13 +1078,37 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                   }
 
+                } else if (subcommand.startsWith('query ')) {
+                  const queryText = contextMatch[1].trim().replace(/^query\s+/i, '');
+                  if (!queryText) {
+                    response = `Usage: /context query <text>\nExample: /context query "form validation with zod"`;
+                  } else if (!codebaseIndex) {
+                    response = `RAG index not ready yet. Try again in a moment.`;
+                  } else {
+                    const relevant = await codebaseIndex.queryByText(queryText, 8);
+                    if (relevant.length === 0) {
+                      response = `# RAG Query: "${queryText}"\n\nNo matching files found in index.`;
+                    } else {
+                      response = `# RAG Query: "${queryText}"\n\n` +
+                        `**${relevant.length} file(s) would be injected as context:**\n\n` +
+                        relevant.map(f => {
+                          const exports = f.exports.length ? f.exports.slice(0, 6).join(', ') : 'no exports';
+                          const hasChunks = f.contentChunks && f.contentChunks.length > 0;
+                          return `- \`${f.path}\` (${f.purpose}) — ${exports}${hasChunks ? ' 🧠' : ''}`;
+                        }).join('\n') +
+                        `\n\n🧠 = indexed with content chunks (semantic search)\n` +
+                        `No icon = export-list or token-overlap match`;
+                    }
+                  }
+
                 } else {
                   response = `Unknown /context subcommand: ${subcommand}\n\n` +
                     `Available commands:\n` +
                     `- /context show structure\n` +
                     `- /context show patterns\n` +
                     `- /context show dependencies\n` +
-                    `- /context find similar <term>`;
+                    `- /context find similar <term>\n` +
+                    `- /context query <text>`;
                 }
 
                 postChatMessage({
@@ -2033,15 +1936,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize LLM client with config
   const config = getLLMConfig();
 
-  // Load architecture rules from .lla-rules or .cursorrules
-  console.log('[Extension] Loading architecture rules...');
-  const rules = await loadArchitectureRules();
-  if (rules) {
-    config.architectureRules = rules;
-    console.log('[Extension] ✅ Architecture rules loaded and injected into LLMConfig');
-  } else {
-    console.log('[Extension]  No .lla-rules or .cursorrules file found (optional)');
-  }
+
 
   llmClient = new LLMClient(config);
   console.log('[Extension] ✅ LLM Client initialized');
@@ -2059,13 +1954,24 @@ export async function activate(context: vscode.ExtensionContext) {
     // Fast startup: load metadata index immediately (no Ollama needed)
     codebaseIndex.loadMetadataIndex(metaFile);
 
-    codebaseIndex.scan().then(() => {
+    // ProjectProfile: load from cache immediately, re-scan after codebase scan
+    projectProfile = new ProjectProfile(wsFolder.fsPath);
+    const profileCacheFile = path.join(wsFolder.fsPath, '.lla-profile.json');
+    const profileCached = projectProfile.load(profileCacheFile);
+    if (!profileCached) {
+      console.log('[Extension] No project profile cache — will scan after codebase index');
+    }
+
+    codebaseIndex.scan().then(async () => {
       console.log('[Extension] ✅ Codebase index scanned');
       codebaseIndex.saveMetadataIndex(metaFile);
       const restored = codebaseIndex.loadEmbeddingsCache(cacheFile);
       if (restored > 0) {
         console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
       }
+      // Re-scan profile after every codebase scan (picks up new Tailwind config, cn utility, etc.)
+      await projectProfile.scan();
+      projectProfile.save(profileCacheFile);
       return codebaseIndex.embedAll(embeddingClient);
     }).then(() => {
       codebaseIndex.saveEmbeddingsCache(cacheFile);
@@ -2091,6 +1997,7 @@ export async function activate(context: vscode.ExtensionContext) {
     workspace: wsFolder || vscode.Uri.file('/'),
     codebaseIndex, // Phase 3.3.2: Track files created during execution
     embeddingClient, // RAG: resolves symbol → file path in fixCommonPatternsAsync
+    projectProfile, // ProjectProfile: injects detected conventions as hard constraints
     maxRetries: 2,
     timeout: 30000,
     onProgress: (step: number, total: number, description: string) => {

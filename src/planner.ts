@@ -160,6 +160,48 @@ export class Planner {
         }
       }
 
+      // POST-PROCESS: Drop WRITE steps for files that are already in the RAG context
+      // The LLM was explicitly told not to write these files, but sometimes ignores it.
+      // Enforcing in code is more reliable than relying solely on prompt instructions.
+      if (ragContext) {
+        sortedSteps = this.filterRedundantWrites(sortedSteps, ragContext, workspacePath);
+      }
+
+      // POST-PROCESS: Drop noise READ steps.
+      // A READ step is noise when the plan already has WRITE steps but this READ
+      // has no downstream WRITE to the same path — these are LLM epilogues:
+      // "verify your work", "view result", "see the output", etc.
+      sortedSteps = this.filterNoisyReadSteps(sortedSteps);
+
+      // POST-PROCESS: Drop test RUN steps when the project has no test files.
+      // The LLM prompt says "NO npm test" but the LLM sometimes ignores it.
+      if (!hasTests) {
+        sortedSteps = this.filterTestSteps(sortedSteps);
+      }
+
+      // POST-PROCESS: Strip dependency references that point to steps removed by filters above.
+      // Without this, remaining steps that declared dependsOn a filtered step throw
+      // DEPENDENCY_VIOLATION at execution time.
+      sortedSteps = this.stripStaleDependencies(sortedSteps);
+
+      // POST-PROCESS: Re-sort after filtering to ensure correct execution order.
+      // Filters may change the step set; the original topological order may now be stale
+      // (e.g. step_3 placed before step_2 because step_4 — which was its only predecessor in
+      // the original graph — was filtered out). Re-running topological sort on the surviving
+      // steps with their updated dependencies produces a valid execution order.
+      try {
+        sortedSteps = this.topologicalSort(sortedSteps);
+        console.log(`[Planner] Re-sorted ${sortedSteps.length} steps after filtering`);
+      } catch (resortErr) {
+        // If re-sort fails (should not happen after stripStaleDependencies), keep current order
+        console.warn(`[Planner] Post-filter re-sort failed (keeping current order): ${resortErr}`);
+      }
+
+      // FINAL: Re-number steps sequentially to match display order.
+      // Topological sort changes execution order but stepNumber still holds the LLM's
+      // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
+      sortedSteps = sortedSteps.map((step, i) => ({ ...step, stepNumber: i + 1 }));
+
       const plan: TaskPlan = {
         taskId: `plan-${Date.now()}`,
         userRequest,
@@ -173,7 +215,7 @@ export class Planner {
       // PRE-FLIGHT VALIDATION: Check template compliance before execution (NEW)
       this.validatePlanAgainstTemplates(plan);
 
-      this.config.onProgress?.('Planning', `Generated ${steps.length} steps`);
+      this.config.onProgress?.('Planning', `Generated ${sortedSteps.length} steps`);
       return plan;
     } catch (err) {
       throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -318,8 +360,17 @@ PATH_RULES:
 `;
     }
     
+    // Extract file paths from RAG context to build an explicit FORBIDDEN list
+    const ragPaths = ragContext
+      ? [...ragContext.matchAll(/^-\s+(\S+)\s+\(/gm)].map(m => m[1])
+      : [];
+
     const ragSection = ragContext
-      ? `\nEXISTING CODEBASE (use these paths/exports — do NOT recreate them):\n${ragContext}\n`
+      ? `\nEXISTING CODEBASE — these files ALREADY EXIST in the project. Do NOT create or recreate them. Import and use them directly:\n${ragContext}\n\n` +
+        (ragPaths.length > 0
+          ? `FORBIDDEN WRITES — you MUST NOT generate a WRITE step for any of these paths (they already exist):\n` +
+            ragPaths.map(p => `  ✗ ${p}`).join('\n') + '\n'
+          : '')
       : '';
 
     return `You are a step planner. Output a numbered plan.
@@ -369,7 +420,7 @@ BENEFIT OF DECOUPLING:
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npx tsc --noEmit" to verify TypeScript compilation. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -403,8 +454,10 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
+  - Interactive components (button, input) MUST include px-4 py-2 in the cn() base string — components without padding are invisible by default
+  - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
-  - Merge styles with: <button className={cn('px-4 py-2', className)}>
+  - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
 
 ${contextSection}
 
@@ -424,7 +477,7 @@ ${contextSection}
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npx tsc --noEmit" to verify TypeScript compilation. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -458,8 +511,10 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
+  - Interactive components (button, input) MUST include px-4 py-2 in the cn() base string — components without padding are invisible by default
+  - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
-  - Merge styles with: <button className={cn('px-4 py-2', className)}>
+  - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
 
 ${contextSection}
 USER REQUEST: ${userRequest}
@@ -578,7 +633,9 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
 
     for (let i = 0; i < parsedSteps.length; i++) {
       const raw = parsedSteps[i];
-      const stepNumber = (raw.step || i + 1) as number;
+      // Use nullish coalescing (not ||) so step: 0 from LLM doesn't fall through to i+1
+      // Clamp to minimum 1 — step IDs are 1-indexed (step_0 would mismatch completedStepIds)
+      const stepNumber = Math.max(1, (raw.step ?? i + 1) as number);
 
       // Validate action
       let action = (raw.action || 'read').toLowerCase().trim();
@@ -880,6 +937,165 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
    * 3. Prepend WRITE steps for missing utilities
    * 4. Ensure components can use what they need
    */
+  /**
+   * Drop noise READ steps from a plan that contains WRITE steps.
+   *
+   * A READ step is noise when:
+   *   - The plan has at least one WRITE step (so this isn't a read-only query plan), AND
+   *   - No later WRITE step in the plan targets the same path (so the READ output is never used).
+   *
+   * The LLM frequently appends "verify your work" epilogues — reading the file it just wrote.
+   * These steps produce no output that affects subsequent steps and inflate the step count.
+   *
+   * Kept:
+   *   - READ → WRITE same path (legitimate refactor pattern)
+   *   - All READ steps in plans with zero WRITE steps
+   *
+   * Dropped:
+   *   - READ with no matching downstream WRITE (pure noise)
+   */
+  private filterNoisyReadSteps(steps: ExecutionStep[]): ExecutionStep[] {
+    const writtenPaths = new Set<string>(
+      steps
+        .filter(s => s.action === 'write' && s.path)
+        .map(s => s.path!)
+    );
+
+    // If the plan has no writes at all, every read is intentional — keep them all
+    if (writtenPaths.size === 0) { return steps; }
+
+    const filtered = steps.filter((step, index) => {
+      if (step.action !== 'read' || !step.path) { return true; }
+
+      const normalizedPath = step.path.replace(/\\/g, '/');
+
+      // Keep if a WRITE step targets the same file (refactor: read-then-overwrite)
+      if (writtenPaths.has(normalizedPath)) { return true; }
+
+      // Keep if there is any WRITE step AFTER this READ — it's providing context
+      const hasSubsequentWrite = steps.slice(index + 1).some(s => s.action === 'write');
+      if (hasSubsequentWrite) { return true; }
+
+      // Drop: READ with no same-file write AND no subsequent write = trailing epilogue
+      console.log(`[Planner] Dropped noise READ step (trailing, no downstream write): ${normalizedPath}`);
+      return false;
+    });
+
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} noise READ step(s) with no downstream write`);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Drop RUN steps that invoke test runners when the project has no test files.
+   * The LLM sometimes emits test steps even when the prompt says not to.
+   * Removing them in code is more reliable than relying on prompt compliance.
+   */
+  private filterTestSteps(steps: ExecutionStep[]): ExecutionStep[] {
+    const testCommandPattern = /\b(vitest|jest|pytest|npm\s+test|yarn\s+test)\b/i;
+    const filtered = steps.filter(step => {
+      if (step.action === 'run' && step.command && testCommandPattern.test(step.command)) {
+        console.log(`[Planner] filterTestSteps: removed test step (no test files in project): "${step.description}"`);
+        return false;
+      }
+      return true;
+    });
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} test step(s) — project has no test files`);
+    }
+    return filtered;
+  }
+
+  /**
+   * After any filter removes steps, strip references to those steps from dependsOn arrays.
+   * Without this, remaining steps that declared a dependency on a filtered step will throw
+   * DEPENDENCY_VIOLATION at execution time even though the dependency is gone.
+   */
+  private stripStaleDependencies(steps: ExecutionStep[]): ExecutionStep[] {
+    const remainingIds = new Set(steps.map(s => s.id).filter(Boolean) as string[]);
+    return steps.map(step => {
+      if (!step.dependsOn || step.dependsOn.length === 0) { return step; }
+      const validDeps = step.dependsOn.filter(depId => remainingIds.has(depId));
+      if (validDeps.length === step.dependsOn.length) { return step; }
+      console.log(`[Planner] stripStaleDependencies: removed ${step.dependsOn.length - validDeps.length} stale dep(s) from "${step.id}"`);
+      return { ...step, dependsOn: validDeps };
+    });
+  }
+
+  /**
+   * Drop WRITE steps for files that already exist in the RAG context.
+   *
+   * The LLM is told "don't recreate these files" but sometimes generates a WRITE
+   * step anyway (especially for utilities like cn.ts). Filtering in code is more
+   * reliable than relying on prompt compliance alone.
+   *
+   * Only drops WRITE steps for files that:
+   *   1. Appear verbatim in the RAG context path list, AND
+   *   2. Are utility/lib files (src/utils/, src/lib/, etc.) OR actually exist on disk.
+   *   (Avoids blocking intentional refactor writes to components.)
+   */
+  private filterRedundantWrites(
+    steps: ExecutionStep[],
+    ragContext: string,
+    workspacePath?: string
+  ): ExecutionStep[] {
+    // Extract file paths from RAG context lines: "- src/utils/cn.ts (utility) — ..."
+    const ragPaths = new Set<string>();
+    for (const match of ragContext.matchAll(/^-\s+(\S+)\s+\(/gm)) {
+      ragPaths.add(match[1]);
+    }
+
+    if (ragPaths.size === 0) { return steps; }
+
+    const fs = require('fs');
+    const path = require('path');
+
+    // Utility-layer path pattern — these should never be re-written unless explicitly requested
+    const utilityLayerPattern = /\bsrc[\\/](?:utils|lib|helpers|constants|stores)[\\/]/i;
+
+    const filtered = steps.filter(step => {
+      if (step.action !== 'write' || !step.path) { return true; }
+
+      // Never filter scaffold steps — they are healing writes for corrupted/missing utilities
+      if (step.id?.startsWith('scaffold-')) { return true; }
+
+      const normalizedPath = step.path.replace(/\\/g, '/');
+      const inRagContext = ragPaths.has(normalizedPath);
+      const isUtility = utilityLayerPattern.test(normalizedPath) ||
+        /[\\/](cn|utils|helpers|classnames)\.[tj]s$/.test(normalizedPath);
+      const existsOnDisk = workspacePath
+        ? fs.existsSync(path.join(workspacePath, normalizedPath))
+        : false;
+
+      // Case A: File is in RAG context (LLM was told it exists) AND (utility OR exists on disk)
+      if (inRagContext && (isUtility || existsOnDisk)) {
+        console.log(`[Planner] Dropped redundant WRITE for existing RAG file: ${normalizedPath}`);
+        return false;
+      }
+
+      // Case B: Utility file exists on disk even if not returned by RAG query.
+      // RAG only returns top-5 results; a utility file not in the top-5 can still be
+      // healthy and should not be blindly overwritten.
+      if (!inRagContext && isUtility && existsOnDisk) {
+        console.log(`[Planner] Dropped redundant WRITE for existing utility (not in RAG): ${normalizedPath}`);
+        return false;
+      }
+
+      return true;
+    });
+
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} redundant WRITE step(s) for files already in workspace`);
+    }
+
+    return filtered;
+  }
+
   private async checkScaffoldDependencies(
     steps: ExecutionStep[],
     workspacePath: string,
@@ -924,18 +1140,45 @@ export function cn(...inputs: ClassValue[]): string {
       const utilityPath = path.join(workspacePath, utility.path);
       const utilityExists = fs.existsSync(utilityPath);
 
-      if (!utilityExists) {
-        console.log(`[Planner] Scaffold: Missing ${utility.name} at ${utility.path}, will create`);
+      let needsWrite = !utilityExists;
+      let reason = 'missing';
 
-        // Create a WRITE step for the missing utility
+      if (utilityExists) {
+        // Existence is not enough — validate the file is healthy.
+        // A previous run could have written a corrupted version (e.g. circular import).
+        try {
+          const existingContent: string = fs.readFileSync(utilityPath, 'utf-8');
+
+          // Utility files must not import from the component layer (circular dependency)
+          const hasCircularImport = /from\s+['"].*(?:\/components|\/pages|\/app|\/routes|\/views)['"]/i.test(existingContent);
+          // Must actually export the expected utility function
+          const hasValidExport = /export\s+(?:function|const)\s+cn\b/.test(existingContent);
+
+          if (hasCircularImport) {
+            needsWrite = true;
+            reason = 'circular import detected';
+          } else if (!hasValidExport) {
+            needsWrite = true;
+            reason = 'missing cn export';
+          }
+        } catch {
+          needsWrite = true;
+          reason = 'unreadable';
+        }
+      }
+
+      if (needsWrite) {
+        console.log(`[Planner] Scaffold: ${utility.name} at ${utility.path} — ${reason}, will rewrite with golden template`);
+
+        // Create a WRITE step for the missing/corrupted utility
         const scaffoldStep: ExecutionStep = {
           stepId: 0, // Will be renumbered by executor
           stepNumber: 0, // Will be renumbered by executor
           id: `scaffold-${utility.name.replace(/\s+/g, '-')}`,
           action: 'write' as ActionTypeString,
           path: utility.path,
-          description: `Create ${utility.name} utility (required for component styling)`,
-          expectedOutcome: `File created: ${utility.path}`,
+          description: `${utilityExists ? 'Heal' : 'Create'} ${utility.name} utility (${reason})`,
+          expectedOutcome: `File written: ${utility.path}`,
           command: utility.template, // Store template in command for executor
         };
 
