@@ -215,7 +215,7 @@ export class Planner {
       // PRE-FLIGHT VALIDATION: Check template compliance before execution (NEW)
       this.validatePlanAgainstTemplates(plan);
 
-      this.config.onProgress?.('Planning', `Generated ${steps.length} steps`);
+      this.config.onProgress?.('Planning', `Generated ${sortedSteps.length} steps`);
       return plan;
     } catch (err) {
       throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`);

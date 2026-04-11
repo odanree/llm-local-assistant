@@ -310,10 +310,9 @@ export class Executor {
           }
         }
         // Build the set of step IDs that are actually in this plan (after filtering)
-        const planStepIds = new Set<string>(
-          plan.steps.map(s => s.id).filter((id): id is string => !!id)
-        );
-        this.validateDependencies(step, completedStepIds, planStepIds);
+        const planStepOrder = plan.steps.map(s => s.id).filter((id): id is string => !!id);
+        const planStepIds = new Set<string>(planStepOrder);
+        this.validateDependencies(step, completedStepIds, planStepIds, planStepOrder);
 
         // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
         // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
@@ -975,6 +974,20 @@ export class Executor {
           `❌ forwardRef missing displayName: Add \`${componentName}.displayName = '${componentName}';\` ` +
           `after the component definition. Without it React DevTools shows "ForwardRef" instead of the component name.`
         );
+      }
+
+      // TSX components MUST return JSX, not a plain string/expression.
+      // Auto-correction can introduce this bug by wrapping the function signature but leaving the
+      // body as a bare cn() call — returns a string, throws "Nothing was returned from render".
+      if (filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
+        const hasJsxReturn = /<[A-Za-z][\w.]*[\s/>]/.test(content);
+        if (!hasJsxReturn) {
+          errors.push(
+            `❌ Component returns no JSX: The component body has no JSX element (no <tag ...>). ` +
+            `React components MUST return JSX — e.g. return <button ref={ref} {...props} />. ` +
+            `A bare cn() call or string return will throw "Nothing was returned from render" at runtime.`
+          );
+        }
       }
 
       // Interactive components (Button, Input, etc.) need at least one padding utility in base styles.
@@ -1990,12 +2003,15 @@ JSON array only. No explanation.`;
   private validateDependencies(
     step: PlanStep,
     completedStepIds: Set<string>,
-    planStepIds?: Set<string>
+    planStepIds?: Set<string>,
+    planStepOrder?: string[]
   ): void {
     // Only validate if step has dependencies
     if (!step.dependsOn || step.dependsOn.length === 0) {
       return;
     }
+
+    const currentIndex = planStepOrder ? planStepOrder.indexOf(step.id ?? '') : -1;
 
     // Check each dependency
     for (const depId of step.dependsOn) {
@@ -2007,6 +2023,16 @@ JSON array only. No explanation.`;
         continue;
       }
       if (!completedStepIds.has(depId)) {
+        // If we know the plan order, check whether the dep precedes this step.
+        // If the dep appears AFTER this step in plan order, the topo sort failed —
+        // warn and skip rather than aborting the whole plan.
+        if (planStepOrder && currentIndex >= 0) {
+          const depIndex = planStepOrder.indexOf(depId);
+          if (depIndex > currentIndex) {
+            console.warn(`[Executor] Dep "${depId}" appears after "${step.id}" in plan order — topo sort anomaly, skipping`);
+            continue;
+          }
+        }
         throw new Error(
           `DEPENDENCY_VIOLATION: Step "${step.id}" depends on "${depId}" which hasn't been completed yet. ` +
           `Steps must be executed in dependency order. ` +
@@ -2740,6 +2766,16 @@ CRITICAL RULES:
       }
     }
 
+    // Interactive component constraint block: injected for Button, Input, Select, etc.
+    const interactiveComponentPattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
+    const isInteractiveComponent = interactiveComponentPattern.test(step.path);
+    const interactiveComponentSection = isInteractiveComponent
+      ? `\nINTERACTIVE COMPONENT RULES (mandatory — interactive elements MUST support refs):\n` +
+        `- MUST use React.forwardRef: export const ${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'} = React.forwardRef<HTMLButtonElement, ${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'}Props>(({ ...props }, ref) => { return <button ref={ref} {...props} />; });\n` +
+        `- MUST set displayName: ${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'}.displayName = '${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'}';\n` +
+        `- MUST return JSX — the component body MUST contain a return statement with a JSX element (e.g. <button ...>). Never return a plain string or cn() call.\n\n`
+      : '';
+
     // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
     const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
     const hookConstraintSection = isHookTarget
@@ -2757,7 +2793,7 @@ CRITICAL RULES:
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${interactiveComponentSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -3011,7 +3047,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   return `${i + 1}. ${e}`;
                 }).join('\n');
                 
-                const fixPrompt = `The code you generated for ${step.path} has CRITICAL validation errors that MUST be fixed:\n\n${formattedErrors}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
@@ -3041,8 +3077,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 }
                 return `${i + 1}. ${e}`;
               }).join('\n');
-              
-              const fixPrompt = `The code you generated for ${step.path} has CRITICAL validation errors that MUST be fixed:\n\n${formattedErrors}\n\nPlease fix ALL these critical errors and provide ONLY the corrected code for ${step.path}. No explanations, no markdown. Start with the code immediately.`;
+
+              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {

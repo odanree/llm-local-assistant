@@ -126,10 +126,11 @@ export const Dashboard = () => {
     {
       name: 'Zustand: Proper destructuring pattern',
       filePath: 'src/components/Dashboard.tsx',
-      content: `import { useUserStore } from '../stores/useUserStore';
+      content: `import React from 'react';
+import { useUserStore } from '../stores/useUserStore';
 const Dashboard = () => {
   const { name, email } = useUserStore();
-  return { name, email };
+  return <div>{name} {email}</div>;
 };
 export default Dashboard;`,
       expected: { valid: true, errorCount: 0 },
