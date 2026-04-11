@@ -756,16 +756,32 @@ export class CodebaseIndex {
       this.extractDependencies();
       this.detectPatterns();
 
-      // Fire-and-forget embed so resolveExportSource works immediately for this file
-      if (this.embeddingClient && exports.length > 0) {
+      // Fire-and-forget embed so resolveExportSource and queryByText work immediately
+      if (this.embeddingClient) {
         const client = this.embeddingClient;
-        const text = `exports: ${exports.join(', ')}  path: ${relativePath}`;
-        client.embed(text).then(vec => {
-          fileEntry.embeddings = vec;
+        (async () => {
+          // Export-list embedding
+          if (exports.length > 0) {
+            try {
+              fileEntry.embeddings = await client.embed(`exports: ${exports.join(', ')}  path: ${relativePath}`);
+            } catch { /* Ollama unavailable */ }
+          }
+          // Content chunk embeddings
+          try {
+            const rawChunks = CodebaseIndex.chunkText(content, 512, 64);
+            const chunks: ContentChunk[] = [];
+            for (const { text: chunkText } of rawChunks) {
+              try {
+                const vec = await client.embed(chunkText);
+                chunks.push({ text: chunkText, vec });
+              } catch { break; }
+            }
+            if (chunks.length > 0) { fileEntry.contentChunks = chunks; }
+          } catch { /* unreadable */ }
           // Debounce cache save — flush 3s after the last addFile embed
           if (this.saveCacheTimer) { clearTimeout(this.saveCacheTimer); }
           this.saveCacheTimer = setTimeout(() => this.saveEmbeddingsCache(), 3000);
-        }).catch(() => { /* Ollama unavailable — exact-match still works */ });
+        })();
       }
     } catch (error) {
       console.error(`[CodebaseIndex] Error adding file ${filePath}:`, error);
