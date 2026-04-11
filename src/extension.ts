@@ -6,6 +6,7 @@ import { Planner } from './planner';
 import GatekeeperValidator from './gatekeeperValidator';
 import { Executor } from './executor';
 import CodebaseIndex, { EmbeddingClient } from './codebaseIndex';
+import { ProjectProfile } from './projectProfile';
 import { getWebviewContent } from './webviewContent';
 import { PlanParser } from './planParser';
 import { WorkspaceDetector } from './utils';
@@ -17,6 +18,7 @@ let llmClient: LLMClient;
 let executor: Executor;
 let codebaseIndex: CodebaseIndex;
 let embeddingClient: EmbeddingClient;
+let projectProfile: ProjectProfile;
 let chatPanel: vscode.WebviewPanel | undefined;
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
@@ -2093,13 +2095,24 @@ export async function activate(context: vscode.ExtensionContext) {
     // Fast startup: load metadata index immediately (no Ollama needed)
     codebaseIndex.loadMetadataIndex(metaFile);
 
-    codebaseIndex.scan().then(() => {
+    // ProjectProfile: load from cache immediately, re-scan after codebase scan
+    projectProfile = new ProjectProfile(wsFolder.fsPath);
+    const profileCacheFile = path.join(wsFolder.fsPath, '.lla-profile.json');
+    const profileCached = projectProfile.load(profileCacheFile);
+    if (!profileCached) {
+      console.log('[Extension] No project profile cache — will scan after codebase index');
+    }
+
+    codebaseIndex.scan().then(async () => {
       console.log('[Extension] ✅ Codebase index scanned');
       codebaseIndex.saveMetadataIndex(metaFile);
       const restored = codebaseIndex.loadEmbeddingsCache(cacheFile);
       if (restored > 0) {
         console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
       }
+      // Re-scan profile after every codebase scan (picks up new Tailwind config, cn utility, etc.)
+      await projectProfile.scan();
+      projectProfile.save(profileCacheFile);
       return codebaseIndex.embedAll(embeddingClient);
     }).then(() => {
       codebaseIndex.saveEmbeddingsCache(cacheFile);
@@ -2125,6 +2138,7 @@ export async function activate(context: vscode.ExtensionContext) {
     workspace: wsFolder || vscode.Uri.file('/'),
     codebaseIndex, // Phase 3.3.2: Track files created during execution
     embeddingClient, // RAG: resolves symbol → file path in fixCommonPatternsAsync
+    projectProfile, // ProjectProfile: injects detected conventions as hard constraints
     maxRetries: 2,
     timeout: 30000,
     onProgress: (step: number, total: number, description: string) => {

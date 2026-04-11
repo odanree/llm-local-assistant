@@ -16,6 +16,7 @@ import { PlanState } from './types/PlanState';
 import { PathSanitizer } from './utils/pathSanitizer';
 import { ValidationReport, formatValidationReportForLLM } from './types/validation';
 import { GOLDEN_TEMPLATES } from './constants/templates';
+import { ProjectProfile } from './projectProfile';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
 import { validateArchitectureRulePure } from './utils/architectureRuleValidator';
@@ -33,6 +34,7 @@ export interface ExecutorDependencies {
   gitClient?: GitClient;
   codebaseIndex?: CodebaseIndex;
   embeddingClient?: EmbeddingClient;
+  projectProfile?: ProjectProfile;
   fs?: IFileSystem;
   commandRunner?: ICommandRunner;
 }
@@ -885,6 +887,42 @@ export class Executor {
       errors.push(`${prefix} ${issue.message}`);
     });
 
+    // ----------------------------------------------------------------
+    // CSS module import detection
+    // Flags `import styles from '*.module.css'` in projects that don't use CSS modules.
+    // ProjectProfile tracks hasCssModules; if false, any *.module.css import is fabricated.
+    // We check regardless of profile because CSS modules are rarely added mid-component.
+    // ----------------------------------------------------------------
+    const cssModuleImport = content.match(/import\s+\w+\s+from\s+['"]([^'"]*\.module\.css)['"]/);
+    if (cssModuleImport) {
+      errors.push(
+        `❌ Fabricated CSS module: \`${cssModuleImport[1]}\` was imported but this project uses Tailwind, not CSS modules. ` +
+        `Remove the CSS module import and replace all \`styles.xxx\` references with Tailwind classes via cn().`
+      );
+    }
+
+    // ----------------------------------------------------------------
+    // Cross-layer dependency violation (catches circular imports)
+    // Rule: utility/lib/store files must NOT import from component layer.
+    // Components depend on utils, never the other way around.
+    // ----------------------------------------------------------------
+    const utilityLayerPattern = /\bsrc[\\/](?:utils|lib|helpers|constants|stores)[\\/]/i;
+    const isUtilityLayerFile = utilityLayerPattern.test(filePath) ||
+      /[\\/](cn|utils|helpers|classnames)\.[tj]s$/.test(filePath);
+
+    if (isUtilityLayerFile) {
+      const componentImport = content.match(
+        /from\s+['"]([^'"]*(?:components|pages|app|routes|views|screens)[^'"]*)['"]/i
+      );
+      if (componentImport) {
+        errors.push(
+          `❌ Circular dependency: \`${filePath}\` is a utility/lib file but imports from "${componentImport[1]}". ` +
+          `Utility files must never import from the component layer — this will crash the module loader at runtime. ` +
+          `Remove the component import; if you need shared logic, extract it to a separate utility.`
+        );
+      }
+    }
+
     // TSX component-specific checks
     if (filePath.endsWith('.tsx')) {
       // Detect React.ReactNode / React.ReactElement used as a runtime value (not a type)
@@ -916,6 +954,45 @@ export class Executor {
         errors.push(
           `⚠️ Export consistency: Component has only a default export. ` +
           `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
+        );
+      }
+
+      // forwardRef components must set .displayName for React DevTools
+      const usesForwardRef = content.includes('React.forwardRef') || /\bforwardRef\s*\(/.test(content);
+      const hasDisplayName = /\.displayName\s*=/.test(content);
+      if (usesForwardRef && !hasDisplayName) {
+        const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') || 'Component';
+        errors.push(
+          `❌ forwardRef missing displayName: Add \`${componentName}.displayName = '${componentName}';\` ` +
+          `after the component definition. Without it React DevTools shows "ForwardRef" instead of the component name.`
+        );
+      }
+
+      // Interactive components (Button, Input, etc.) need at least one padding utility in base styles.
+      // Lack of padding makes the component invisible/unusable until the consumer adds classes.
+      // Critical (❌) not just a warning: a button with no padding is non-functional out of the box.
+      const isInteractiveComponent = /\b(button|input|textarea|select)\b/i.test(
+        filePath.split('/').pop() || ''
+      );
+      if (isInteractiveComponent) {
+        const hasPadding = /\b(?:p|px|py|pt|pb|pl|pr)-\d/.test(content);
+        if (!hasPadding) {
+          errors.push(
+            `❌ Missing default sizing: Interactive component has no padding utilities (px-*, py-*, p-*). ` +
+            `Add \`px-4 py-2\` to the cn() base string so the component is usable without consumer overrides.`
+          );
+        }
+      }
+
+      // Detect conflicting Tailwind transition utilities.
+      // twMerge silently drops all but the last one — the component loses the intended animation.
+      // e.g. transition-colors + transition-transform → only transition-transform survives.
+      const transitionMatches = content.match(/\btransition-\w+\b/g) ?? [];
+      const uniqueTransitions = [...new Set(transitionMatches)];
+      if (uniqueTransitions.length > 1) {
+        errors.push(
+          `⚠️ Conflicting Tailwind utilities: multiple transition-* classes detected (${uniqueTransitions.join(', ')}). ` +
+          `twMerge keeps only the last one. Use a single transition utility — \`transition-colors\` is correct for most interactive components.`
         );
       }
     }
@@ -1217,34 +1294,59 @@ export class Executor {
         }
       }
       
+      // Commands that are always safe to run without confirmation:
+      // - test runners (deterministic, bounded, expected in CI)
+      // - type-checkers (read-only)
+      // - linters (read-only or auto-fix)
+      // These NEVER prompt the user — just run.
+      const safeWithoutConfirmation = [
+        /^(?:npx\s+)?vitest(\s+run|\s+--run|\s+[^\s]+)*$/i,         // vitest, npx vitest, vitest run
+        /^(?:npx\s+)?jest(\s+--runInBand|\s+--ci|\s+[^\s]+)*$/i,    // jest, npx jest
+        /^npm\s+test$/i,                                              // npm test (bare)
+        /^yarn\s+test$/i,                                             // yarn test (bare)
+        /^(?:npx\s+)?tsc\b.*--noEmit/i,                              // tsc --noEmit (type-check only)
+        /^(?:npx\s+)?eslint\b/i,                                     // eslint
+        /^(?:npx\s+)?ruff\b/i,                                       // ruff (Python linter)
+        /^(?:npx\s+)?prettier\b.*--check/i,                          // prettier --check (read-only)
+      ];
+      const isSafeToRunDirectly = safeWithoutConfirmation.some(p => p.test(step.command.trim()));
+
+      // For vitest/jest bare commands (no --run flag), append --run to avoid watch mode hanging
+      if (isSafeToRunDirectly && /vitest|jest/i.test(step.command) && !/--run|--ci|--watch=false/i.test(step.command)) {
+        step = { ...step, command: step.command.trim() + ' --run' };
+        console.log(`[Executor] Appended --run to prevent watch mode: ${step.command}`);
+      }
+
+      if (isSafeToRunDirectly) {
+        console.log(`[Executor] Test/lint command — running without confirmation: ${step.command}`);
+        return step;
+      }
+
       // Patterns that warrant user confirmation (potentially long-running or risky)
       const confirmationPatterns = [
-        // Package managers & testing
-        /npm\s+(test|run|install|build)/,
-        /yarn\s+(test|run|install|build)/,
-        /pnpm\s+(test|run|install|build)/,
-        /bun\s+(test|run|install|build)/,
-        
-        // Testing frameworks
-        /jest|mocha|vitest|pytest|pytest-|cargo\s+test|go\s+test|mix\s+test/,
+        // Package install / build (can be slow or modify disk)
+        /npm\s+(install|run\s+build|run\s+dev)/,
+        /yarn\s+(install|add|run\s+build|run\s+dev)/,
+        /pnpm\s+(install|add|run\s+build|run\s+dev)/,
+        /bun\s+(install|add|run\s+build|run\s+dev)/,
 
-        // Build tools
-        /webpack|rollup|vite|tsc|typescript|babel/,
+        // Build tools (produce artefacts)
+        /webpack|rollup/,
         /gradle|maven|make|cmake/,
-        
+
         // Database/backend operations
         /migrate|seed|dump|restore|backup/,
         /docker\s+(build|run|compose)|docker-compose/,
-        
-        // Deployment & git operations (risky)
+
+        // Deployment & destructive git operations
         /deploy|push|merge|rebase|reset|force/,
         /git\s+(push|merge|rebase|reset|force)/,
-        
-        // Long-running operations
+
+        // Long-running server processes
         /npm\s+start|yarn\s+start|pnpm\s+start|bun\s+start/,
-        /server|dev|watch|watch-mode/,
+        /\bdev\b|\bwatch\b|\bwatch-mode\b|\bserve\b/,
       ];
-      
+
       const shouldAsk = confirmationPatterns.some(pattern => pattern.test(command));
       
       if (shouldAsk) {
@@ -1317,10 +1419,12 @@ export class Executor {
       /manual|verify|check|browser|visually/i.test(step.description);
 
     if (isEmptyRunStep || isManualVerification) {
+      const skipOutput = `📝 Skipped (human verification): ${step.description}`;
+      this.config.onStepOutput?.(stepId, skipOutput, false);
       return {
         stepId: step.stepId,
         success: true,
-        output: `📝 Skipped (human verification): ${step.description}`,
+        output: skipOutput,
         duration: 0,
         timestamp: Date.now(),
         requiresManualVerification: true,
@@ -1401,11 +1505,13 @@ export class Executor {
           const clarifiedStep = await this.askClarification(step, '');
           console.log(`[Executor] askClarification returned: ${clarifiedStep ? 'step' : 'null'}`);
           if (clarifiedStep === null) {
-            // User skipped this step
+            // User skipped this step — emit to UI so it's visible in the execution log
+            const skipOutput = `⏭ Skipped by user: ${step.description}`;
+            this.config.onStepOutput?.(stepId, skipOutput, false);
             return {
               stepId: step.stepId,
               success: true,
-              output: `Skipped: ${step.description}`,
+              output: skipOutput,
               duration: Date.now() - startTime,
               timestamp: Date.now(),
             };
@@ -2379,6 +2485,16 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
       }
     }
 
+    // PROJECT PROFILE CONSTRAINTS: Inject detected project conventions as hard rules
+    let profileConstraintsSection = '';
+    if (this.config.projectProfile) {
+      const constraints = this.config.projectProfile.getGenerationConstraints();
+      if (constraints) {
+        profileConstraintsSection = `\n${constraints}\n`;
+        console.log(`[Executor] ✅ Injecting project profile constraints for ${fileName}`);
+      }
+    }
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
@@ -2387,7 +2503,7 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -2399,6 +2515,10 @@ ${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSectio
 9. This code will be parsed as pure code - nothing else matters
 10. Validate: Does this code fulfill the REQUIREMENT stated above?
 ${multiStepContext ? '11. Integration Check: Does this code properly use/import files mentioned in CONTEXT above?' : ''}
+SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly describes.
+- If the REQUIREMENT says "variant prop supporting primary and secondary", output EXACTLY those two variants — no size prop, no loading state, no icon slot, no extra variants.
+- Every prop, state variable, or feature NOT mentioned in the REQUIREMENT is OUT OF SCOPE and must be omitted.
+- Adding unrequested features is a spec violation. When in doubt, do less.
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';

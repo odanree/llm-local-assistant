@@ -160,6 +160,24 @@ export class Planner {
         }
       }
 
+      // POST-PROCESS: Drop WRITE steps for files that are already in the RAG context
+      // The LLM was explicitly told not to write these files, but sometimes ignores it.
+      // Enforcing in code is more reliable than relying solely on prompt instructions.
+      if (ragContext) {
+        sortedSteps = this.filterRedundantWrites(sortedSteps, ragContext, workspacePath);
+      }
+
+      // POST-PROCESS: Drop noise READ steps.
+      // A READ step is noise when the plan already has WRITE steps but this READ
+      // has no downstream WRITE to the same path — these are LLM epilogues:
+      // "verify your work", "view result", "see the output", etc.
+      sortedSteps = this.filterNoisyReadSteps(sortedSteps);
+
+      // FINAL: Re-number steps sequentially to match display order.
+      // Topological sort changes execution order but stepNumber still holds the LLM's
+      // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
+      sortedSteps = sortedSteps.map((step, i) => ({ ...step, stepNumber: i + 1 }));
+
       const plan: TaskPlan = {
         taskId: `plan-${Date.now()}`,
         userRequest,
@@ -318,8 +336,17 @@ PATH_RULES:
 `;
     }
     
+    // Extract file paths from RAG context to build an explicit FORBIDDEN list
+    const ragPaths = ragContext
+      ? [...ragContext.matchAll(/^-\s+(\S+)\s+\(/gm)].map(m => m[1])
+      : [];
+
     const ragSection = ragContext
-      ? `\nEXISTING CODEBASE — these files ALREADY EXIST in the project. Do NOT create or recreate them. Import and use them directly:\n${ragContext}\n`
+      ? `\nEXISTING CODEBASE — these files ALREADY EXIST in the project. Do NOT create or recreate them. Import and use them directly:\n${ragContext}\n\n` +
+        (ragPaths.length > 0
+          ? `FORBIDDEN WRITES — you MUST NOT generate a WRITE step for any of these paths (they already exist):\n` +
+            ragPaths.map(p => `  ✗ ${p}`).join('\n') + '\n'
+          : '')
       : '';
 
     return `You are a step planner. Output a numbered plan.
@@ -403,8 +430,10 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
+  - Interactive components (button, input) MUST include px-4 py-2 in the cn() base string — components without padding are invisible by default
+  - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
-  - Merge styles with: <button className={cn('px-4 py-2', className)}>
+  - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
 
 ${contextSection}
 
@@ -458,8 +487,10 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
+  - Interactive components (button, input) MUST include px-4 py-2 in the cn() base string — components without padding are invisible by default
+  - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
-  - Merge styles with: <button className={cn('px-4 py-2', className)}>
+  - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
 
 ${contextSection}
 USER REQUEST: ${userRequest}
@@ -882,6 +913,128 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
    * 3. Prepend WRITE steps for missing utilities
    * 4. Ensure components can use what they need
    */
+  /**
+   * Drop noise READ steps from a plan that contains WRITE steps.
+   *
+   * A READ step is noise when:
+   *   - The plan has at least one WRITE step (so this isn't a read-only query plan), AND
+   *   - No later WRITE step in the plan targets the same path (so the READ output is never used).
+   *
+   * The LLM frequently appends "verify your work" epilogues — reading the file it just wrote.
+   * These steps produce no output that affects subsequent steps and inflate the step count.
+   *
+   * Kept:
+   *   - READ → WRITE same path (legitimate refactor pattern)
+   *   - All READ steps in plans with zero WRITE steps
+   *
+   * Dropped:
+   *   - READ with no matching downstream WRITE (pure noise)
+   */
+  private filterNoisyReadSteps(steps: ExecutionStep[]): ExecutionStep[] {
+    const writtenPaths = new Set<string>(
+      steps
+        .filter(s => s.action === 'write' && s.path)
+        .map(s => s.path!)
+    );
+
+    // If the plan has no writes at all, every read is intentional — keep them all
+    if (writtenPaths.size === 0) { return steps; }
+
+    const filtered = steps.filter((step, index) => {
+      if (step.action !== 'read' || !step.path) { return true; }
+
+      const normalizedPath = step.path.replace(/\\/g, '/');
+
+      // Keep if a WRITE step targets the same file (refactor: read-then-overwrite)
+      if (writtenPaths.has(normalizedPath)) { return true; }
+
+      // Keep if there is any WRITE step AFTER this READ — it's providing context
+      const hasSubsequentWrite = steps.slice(index + 1).some(s => s.action === 'write');
+      if (hasSubsequentWrite) { return true; }
+
+      // Drop: READ with no same-file write AND no subsequent write = trailing epilogue
+      console.log(`[Planner] Dropped noise READ step (trailing, no downstream write): ${normalizedPath}`);
+      return false;
+    });
+
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} noise READ step(s) with no downstream write`);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Drop WRITE steps for files that already exist in the RAG context.
+   *
+   * The LLM is told "don't recreate these files" but sometimes generates a WRITE
+   * step anyway (especially for utilities like cn.ts). Filtering in code is more
+   * reliable than relying on prompt compliance alone.
+   *
+   * Only drops WRITE steps for files that:
+   *   1. Appear verbatim in the RAG context path list, AND
+   *   2. Are utility/lib files (src/utils/, src/lib/, etc.) OR actually exist on disk.
+   *   (Avoids blocking intentional refactor writes to components.)
+   */
+  private filterRedundantWrites(
+    steps: ExecutionStep[],
+    ragContext: string,
+    workspacePath?: string
+  ): ExecutionStep[] {
+    // Extract file paths from RAG context lines: "- src/utils/cn.ts (utility) — ..."
+    const ragPaths = new Set<string>();
+    for (const match of ragContext.matchAll(/^-\s+(\S+)\s+\(/gm)) {
+      ragPaths.add(match[1]);
+    }
+
+    if (ragPaths.size === 0) { return steps; }
+
+    const fs = require('fs');
+    const path = require('path');
+
+    // Utility-layer path pattern — these should never be re-written unless explicitly requested
+    const utilityLayerPattern = /\bsrc[\\/](?:utils|lib|helpers|constants|stores)[\\/]/i;
+
+    const filtered = steps.filter(step => {
+      if (step.action !== 'write' || !step.path) { return true; }
+
+      // Never filter scaffold steps — they are healing writes for corrupted/missing utilities
+      if (step.id?.startsWith('scaffold-')) { return true; }
+
+      const normalizedPath = step.path.replace(/\\/g, '/');
+      const inRagContext = ragPaths.has(normalizedPath);
+      const isUtility = utilityLayerPattern.test(normalizedPath) ||
+        /[\\/](cn|utils|helpers|classnames)\.[tj]s$/.test(normalizedPath);
+      const existsOnDisk = workspacePath
+        ? fs.existsSync(path.join(workspacePath, normalizedPath))
+        : false;
+
+      // Case A: File is in RAG context (LLM was told it exists) AND (utility OR exists on disk)
+      if (inRagContext && (isUtility || existsOnDisk)) {
+        console.log(`[Planner] Dropped redundant WRITE for existing RAG file: ${normalizedPath}`);
+        return false;
+      }
+
+      // Case B: Utility file exists on disk even if not returned by RAG query.
+      // RAG only returns top-5 results; a utility file not in the top-5 can still be
+      // healthy and should not be blindly overwritten.
+      if (!inRagContext && isUtility && existsOnDisk) {
+        console.log(`[Planner] Dropped redundant WRITE for existing utility (not in RAG): ${normalizedPath}`);
+        return false;
+      }
+
+      return true;
+    });
+
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} redundant WRITE step(s) for files already in workspace`);
+    }
+
+    return filtered;
+  }
+
   private async checkScaffoldDependencies(
     steps: ExecutionStep[],
     workspacePath: string,
@@ -926,18 +1079,45 @@ export function cn(...inputs: ClassValue[]): string {
       const utilityPath = path.join(workspacePath, utility.path);
       const utilityExists = fs.existsSync(utilityPath);
 
-      if (!utilityExists) {
-        console.log(`[Planner] Scaffold: Missing ${utility.name} at ${utility.path}, will create`);
+      let needsWrite = !utilityExists;
+      let reason = 'missing';
 
-        // Create a WRITE step for the missing utility
+      if (utilityExists) {
+        // Existence is not enough — validate the file is healthy.
+        // A previous run could have written a corrupted version (e.g. circular import).
+        try {
+          const existingContent: string = fs.readFileSync(utilityPath, 'utf-8');
+
+          // Utility files must not import from the component layer (circular dependency)
+          const hasCircularImport = /from\s+['"].*(?:\/components|\/pages|\/app|\/routes|\/views)['"]/i.test(existingContent);
+          // Must actually export the expected utility function
+          const hasValidExport = /export\s+(?:function|const)\s+cn\b/.test(existingContent);
+
+          if (hasCircularImport) {
+            needsWrite = true;
+            reason = 'circular import detected';
+          } else if (!hasValidExport) {
+            needsWrite = true;
+            reason = 'missing cn export';
+          }
+        } catch {
+          needsWrite = true;
+          reason = 'unreadable';
+        }
+      }
+
+      if (needsWrite) {
+        console.log(`[Planner] Scaffold: ${utility.name} at ${utility.path} — ${reason}, will rewrite with golden template`);
+
+        // Create a WRITE step for the missing/corrupted utility
         const scaffoldStep: ExecutionStep = {
           stepId: 0, // Will be renumbered by executor
           stepNumber: 0, // Will be renumbered by executor
           id: `scaffold-${utility.name.replace(/\s+/g, '-')}`,
           action: 'write' as ActionTypeString,
           path: utility.path,
-          description: `Create ${utility.name} utility (required for component styling)`,
-          expectedOutcome: `File created: ${utility.path}`,
+          description: `${utilityExists ? 'Heal' : 'Create'} ${utility.name} utility (${reason})`,
+          expectedOutcome: `File written: ${utility.path}`,
           command: utility.template, // Store template in command for executor
         };
 
