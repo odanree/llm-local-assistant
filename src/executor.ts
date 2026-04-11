@@ -1025,6 +1025,28 @@ export class Executor {
       }
     }
 
+    // cn imported but never called — applies to both .ts and .tsx
+    // A dead `import { cn }` means copy-paste residue or scope creep; it will be tree-shaken
+    // but signals the LLM deviated from the step's intent.
+    const importsCn = /import\s+.*\bcn\b.*from/.test(content);
+    if (importsCn && !/\bcn\s*\(/.test(content)) {
+      errors.push(
+        `⚠️ Dead import: \`cn\` is imported but never called. ` +
+        `Either use it for class merging (className={cn(...)}) or remove the import.`
+      );
+    }
+
+    // cn must never appear in hook files (.ts in hooks/ directory)
+    // Hooks are pure logic — no styling concerns. Its presence here means the LLM
+    // copy-pasted from a component template and didn't strip the style utilities.
+    const isHookFile = /[\\/]hooks[\\/][^/]+\.ts$/.test(filePath) && !filePath.endsWith('.tsx');
+    if (isHookFile && importsCn) {
+      errors.push(
+        `❌ Wrong layer: \`cn\` is a style utility and must not be imported in a hook. ` +
+        `Hooks are pure logic — remove the cn import from \`${filePath.split('/').pop()}\`.`
+      );
+    }
+
     return errors;
   }
 
