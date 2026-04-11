@@ -943,18 +943,6 @@ export class Executor {
         );
       }
 
-      // Detect component file with only default export and no named export
-      // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
-      const hasDefaultExport = /export\s+default\b/.test(content);
-      const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
-      const hasNamedDefinition = /\b(?:const|function|class)\s+[A-Z]\w+/.test(content);
-      if (hasDefaultExport && !hasNamedExport && !hasNamedDefinition && filePath.includes('components/')) {
-        errors.push(
-          `⚠️ Export consistency: Component has only a default export. ` +
-          `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
-        );
-      }
-
       // Interactive components MUST use forwardRef; forwardRef components MUST set .displayName
       const interactiveFilePattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
       const isInteractiveFile = interactiveFilePattern.test(filePath);
