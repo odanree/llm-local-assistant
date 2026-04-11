@@ -880,6 +880,19 @@ export class Executor {
       );
     }
 
+    // Controlled component check: inputs with onChange MUST have value prop.
+    // An input with onChange but no value is uncontrolled — state updates but the UI
+    // doesn't reflect the current state value, breaking the controlled component contract.
+    const hasOnChangeOnInput = /onChange\s*=\s*\{/.test(content);
+    const hasValueBinding = /\bvalue\s*=\s*\{[^}]+\}/.test(content);
+    if (hasInputElements && hasOnChangeOnInput && !hasValueBinding) {
+      errors.push(
+        `❌ Uncontrolled input: inputs have onChange but no value prop. ` +
+        `Add value={formData.fieldName} to each controlled input. ` +
+        `Without value= the input is uncontrolled and state changes won't reflect in the UI.`
+      );
+    }
+
     return errors;
   }
 
@@ -2742,31 +2755,28 @@ Examples of hooks that need imports:
 
 ${formPatternMatch[0]}
 
-CRITICAL: ALL 7 PATTERNS ARE MANDATORY FOR FORM COMPONENTS.
-Validator will REJECT if any pattern is missing.
+CRITICAL: State interface, event typing, consolidator pattern, form onSubmit, and controlled inputs (value + onChange) are mandatory.
+Only add validation or error state if the REQUIREMENT explicitly asks for it.
 
 `;
         console.log(`[Executor] ✅ Injecting form component patterns for ${fileName}`);
       } else {
         // Fallback: Inject form patterns directly if not in rules
         formPatternSection = `
-## REQUIRED: Form Component Patterns (7 Mandatory)
+## REQUIRED: Form Component Patterns
 
 1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
 2. **Event Typing** - Use FormEventHandler for submit, FormEvent for inputs:
    - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
    - Form: const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => { event.preventDefault(); ... }
-3. **Consolidator Pattern** - Single handleChange function that updates state: setFormData(prev => ({ ...prev, [name]: value }))
-4. **Submit Handler** - Use onSubmit on <form> element: <form onSubmit={handleSubmit}>
-5. **Error Tracking** - Use local error state: const [errors, setErrors] = useState<Record<string, string>>({})
-6. **Input Validation** - Simple validation in handlers (NOT Zod): if (!email.includes('@')) { setErrors(...); return; }
-7. **Semantic Form Markup** - Use proper HTML: <input name="email" type="email" required /> with name attributes
+3. **Consolidator Pattern** - Single handleChange: setFormData(prev => ({ ...prev, [name]: value }))
+4. **Submit Handler** - onSubmit on the form element: <form onSubmit={handleSubmit}>
+5. **Controlled Inputs** - Every input MUST have both value AND onChange: <input value={formData.email} onChange={handleChange} name="email" />
 
 CRITICAL RULES:
-- DO NOT use Zod, yup, or external schema validation in form components
-- Validation is simple: check string length, email format, etc in event handlers
-- Keep form logic simple and lean
-- No external dependencies for validation (useState is enough)
+- DO NOT use Zod, yup, or any external validation library
+- Only add validation (email format checks, length checks) if the REQUIREMENT explicitly requests it
+- Keep form logic lean — implement only what the REQUIREMENT describes
 
 Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
 
