@@ -990,6 +990,23 @@ export class Executor {
         }
       }
 
+      // Detect self-referential export: `export const Button = Button` or `export { Button as Button }`.
+      // Auto-correction introduces this pattern when it wraps an inner const and then re-exports by name.
+      // TypeScript throws "Block-scoped variable used before its declaration" or a circular reference.
+      // Fires for any component file (.tsx) — not just interactive files.
+      if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+        // Pattern: export const X = X  (same identifier on both sides)
+        const selfRefExportMatch = content.match(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*;/);
+        if (selfRefExportMatch && selfRefExportMatch[1] === selfRefExportMatch[2]) {
+          const name = selfRefExportMatch[1];
+          errors.push(
+            `❌ Self-referential export: \`export const ${name} = ${name};\` is a circular declaration. ` +
+            `Export the component directly: \`export const ${name} = React.forwardRef<...>(...)\` — ` +
+            `do NOT assign to an internal name and then re-export it by the same name.`
+          );
+        }
+      }
+
       // Interactive components (Button, Input, etc.) need at least one padding utility in base styles.
       // Lack of padding makes the component invisible/unusable until the consumer adds classes.
       // Critical (❌) not just a warning: a button with no padding is non-functional out of the box.
@@ -2769,11 +2786,13 @@ CRITICAL RULES:
     // Interactive component constraint block: injected for Button, Input, Select, etc.
     const interactiveComponentPattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
     const isInteractiveComponent = interactiveComponentPattern.test(step.path);
+    const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component';
     const interactiveComponentSection = isInteractiveComponent
       ? `\nINTERACTIVE COMPONENT RULES (mandatory — interactive elements MUST support refs):\n` +
-        `- MUST use React.forwardRef: export const ${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'} = React.forwardRef<HTMLButtonElement, ${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'}Props>(({ ...props }, ref) => { return <button ref={ref} {...props} />; });\n` +
-        `- MUST set displayName: ${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'}.displayName = '${step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component'}';\n` +
-        `- MUST return JSX — the component body MUST contain a return statement with a JSX element (e.g. <button ...>). Never return a plain string or cn() call.\n\n`
+        `- MUST use React.forwardRef exported directly: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { return <button ref={ref} {...props} />; });\n` +
+        `- MUST set displayName: ${componentName}.displayName = '${componentName}';\n` +
+        `- MUST return JSX — the component body MUST contain a return statement with a JSX element (e.g. <button ...>). Never return a plain string or cn() call.\n` +
+        `- NEVER use an internal alias: do NOT write \`const ${componentName}Inner = ...\` then \`export const ${componentName} = ${componentName}Inner\` or \`export const ${componentName} = ${componentName}\`. Export forwardRef directly.\n\n`
       : '';
 
     // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
@@ -3047,7 +3066,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   return `${i + 1}. ${e}`;
                 }).join('\n');
                 
-                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
+                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
@@ -3078,7 +3097,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 return `${i + 1}. ${e}`;
               }).join('\n');
 
-              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
+              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {
