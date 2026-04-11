@@ -870,12 +870,16 @@ export class CodebaseIndex {
       let restored = 0;
       for (const entry of cache.files) {
         const fileEntry = this.files.get(entry.path);
-        if (fileEntry && entry.embeddings.length > 0) {
-          fileEntry.embeddings = entry.embeddings;
+        if (fileEntry) {
+          if (entry.embeddings && entry.embeddings.length > 0) {
+            fileEntry.embeddings = entry.embeddings;
+          }
           if (entry.contentChunks && entry.contentChunks.length > 0) {
             fileEntry.contentChunks = entry.contentChunks;
           }
-          restored++;
+          if ((entry.embeddings && entry.embeddings.length > 0) || (entry.contentChunks && entry.contentChunks.length > 0)) {
+            restored++;
+          }
         }
       }
       console.log(`[CodebaseIndex] Restored ${restored} embeddings from cache (${cacheFile})`);
@@ -896,17 +900,17 @@ export class CodebaseIndex {
     const target = cacheFile ?? this.cacheFilePath;
     if (!target) return;
     const files = Array.from(this.files.values())
-      .filter(e => e.embeddings && e.embeddings.length > 0)
+      .filter(e => (e.embeddings && e.embeddings.length > 0) || (e.contentChunks && e.contentChunks.length > 0))
       .map(e => ({
         path: e.path,
-        embeddings: e.embeddings!,
+        embeddings: e.embeddings ?? [],
         ...(e.contentChunks && e.contentChunks.length > 0 ? { contentChunks: e.contentChunks } : {}),
       }));
     const cache: EmbeddingsCache = { model, savedAt: Date.now(), files };
     try {
       this.fs.writeFileSync(target, JSON.stringify(cache));
       const chunkedCount = files.filter(f => f.contentChunks && f.contentChunks.length > 0).length;
-      console.log(`[CodebaseIndex] Saved ${files.length} embeddings to cache (${chunkedCount} with content chunks)`);
+      console.log(`[CodebaseIndex] Saved ${files.length} files to cache (${chunkedCount} with content chunks)`);
     } catch (err) {
       console.warn('[CodebaseIndex] Failed to save embeddings cache:', err);
     }
