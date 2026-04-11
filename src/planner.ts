@@ -167,6 +167,11 @@ export class Planner {
         sortedSteps = this.filterRedundantWrites(sortedSteps, ragContext, workspacePath);
       }
 
+      // POST-PROCESS: Drop WRITE steps to entry/global files not mentioned in the user request.
+      // The planner commonly adds App.tsx/index.tsx modifications to "wire up" a new component
+      // even when the user only asked for one file. This is almost never correct behavior.
+      sortedSteps = this.filterUnrequestedEntryWrites(sortedSteps, userRequest);
+
       // POST-PROCESS: Drop noise READ steps.
       // A READ step is noise when the plan already has WRITE steps but this READ
       // has no downstream WRITE to the same path — these are LLM epilogues:
@@ -449,6 +454,12 @@ RULES:
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
 
+SCOPE CONSTRAINT — FILE CREATION:
+- ONLY create files explicitly named or clearly implied by the user's request
+- If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
+- If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
+- Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
+
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 📌 ALL components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
@@ -505,6 +516,12 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
+
+SCOPE CONSTRAINT — FILE CREATION:
+- ONLY create files explicitly named or clearly implied by the user's request
+- If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
+- If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
+- Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 📌 ALL components must:
@@ -984,6 +1001,44 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     const dropped = steps.length - filtered.length;
     if (dropped > 0) {
       console.log(`[Planner] Filtered ${dropped} noise READ step(s) with no downstream write`);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Drop WRITE steps targeting entry/global files (App.tsx, index.tsx, main.tsx, layout.tsx)
+   * when those files are not explicitly mentioned in the user's request.
+   *
+   * The planner routinely adds "wire up the new component in App.tsx" steps even when the
+   * user only asked for a single new file. This is scope creep — the user gets an unexpected
+   * modification to a file they didn't ask to change. The prompt constraint alone is unreliable;
+   * this filter enforces it in code.
+   *
+   * Heuristic: only targets well-known entry/global filenames. Safe to false-positive on:
+   * if the user explicitly names App.tsx in their request, the filter passes it through.
+   */
+  private filterUnrequestedEntryWrites(steps: ExecutionStep[], userRequest: string): ExecutionStep[] {
+    // Files the planner modifies unprompted to "wire up" new components.
+    // index.ts is intentionally excluded — it's commonly a module barrel file, not a UI entry point.
+    // Only index.tsx / index.jsx count as entry points (the JSX variants are UI roots).
+    const entryFilePattern = /\/(App|main|layout|Root|_app|_document)\.[tj]sx?$|\/index\.[tj]sx$/i;
+
+    const filtered = steps.filter(step => {
+      if (step.action !== 'write' || !step.path) { return true; }
+      if (!entryFilePattern.test(step.path)) { return true; }
+
+      // If the user explicitly named this file in their request, keep it
+      const fileName = step.path.split('/').pop()?.replace(/\.[tj]sx?$/, '') || '';
+      if (new RegExp(`\\b${fileName}\\b`, 'i').test(userRequest)) { return true; }
+
+      console.log(`[Planner] filterUnrequestedEntryWrites: dropped unrequested WRITE to "${step.path}" (not in user request)`);
+      return false;
+    });
+
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Removed ${dropped} unrequested entry-file WRITE step(s)`);
     }
 
     return filtered;

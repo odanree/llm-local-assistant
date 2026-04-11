@@ -1,436 +1,17 @@
-export function getWebviewContent(): string {
-  // Use a permissive CSP for the webview - allow CDN scripts for marked.js
-  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'unsafe-inline';">`;
-  const markedScript = `<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>`;
-  const script = `
-    // Configure marked to NOT parse/convert HTML tags (keep them as-is)
-    if (typeof marked !== 'undefined') {
-      marked.setOptions({
-        breaks: true,
-        gfm: true,
-        pedantic: false,
-        smartLists: true,
-        smartypants: false,
-      });
-      console.log('[Webview] marked.js loaded and configured');
-    } else {
-      console.warn('[Webview] marked.js not available on init, will check later');
-      // Try to wait for marked to load from CDN
-      let checkCount = 0;
-      const waitForMarked = setInterval(() => {
-        checkCount++;
-        if (typeof marked !== 'undefined') {
-          console.log('[Webview] marked.js loaded after', checkCount, 'checks');
-          marked.setOptions({
-            breaks: true,
-            gfm: true,
-            pedantic: false,
-            smartLists: true,
-            smartypants: false,
-          });
-          clearInterval(waitForMarked);
-        } else if (checkCount > 50) {
-          console.warn('[Webview] marked.js failed to load from CDN');
-          clearInterval(waitForMarked);
-        }
-      }, 100);
-    }
-    
-    const vscode = acquireVsCodeApi();
-    const chat = document.getElementById('chat');
-    const input = document.getElementById('input');
-    const send = document.getElementById('send');
-    const clear = document.getElementById('clear');
-    let tokenBuffer = '';
-    let bufferTimeout = null;
-    
-    // Command history & autocomplete
-    let commandHistory = [];
-    let historyIndex = -1;
-    let autocompleteMatches = [];
-    let autocompleteIndex = -1;
-    let lastAutocompletePrefix = '';
-    const availableCommands = [
-      '/explain',
-      '/plan',
-      '/execute',
-      '/approve',
-      '/reject',
-      '/refactor',
-      '/context query',
-      '/context show structure',
-      '/context show patterns',
-      '/context show dependencies',
-      '/context find similar',
-      '/context',
-      '/check-model',
-      '/read',
-      '/write',
-      '/suggestwrite',
-      '/git-commit-msg',
-      '/git-review',
-    ];
-    function flushTokenBuffer() {
-      if (tokenBuffer) {
-        const msgs = chat.children;
-        if (msgs.length === 0 || msgs[msgs.length - 1].className === 'msg user') {
-          const div = document.createElement('div');
-          div.className = 'msg assistant';
-          div.setAttribute('data-type', 'streaming');
-          chat.appendChild(div);
-        }
-        const lastMsg = chat.children[chat.children.length - 1];
-        lastMsg.textContent += tokenBuffer;
-        chat.scrollTop = chat.scrollHeight;
-        tokenBuffer = '';
-      }
-      bufferTimeout = null;
-    }
-    function sendMessage() {
-      const msg = input.value.trim();
-      if (msg) {
-        chat.innerHTML += '<div class="msg user">' + msg + '</div>';
-        commandHistory.push(msg);
-        historyIndex = commandHistory.length;
-        input.value = '';
-        autocompleteMatches = [];
-        autocompleteIndex = -1;
-        vscode.postMessage({ command: 'sendMessage', text: msg });
-      }
-    }
-    send.addEventListener('click', sendMessage);
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      } else if (e.key === 'Tab') {
-        e.preventDefault();
-        // Tab: autocomplete or cycle through matches
-        const currentInput = input.value;
-        const cursorPos = input.selectionStart;
-        const beforeCursor = currentInput.substring(0, cursorPos);
-        
-        // Find the current command being typed
-        const lastSlash = beforeCursor.lastIndexOf('/');
-        if (lastSlash !== -1) {
-          const partialCommand = beforeCursor.substring(lastSlash);
-          
-          // Check if input changed since last tab press
-          const inputChanged = !autocompleteMatches.length || 
-            !autocompleteMatches[0].startsWith(partialCommand) ||
-            beforeCursor.substring(0, lastSlash) !== lastAutocompletePrefix;
-          
-          // First tab or input changed: get all matching commands
-          if (inputChanged) {
-            autocompleteMatches = availableCommands.filter(cmd => cmd.startsWith(partialCommand));
-            autocompleteIndex = 0;
-            lastAutocompletePrefix = beforeCursor.substring(0, lastSlash);
-          } else {
-            // Subsequent tabs: cycle through matches
-            autocompleteIndex = (autocompleteIndex + 1) % autocompleteMatches.length;
-          }
-          
-          if (autocompleteMatches.length > 0) {
-            const match = autocompleteMatches[autocompleteIndex];
-            const newInput = beforeCursor.substring(0, lastSlash) + match + currentInput.substring(cursorPos);
-            input.value = newInput;
-            input.setSelectionRange(beforeCursor.substring(0, lastSlash).length + match.length, beforeCursor.substring(0, lastSlash).length + match.length);
-          }
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        // ArrowUp: restore previous command
-        if (historyIndex > 0) {
-          historyIndex--;
-          input.value = commandHistory[historyIndex];
-          setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
-        }
-        autocompleteMatches = [];
-        autocompleteIndex = -1;
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        // ArrowDown: go to next command in history
-        if (historyIndex < commandHistory.length - 1) {
-          historyIndex++;
-          input.value = commandHistory[historyIndex];
-          setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
-        } else {
-          historyIndex = commandHistory.length;
-          input.value = '';
-        }
-        autocompleteMatches = [];
-        autocompleteIndex = -1;
-      }
-    });
-    clear.addEventListener('click', () => {
-      chat.innerHTML = '';
-      vscode.postMessage({ command: 'clearChat' });
-    });
-    window.addEventListener('message', (e) => {
-      const msg = e.data;
-      if (msg.command === 'streamToken') {
-        // Buffer tokens for batch DOM updates (every ~10 tokens)
-        tokenBuffer += msg.token;
-        if (tokenBuffer.length >= 10) {
-          flushTokenBuffer();
-        } else if (!bufferTimeout) {
-          // Ensure buffer flushes even if we get fewer than 10 tokens
-          bufferTimeout = setTimeout(flushTokenBuffer, 50);
-        }
-      } else if (msg.command === 'streamComplete') {
-        // Flush any remaining buffered tokens
-        if (bufferTimeout) {
-          clearTimeout(bufferTimeout);
-        }
-        flushTokenBuffer();
-        chat.scrollTop = chat.scrollHeight;
-      } else if (msg.command === 'addMessage') {
-        const div = document.createElement('div');
-        div.className = 'msg assistant';
-        
-        // Add explanation class if this is an explanation message
-        if (msg.isExplanation) {
-          div.classList.add('explanation');
-        }
-        
-        if (msg.error) {
-          div.className = 'msg assistant error';
-          const strong = document.createElement('strong');
-          strong.textContent = '⚠ Error: ';
-          const span = document.createElement('span');
-          span.textContent = msg.error;
-          div.appendChild(strong);
-          div.appendChild(span);
-        } else if (msg.text) {
-          // Render markdown as styled HTML if flag is set
-          if (msg.isMarkdown) {
-            // Check if marked is available
-            if (typeof marked === 'undefined') {
-              console.warn('[Webview] marked.js not loaded, cannot convert markdown');
-              // Show user-visible warning
-              const warning = document.createElement('div');
-              warning.style.cssText = 'color:#ff6b6b; padding:4px; margin:4px; font-size:11px; font-style:italic;';
-              warning.textContent = '⚠️ Markdown library not loaded - showing as plain text';
-              div.appendChild(warning);
-              div.appendChild(document.createElement('br'));
-              div.textContent += msg.text;
-            } else {
-              try {
-                // Show original markdown in debug
-                const debugToggle = document.createElement('details');
-                debugToggle.style.cssText = 'font-size:10px; margin-bottom:8px; color:#888; cursor:pointer;';
-                const summary = document.createElement('summary');
-                summary.textContent = '📋 Show Original Markdown';
-                debugToggle.appendChild(summary);
-                
-                const debugContent = document.createElement('pre');
-                debugContent.style.cssText = 'background:#1a1a1a; color:#888; padding:6px; margin:4px; font-size:10px; border-radius:3px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; max-height:200px; overflow-y:auto;';
-                debugContent.textContent = msg.text;
-                debugToggle.appendChild(debugContent);
-                div.appendChild(debugToggle);
-                
-                // Escape angle brackets like <TypeName> so they display as text, not HTML
-                let processedText = msg.text.replace(/<([A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?(?:,\s*[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?)*\s*(?:extends [^>]*)?)>/g, '&lt;$1&gt;');
-                
-                const htmlContent = marked.parse(processedText);
-                console.log('[Webview] Markdown converted, output length:', htmlContent.length, 'starts with:', htmlContent.substring(0, 50));
-                const renderedContent = document.createElement('div');
-                renderedContent.innerHTML = htmlContent;
-                div.appendChild(renderedContent);
-              } catch (e) {
-                console.warn('[Webview] marked.parse() failed:', e);
-                div.textContent = msg.text;
-              }
-            }
-          } else {
-            div.textContent = msg.text;
-          }
-          
-        }
-        
-        // Add buttons if options are provided
-        if (msg.options && msg.options.length > 0) {
-          const buttonContainer = document.createElement('div');
-          buttonContainer.className = 'question-buttons';
-          buttonContainer.style.marginTop = '12px';
-          
-          msg.options.forEach((option) => {
-            // Check if this is a special execute/reject button for plan approval
-            const isApprovalButton = ['Execute', 'Reject', 'WaitRAG', 'SkipRAG'].includes(option);
+import * as fs from 'fs';
+import * as path from 'path';
 
-            if (isApprovalButton) {
-              // Create approval button (Execute/Reject/WaitRAG/SkipRAG)
-              const btn = document.createElement('button');
-              btn.className = 'question-btn';
-              const labelMap = {
-                Execute: '▶ Execute Plan',
-                Reject: '✕ Reject Plan',
-                WaitRAG: '⏳ Wait for RAG Index',
-                SkipRAG: '▶ Skip RAG',
-              };
-              btn.textContent = labelMap[option] ?? option;
-              btn.style.marginRight = '8px';
-              btn.onclick = () => {
-                console.log('[Webview] User clicked:', option);
-                vscode.postMessage({ command: 'buttonPressed', buttonName: option });
-              };
-              buttonContainer.appendChild(btn);
-            } else {
-              // Check if this is an Execute button (for commands)
-              const isExecuteButton = option.startsWith('Execute: ');
-              
-              if (isExecuteButton) {
-                // Create row with command + button
-                const row = document.createElement('div');
-                row.className = 'command-row';
-                
-                // Extract command from "Execute: /refactor ..."
-                const command = option.substring('Execute: '.length);
-                
-                // Command code (left side, copyable)
-                const code = document.createElement('code');
-                code.style.fontFamily = 'monospace';
-                code.style.marginRight = '8px';
-                code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
-                code.style.padding = '4px 8px';
-                code.style.borderRadius = '3px';
-                code.style.userSelect = 'all';
-                code.style.cursor = 'text';
-                code.textContent = command;
-                row.appendChild(code);
-                
-                // Button - send /refactor command to trigger analysis + pattern detection
-                const btn = document.createElement('button');
-                btn.className = 'question-btn command-btn';
-                btn.textContent = '▶ Execute';
-                btn.onclick = () => {
-                  console.log('[Webview] Execute button from /suggest-patterns:', command);
-                  // Send /refactor command - this will run pattern detection
-                  chat.innerHTML += '<div class="msg user">' + command + '</div>';
-                  commandHistory.push(command);
-                  historyIndex = commandHistory.length;
-                  vscode.postMessage({ command: 'sendMessage', text: command });
-                };
-                row.appendChild(btn);
-                
-                buttonContainer.appendChild(row);
-              } else {
-                // Regular button
-                const btn = document.createElement('button');
-                btn.className = 'question-btn';
-                btn.textContent = option;
-                btn.onclick = () => {
-                  input.value = option.replace('Execute: ', '');
-                  input.focus();
-                };
-                buttonContainer.appendChild(btn);
-              }
-            }
-          });
-          
-          div.appendChild(buttonContainer);
-        }
-        
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
-      } else if (msg.command === 'status') {
-        const div = document.createElement('div');
-        div.className = 'msg assistant status';
-        const em = document.createElement('em');
-        em.textContent = msg.text;
-        div.appendChild(em);
-        chat.appendChild(div);
-      } else if (msg.command === 'question') {
-        // Display question with options
-        console.log('[Webview] Received question message:', msg);
-        const div = document.createElement('div');
-        div.className = 'msg assistant question';
-        const q = document.createElement('p');
-        q.style.marginTop = '0';
-        q.textContent = msg.question;
-        div.appendChild(q);
-        
-        // Create button container for options
-        const buttonContainer = document.createElement('div');
-        buttonContainer.className = 'question-buttons';
-        
-        msg.options.forEach((option, idx) => {
-          // Check if option starts with "Execute: " (special handling for command buttons)
-          const isExecuteButton = option.startsWith('Execute: ');
-          
-          if (isExecuteButton) {
-            // Create row with command + button
-            const row = document.createElement('div');
-            row.className = 'command-row';
-            
-            // Extract command from "Execute: /refactor ..."
-            const command = option.substring('Execute: '.length);
-            
-            // Command code (left side, copyable)
-            const code = document.createElement('code');
-            code.style.fontFamily = 'monospace';
-            code.style.marginRight = '8px';
-            code.style.backgroundColor = 'var(--vscode-textCodeBlock-background)';
-            code.style.padding = '4px 8px';
-            code.style.borderRadius = '3px';
-            code.style.userSelect = 'all';
-            code.style.cursor = 'text';
-            code.textContent = command;
-            row.appendChild(code);
-            
-            // Button clicks - trigger refactoring action (not just re-run analyze)
-            const btn = document.createElement('button');
-            btn.className = 'question-btn command-btn';
-            btn.textContent = '▶ Execute';
-            btn.onclick = () => {
-              console.log('[Webview] User clicked execute button, triggering refactoring');
-              // Send answerQuestion with special marker so extension knows to refactor
-              vscode.postMessage({ command: 'answerQuestion', answer: '🔧 Refactor Now' });
-            };
-            row.appendChild(btn);
-            
-            buttonContainer.appendChild(row);
-          } else {
-            // Regular button (no command)
-            const btn = document.createElement('button');
-            btn.className = 'question-btn';
-            btn.textContent = option;
-            btn.onclick = () => {
-              console.log('[Webview] User clicked option:', option);
-              vscode.postMessage({ command: 'answerQuestion', answer: option });
-            };
-            buttonContainer.appendChild(btn);
-          }
-        });
-        
-        div.appendChild(buttonContainer);
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
-      }
-    });
-    
-    // Simple markdown to HTML converter that safely handles VS Code theme variables
-    function renderMarkdownAsHtml(markdown) {
-      if (typeof marked !== 'undefined') {
-        try {
-          return marked.parse(markdown);
-        } catch (e) {
-          console.warn('[Webview] marked parsing failed:', e);
-          return '<p>' + markdown.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';
-        }
-      }
-      return markdown;
-    }
-    
-    input.focus();
-  `;
+export function getWebviewContent(): string {
+  // Script compiled separately by esbuild (src/webview/main.ts → dist/webviewScript.js)
+  const scriptContent = fs.readFileSync(path.join(__dirname, 'webviewScript.js'), 'utf-8');
+  // marked is bundled into webviewScript.js — no CDN needed
+  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; script-src 'unsafe-inline'; style-src 'unsafe-inline';">`;
   const html = `<!DOCTYPE html>
     <html>
       <head>
         <meta charset="UTF-8">
         <title>LLM Assistant</title>
         ${csp}
-        ${markedScript}
         <style>
           * {
             box-sizing: border-box;
@@ -724,11 +305,19 @@ export function getWebviewContent(): string {
             background: var(--vscode-button-background);
             opacity: 0.8;
           }
-          button#clear {
+          button#copy {
             background: transparent;
             color: var(--vscode-button-secondaryForeground);
             border: 1px solid var(--vscode-button-border);
             margin-left: auto;
+          }
+          button#copy:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+          }
+          button#clear {
+            background: transparent;
+            color: var(--vscode-button-secondaryForeground);
+            border: 1px solid var(--vscode-button-border);
           }
           button#clear:hover {
             background: var(--vscode-button-secondaryHoverBackground);
@@ -741,10 +330,11 @@ export function getWebviewContent(): string {
           <div class="input-row">
             <input type="text" id="input" placeholder="Ask me..." autocomplete="off"/>
             <button id="send">Send</button>
+            <button id="copy">Copy</button>
             <button id="clear">Clear</button>
           </div>
         </div>
-        <script>${script}</script>
+        <script>${scriptContent}</script>
       </body>
     </html>`;
   return html;

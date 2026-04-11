@@ -492,7 +492,46 @@ export class Executor {
     // Check each file against all others for integration issues
     const integrationErrors: string[] = [];
     
+    // Build a set of all "known" file paths for import resolution checks.
+    // Includes files created this run + canonical base paths without extensions.
+    const knownPaths = new Set<string>();
+    for (const p of generatedFileContents.keys()) {
+      // Strip leading src/ if present, add both forms
+      const normalized = p.replace(/\\/g, '/').replace(/^src\//, '');
+      knownPaths.add(normalized);
+      knownPaths.add(normalized.replace(/\.[tj]sx?$/, '')); // without extension
+    }
+
     for (const [filePath, content] of generatedFileContents) {
+      // IMPORT PATH RESOLUTION: verify @/-prefixed and relative imports resolve to known files.
+      // This catches fabricated paths like `@/components/ui/form-login` when only
+      // `src/components/LoginForm.tsx` was created.
+      const importLines = [...content.matchAll(/from\s+['"](@\/[^'"]+|\.\.?\/[^'"]+)['"]/g)];
+      for (const importMatch of importLines) {
+        const rawPath = importMatch[1];
+
+        // Resolve @/ alias (maps to src/)
+        const resolved = rawPath.startsWith('@/')
+          ? rawPath.slice(2)  // strip '@/' → relative to src/
+          : rawPath.replace(/^\.\//, '').replace(/^\.\.\//, ''); // strip leading ./ or ../
+
+        const resolvedNoExt = resolved.replace(/\.[tj]sx?$/, '');
+
+        // Skip known-good paths (in this plan or clearly a utility)
+        const isKnown = knownPaths.has(resolved) || knownPaths.has(resolvedNoExt) ||
+          resolved.includes('utils/cn') || resolved.includes('utils/') ||
+          resolved.includes('hooks/') || resolved.includes('stores/') ||
+          resolved.includes('types/') || resolved.includes('lib/');
+
+        if (!isKnown) {
+          integrationErrors.push(
+            `❌ ${filePath}: Unresolvable import path '${rawPath}'. ` +
+            `This path was not created in this plan and is likely fabricated. ` +
+            `Known paths: ${[...knownPaths].slice(0, 5).join(', ')}`
+          );
+        }
+      }
+
       // Check if this file imports from stores but doesn't use the hook correctly
       const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
       if (storeImportMatch) {
@@ -869,6 +908,20 @@ export class Executor {
   private validateCommonPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
 
+    // Split React imports: multiple `from 'react'` lines is always wrong.
+    // Root cause: the old reactImportsSection showed each hook as a separate import example,
+    // which the LLM reproduced verbatim. The fix lives in the prompt (merged example) AND here
+    // (deterministic catch for when the prompt is ignored).
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const reactImportLines = (content.match(/^import\s+.+\s+from\s+['"]react['"]/gm) || []);
+      if (reactImportLines.length > 1) {
+        errors.push(
+          `❌ Split React imports: Found ${reactImportLines.length} separate import lines from 'react'. ` +
+          `Merge into one: import React, { useState, FormEvent, FormEventHandler } from 'react'`
+        );
+      }
+    }
+
     // Check form component patterns first
     const formErrors = this.validateFormComponentPatterns(content, filePath);
     if (formErrors.length > 0) {
@@ -943,6 +996,18 @@ export class Executor {
         );
       }
 
+      // Detect component file with only default export and no named export
+      // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
+      const hasDefaultExport = /export\s+default\b/.test(content);
+      const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
+      const hasNamedDefinition = /\b(?:const|function|class)\s+[A-Z]\w+/.test(content);
+      if (hasDefaultExport && !hasNamedExport && !hasNamedDefinition && filePath.includes('components/')) {
+        errors.push(
+          `⚠️ Export consistency: Component has only a default export. ` +
+          `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
+        );
+      }
+
       // Interactive components MUST use forwardRef; forwardRef components MUST set .displayName
       const interactiveFilePattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
       const isInteractiveFile = interactiveFilePattern.test(filePath);
@@ -967,13 +1032,22 @@ export class Executor {
       // TSX components MUST return JSX, not a plain string/expression.
       // Auto-correction can introduce this bug by wrapping the function signature but leaving the
       // body as a bare cn() call — returns a string, throws "Nothing was returned from render".
+      //
+      // ROOT CAUSE of prior false-passes: /<[A-Za-z][\w.]*[\s/>]/ matched TypeScript generic
+      // annotations like <HTMLInputElement> or React.forwardRef<HTMLInputElement, InputProps>.
+      // TypeScript generics are always PascalCase; JSX HTML elements are always lowercase.
+      // Fix: match only lowercase tags (<button, <input, <div, <form, <label, <span, etc.)
+      // Also allow `return null` as a valid empty render.
       if (filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
-        const hasJsxReturn = /<[A-Za-z][\w.]*[\s/>]/.test(content);
+        const hasJsxReturn =
+          /<[a-z][a-z0-9-]*[\s/>]/.test(content) ||   // lowercase HTML element (<button, <input, <div …)
+          /return\s+null\b/.test(content);              // explicit null render is valid
         if (!hasJsxReturn) {
           errors.push(
-            `❌ Component returns no JSX: The component body has no JSX element (no <tag ...>). ` +
+            `❌ Component returns no JSX: The component body has no JSX HTML element (no <button>, <input>, <div>, etc.). ` +
             `React components MUST return JSX — e.g. return <button ref={ref} {...props} />. ` +
-            `A bare cn() call or string return will throw "Nothing was returned from render" at runtime.`
+            `A bare cn() call or string return will throw "Nothing was returned from render" at runtime. ` +
+            `NOTE: TypeScript generics like <HTMLInputElement> are NOT JSX — the check requires a real HTML tag.`
           );
         }
       }
@@ -2746,18 +2820,17 @@ Your ONLY job: Output this code exactly. Do NOT modify it.
       // Only inject if this is a single-step plan (no multiStepContext already added)
       // Multi-step plans handle imports differently
       reactImportsSection = `## REQUIRED REACT IMPORTS
-For any React component using hooks, you MUST include these imports at the top:
 
-- If using useState: \`import { useState } from 'react';\`
-- If using React.FC or React.ReactNode: \`import React from 'react';\`
-- If using form events: \`import { FormEvent, FormEventHandler } from 'react';\`
-- If using components from external libs: \`import { Library } from 'library-name';\`
+RULE: All React imports MUST be in a SINGLE combined import statement. NEVER split across multiple lines.
 
-CRITICAL: Every hook you use MUST be imported. The validator will reject any hook that isn't imported.
-Examples of hooks that need imports:
-- \`useState\` → must have \`import { useState } from 'react';\`
-- \`useEffect\` → must have \`import { useEffect } from 'react';\`
-- \`useContext\` → must have \`import { useContext } from 'react';\`
+WRONG (two separate import lines — will fail validation):
+  import React from 'react';
+  import { useState, FormEvent } from 'react';
+
+RIGHT (one merged import line):
+  import React, { useState, FormEvent, FormEventHandler } from 'react';
+
+Include in the single import: React (default), plus every named export you use (useState, useEffect, FormEvent, FormEventHandler, useCallback, useRef, etc.).
 
 `;
       console.log(`[Executor] ✅ Injecting required React imports for ${fileName}`);
@@ -2783,6 +2856,13 @@ CRITICAL RULES:
 - Only add validation (email format checks, length checks) if the REQUIREMENT explicitly requests it
 - Keep form logic lean — implement only what the REQUIREMENT describes
 
+IMPORT vs RE-DEFINE:
+- If an Input component already exists in the workspace (e.g. src/components/Input.tsx), import it:
+  import { Input } from './Input';
+- NEVER write a local Input interface or mock component inside the form file
+- NEVER write a comment like "// Assuming Input exists in scope" and then define it locally — either import it or use a plain HTML <input> element
+- If the REQUIREMENT does not mention creating a new Input component, do NOT create one
+
 `;
     }
 
@@ -2800,11 +2880,20 @@ CRITICAL RULES:
     const interactiveComponentPattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
     const isInteractiveComponent = interactiveComponentPattern.test(step.path);
     const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component';
+    // Map component name to the correct HTML element type for forwardRef generics
+    const htmlElementType = /input/i.test(componentName) ? 'HTMLInputElement'
+      : /select/i.test(componentName) ? 'HTMLSelectElement'
+      : /textarea/i.test(componentName) ? 'HTMLTextAreaElement'
+      : 'HTMLButtonElement';
+    const htmlTag = /input/i.test(componentName) ? 'input'
+      : /select/i.test(componentName) ? 'select'
+      : /textarea/i.test(componentName) ? 'textarea'
+      : 'button';
     const interactiveComponentSection = isInteractiveComponent
       ? `\nINTERACTIVE COMPONENT RULES (mandatory — interactive elements MUST support refs):\n` +
-        `- MUST use React.forwardRef exported directly: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { return <button ref={ref} {...props} />; });\n` +
+        `- MUST use React.forwardRef exported directly: export const ${componentName} = React.forwardRef<${htmlElementType}, ${componentName}Props>(({ ...props }, ref) => { return <${htmlTag} ref={ref} {...props} />; });\n` +
         `- MUST set displayName: ${componentName}.displayName = '${componentName}';\n` +
-        `- MUST return JSX — the component body MUST contain a return statement with a JSX element (e.g. <button ...>). Never return a plain string or cn() call.\n` +
+        `- MUST return JSX — the component body MUST contain a return statement with a JSX element (e.g. <${htmlTag} ...>). Never return a plain string or cn() call.\n` +
         `- NEVER use an internal alias: do NOT write \`const ${componentName}Inner = ...\` then \`export const ${componentName} = ${componentName}Inner\` or \`export const ${componentName} = ${componentName}\`. Export forwardRef directly.\n\n`
       : '';
 

@@ -4,7 +4,7 @@
 **Branch:** `feature/generation-quality-v2`  
 **Status:** Active — updated as new regressions are found and fixed
 
-This document captures concrete learnings from iterative eval runs against a local 7B model (Qwen). Each entry has a root cause, the fix applied, and the signal that told us it worked.
+This document captures concrete learnings from iterative eval runs against a local model (Gemma 4 e4b). Each entry has a root cause, the fix applied, and the signal that told us it worked.
 
 ---
 
@@ -192,6 +192,63 @@ Three distinct scope creep patterns appeared across runs. Each required both a p
 3. Auto-corrector prompt: `IMPORTANT: Never introduce an internal alias re-export`
 
 **Pattern:** If a bug appears 3+ times across different components after auto-correction, it's a corrector prompt gap, not a one-off model quirk.
+
+---
+
+## 12. JSX Validator False-Pass — TypeScript Generics Matched as HTML Elements
+
+**Symptom (Test #3A, all runs):** `Input.tsx` used `React.forwardRef<HTMLInputElement, InputProps>`. The JSX return validator passed it as valid even though the component body returned `cn(...)` — a bare string. Same class of bug as v24 (Button missing JSX body), but the old fix didn't hold because Button had no TypeScript generics in its forwardRef signature.
+
+**Root cause:** The regex `/<[A-Za-z][\w.]*[\s/>]/` matched `<HTMLInputElement>` as if it were a JSX element. TypeScript generics are always PascalCase; JSX HTML tags are always lowercase. The check was actually a `<` check, not a JSX check.
+
+**Fix:** Changed to `/<[a-z][a-z0-9-]*[\s/>]/` (lowercase only) `|| /return\s+null\b/`. Exploits the invariant that TypeScript types are PascalCase and JSX HTML elements are lowercase.
+
+**File:** `src/executor.ts` — `validateCommonPatterns`, JSX return block
+
+---
+
+## 13. Split React Imports — Prompt Was Causing the Bug
+
+**Symptom (Test #3A, runs 1–2):** Every LoginForm run produced two separate `from 'react'` import lines: one for `React`, one for `{ useState, FormEvent, ... }`. Appeared on every run, never merged.
+
+**Root cause:** `reactImportsSection` showed each hook as a separate example:
+```
+- If using useState: `import { useState } from 'react';`
+- If using form events: `import { FormEvent, FormEventHandler } from 'react';`
+```
+The LLM reproduced the examples verbatim. The prompt was generating the bug.
+
+**Fix (two layers):**
+1. Validator: `❌` when content has 2+ `from 'react'` import lines
+2. Prompt: replaced per-hook examples with a single WRONG/RIGHT merged import example
+
+**File:** `src/executor.ts` — `validateCommonPatterns` (validator); `reactImportsSection` (prompt)
+
+---
+
+## 14. Planner Scope Creep — App.tsx Post-Processing Filter
+
+**Symptom (Test #3A, run 1):** Planner added WRITE step for `App.tsx` to "wire up the new LoginForm component" — user only asked for `LoginForm.tsx`. This pattern appeared on every first-run-from-fresh-chat across Button, Counter, and LoginForm series.
+
+**Root cause:** Prompt constraint ("ONLY create files explicitly named in the user's request") had ~50% compliance. The planner's training data strongly associates "create a component" with "wire it up in App.tsx."
+
+**Fix:** `filterUnrequestedEntryWrites` post-processing filter — drops WRITE steps for `App|main|layout|Root|index.tsx` unless the user request explicitly names the file. Same code pattern as `filterNoisyReadSteps`.
+
+**Key distinction:** `index.ts` excluded intentionally (module barrel file, not a UI entry point). Only `index.tsx`/`index.jsx` are treated as entry points.
+
+**File:** `src/planner.ts` — `filterUnrequestedEntryWrites`, called after `filterRedundantWrites`
+
+---
+
+## 15. Eval Methodology — Run 2 Benefits from Conversation History
+
+**Observation:** Run 2 within a session consistently outperforms Run 1 across every test series (Button, Counter, LoginForm). This was attributed to code fixes working, but the actual mechanism is `LLMClient.conversationHistory`.
+
+**How it works:** Every `sendMessage` and `streamMessage` call appends to `conversationHistory`. The planner, executor, acceptance criteria generator, and auto-corrector all share the same `LLMClient` instance. By run 2, the LLM has seen the full run 1 output: the plan, all generated code, all validation errors, all correction attempts. The model self-corrects based on this context.
+
+**Implication for evals:** Run 1 from a fresh chat (window reload + "Chat history cleared") is the honest benchmark. Run 2 scores are partially explained by model self-correction via conversation context — independent of any code fix applied between runs.
+
+**Practical effect:** A fix that improves Run 1 scores across sessions is real. A fix that only improves Run 2 scores within the same session may just be conversation history at work.
 
 ---
 

@@ -91,6 +91,14 @@
           "description": "Maximum tokens in LLM response",
           "scope": "resource"
         },
+        "llm-assistant.contextWindow": {
+          "type": "integer",
+          "default": 32768,
+          "minimum": 2048,
+          "maximum": 131072,
+          "description": "Context window size (num_ctx) — how many input tokens the model can see, including conversation history and generation prompts. Gemma 4 e4b supports up to 128K. Higher values improve multi-turn quality but use more VRAM and are slower. 32768 is a good default for a 4B model on consumer hardware.",
+          "scope": "resource"
+        },
         "llm-assistant.timeout": {
           "type": "integer",
           "default": 60000,
@@ -117,9 +125,10 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "vscode:prepublish": "npm run esbuild-base -- --minify && npm run esbuild-webview -- --minify",
     "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --target=node18 --format=cjs",
-    "esbuild": "npm run esbuild-base -- --sourcemap",
+    "esbuild-webview": "esbuild ./src/webview/main.ts --bundle --outfile=dist/webviewScript.js --platform=browser --target=es2020 --format=iife",
+    "esbuild": "npm run esbuild-base -- --sourcemap && npm run esbuild-webview -- --sourcemap",
     "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
     "build": "npm run esbuild",
     "watch": "npm run esbuild-watch",
@@ -150,5 +159,7 @@
     "typescript": "^5.0.0",
     "vitest": "^4.0.18"
   },
-  "dependencies": {}
+  "dependencies": {
+    "marked": "^18.0.0"
+  }
 }

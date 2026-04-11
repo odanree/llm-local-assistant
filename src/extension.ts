@@ -90,6 +90,7 @@ function getLLMConfig(): LLMConfig {
     model: config.get('model', 'mistral'),
     temperature: config.get('temperature', 0.7),
     maxTokens: config.get('maxTokens', 2048),
+    contextWindow: config.get('contextWindow', 32768), // num_ctx: Gemma 4 e4b supports 128K; Ollama default is ~2K
     timeout: config.get('timeout', 120000), // 120s timeout for planning operations
     stream: true,
   };
@@ -148,34 +149,22 @@ function openLLMChat(context: vscode.ExtensionContext): void {
     if (!helpShown) {
       chatPanel?.webview.postMessage({
         command: 'addMessage',
-        text: `**LLM Local Assistant - v2.14.0**\n` +
-          `📊 78 test files, 2,891 tests passing\n\n` +
+        text: `**LLM Local Assistant** v${context.extension.packageJSON.version}\n\n` +
           `📋 **Planning & Execution:**\n` +
-          `- /plan <task> → Create a multi-step action plan with validation\n` +
-          `- /execute → Execute the current plan step-by-step\n` +
-          `- /approve → Acknowledge and approve the plan\n` +
-          `- /reject → Discard the current plan\n\n` +
-          `📝 **Code Explanation:**\n` +
-          `- /explain <path> → Generate detailed code explanation with markdown formatting\n\n` +
-          `🔍 **Codebase Context & Analysis:**\n` +
-          `- /context show structure → Show project file organization\n` +
-          `- /context show patterns → Show detected code patterns\n` +
-          `- /context show dependencies → Show file dependencies\n` +
-          `- /context find similar <file> → Find similar files\n` +
-          `- /context query <text> → Show which files RAG would inject for a query\n\n` +
-          `🔧 **Refactoring:**\n` +
-          `- /refactor <file> → Analyze and suggest improvements\n\n` +
-          `📝 **File Operations:**\n` +
-          `- /read <path> → Read a file from workspace\n` +
-          `- /write <path> <prompt> → Generate and write file content\n` +
-          `- /suggestwrite <path> <prompt> → Preview before writing\n\n` +
-          `📚 **Git Integration:**\n` +
+          `- /plan <task> → Generate a step-by-step plan\n` +
+          `- /execute → Run the current plan\n\n` +
+          `🔍 **Codebase:**\n` +
+          `- /context query <text> → Show which files RAG would inject\n` +
+          `- /explain <path> → Explain a file\n` +
+          `- /refactor <file> → Suggest improvements\n\n` +
+          `📝 **Files:**\n` +
+          `- /read <path> → Read a file\n` +
+          `- /write <path> <prompt> → Generate and write file content\n\n` +
+          `📚 **Git:**\n` +
           `- /git-commit-msg → Generate commit message from staged changes\n` +
-          `- /git-review [staged|unstaged|all] → Review code changes with AI\n\n` +
+          `- /git-review [staged|unstaged|all] → Review changes\n\n` +
           `🧪 **Diagnostics:**\n` +
-          `- /check-model → Verify LLM server connection\n\n` +
-          `📖 **Documentation:**\n` +
-          `- See docs/MAINTENANCE.md for deployment and troubleshooting`,
+          `- /check-model → Verify LLM connection`,
         type: 'info',
         success: true,
         skipHistory: true, // Don't store startup help in history
@@ -1900,6 +1889,7 @@ ${fileContent}
     () => {
       chatPanel = undefined;
       messageHandlerAttached = false; // Reset handler flag when panel is disposed
+      helpShown = false; // Reset so help text shows again on next open
     },
     undefined,
     context.subscriptions
@@ -1938,7 +1928,20 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
 
-  llmClient = new LLMClient(config);
+  llmClient = new LLMClient({
+    ...config,
+    onContextUsage: (warning: string) => {
+      // Surface context window warnings in the chat panel so they're visible
+      // without opening the debug console. console.warn is also called inside
+      // checkContextUsage so the warning always appears in the output channel.
+      chatPanel?.webview.postMessage({
+        command: 'addMessage',
+        role: 'system',
+        text: warning,
+        type: 'warning',
+      });
+    },
+  });
   console.log('[Extension] ✅ LLM Client initialized');
 
   // Get workspace folder for codebase awareness
