@@ -970,7 +970,8 @@ export class Executor {
       // Interactive components MUST use forwardRef; forwardRef components MUST set .displayName
       const interactiveFilePattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
       const isInteractiveFile = interactiveFilePattern.test(filePath);
-      const usesForwardRef = content.includes('React.forwardRef') || /\bforwardRef\s*\(/.test(content);
+      // Match both forwardRef( (no generics) and forwardRef<T>( (TypeScript generics)
+      const usesForwardRef = content.includes('React.forwardRef') || /\bforwardRef\s*[<(]/.test(content);
       const hasDisplayName = /\.displayName\s*=/.test(content);
       const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') || 'Component';
 
