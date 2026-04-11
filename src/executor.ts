@@ -964,9 +964,11 @@ export class Executor {
       }
 
       // Detect component file with only default export and no named export
+      // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
       const hasDefaultExport = /export\s+default\b/.test(content);
       const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
-      if (hasDefaultExport && !hasNamedExport && filePath.includes('components/')) {
+      const hasNamedDefinition = /\b(?:const|function|class)\s+[A-Z]\w+/.test(content);
+      if (hasDefaultExport && !hasNamedExport && !hasNamedDefinition && filePath.includes('components/')) {
         errors.push(
           `⚠️ Export consistency: Component has only a default export. ` +
           `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
@@ -1128,36 +1130,24 @@ export class Executor {
       const llmConfig = this.config.llmClient.getConfig();
       const profileConstraints = this.config.projectProfile?.getGenerationConstraints() ?? '';
 
-      const prompt = `You are an Architect defining acceptance criteria for a code generation task.
-
-TASK: ${step.description}
-FILE: ${step.path}${profileConstraints ? `\n\nPROJECT CONSTRAINTS:\n${profileConstraints}` : ''}
-
-Generate 4-8 specific, verifiable YES/NO acceptance criteria for the generated code.
-Each criterion must be concrete and checkable by reading the code.
-
-Focus on:
-- Structural requirements from the task description
-- What must NOT be present (no unrequested props, no extra variants beyond the spec)
-- Project style rules (cn() usage, named exports, forwardRef for interactive components)
-
-OUTPUT: JSON array of strings only. Example:
-["Uses React.forwardRef wrapping the component", "Button.displayName = 'Button' set after definition", "Only variant values 'primary' and 'secondary' defined"]
-
-JSON array only. No explanation.`;
+      const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
+      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: llmConfig.model.trim(),
-          messages: [{ role: 'user', content: prompt }],
+          messages: [
+            { role: 'system', content: 'You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.' },
+            { role: 'user', content: prompt },
+          ],
           temperature: 0.0,
-          max_tokens: 300,
+          max_tokens: 150,
           stream: false,
         }),
         signal: controller.signal,
@@ -1171,28 +1161,27 @@ JSON array only. No explanation.`;
       }
 
       const data = await response.json() as any;
-      const raw: string = data?.choices?.[0]?.message?.content ?? '[]';
+      const raw: string = data?.choices?.[0]?.message?.content || '[]';
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) {
-        console.warn('[Acceptance Criteria] Response not a JSON array — skipping');
+      if (!match) { return []; }
+
+      let criteria: string[];
+      try {
+        criteria = JSON.parse(match[0]);
+      } catch {
         return [];
       }
-
-      const criteria: string[] = JSON.parse(match[0]);
       if (!Array.isArray(criteria)) { return []; }
       const filtered = criteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
 
       if (filtered.length > 0) {
-        console.log(`[Acceptance Criteria] ${filtered.length} criteria for ${step.path}:`);
-        filtered.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
         this.config.onMessage?.(
           `🎯 Acceptance criteria (${filtered.length}): ${filtered.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join(' | ')}${filtered.length > 3 ? ' ...' : ''}`,
           'info'
         );
       }
       return filtered;
-    } catch (err) {
-      console.warn(`[Acceptance Criteria] Skipped (${err instanceof Error ? err.message : String(err)})`);
+    } catch {
       return [];
     }
   }
