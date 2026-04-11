@@ -673,9 +673,19 @@ export class Executor {
       }
     }
 
+    // Check 5: LLM semantic validation — only when no ❌ structural errors
+    // Catches scope creep, invalid Tailwind classes, dead code — things regex cannot catch
+    const hasCriticalStructural = errors.some(e => e.includes('❌'));
+    if (!hasCriticalStructural) {
+      const llmIssues = await this.llmValidate(filePath, content, step);
+      if (llmIssues.length > 0) {
+        errors.push(...llmIssues);
+      }
+    }
+
     // ✅ NEW: Ensure all errors are treated as block if they contain ❌
     const finalValid = !errors.some(e => e.includes('❌ Zustand'));
-    
+
     return {
       valid: finalValid && errors.length === 0,
       errors: errors.length > 0 ? errors : undefined,
@@ -1071,9 +1081,123 @@ export class Executor {
   }
 
   /**
+   * Build the constraint block for LLM-as-judge validation.
+   * Combines the step's scope description with detected project conventions.
+   */
+  private buildValidationConstraints(filePath: string, step: PlanStep): string {
+    const lines: string[] = [];
+
+    lines.push(`FILE: ${filePath}`);
+    lines.push(`TASK SCOPE: ${step.description}`);
+
+    const profileConstraints = this.config.projectProfile?.getGenerationConstraints();
+    if (profileConstraints) {
+      lines.push('');
+      lines.push(profileConstraints);
+    }
+
+    lines.push('');
+    lines.push('SCOPE CONSTRAINT: Implement ONLY what the TASK SCOPE explicitly describes. Props, variants, or features not mentioned are OUT OF SCOPE.');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * LLM-as-judge: semantic validation that regex cannot catch.
+   * Checks scope creep, Tailwind class validity, dead code, semantic correctness.
+   * Non-blocking — returns [] on LLM failure so write proceeds.
+   * Only runs when structural checks produce no ❌ errors.
+   */
+  private async llmValidate(filePath: string, content: string, step: PlanStep): Promise<string[]> {
+    try {
+      const llmConfig = this.config.llmClient.getConfig();
+      const constraints = this.buildValidationConstraints(filePath, step);
+
+      // Truncate content to avoid overwhelming small local models
+      const truncatedContent = content.length > 2000
+        ? content.slice(0, 2000) + '\n// ... (truncated)'
+        : content;
+
+      const prompt = `You are a strict code reviewer. Evaluate the code below against the given constraints.
+
+CONSTRAINTS:
+${constraints}
+
+CODE TO REVIEW:
+\`\`\`
+${truncatedContent}
+\`\`\`
+
+OUTPUT FORMAT — respond with ONLY a JSON array of issues. Each issue must be one of:
+- "❌ <short description>" for violations that must be fixed
+- "⚠️ <short description>" for minor concerns
+
+Focus ONLY on what regex cannot catch:
+- Scope creep: props/variants/features not in TASK SCOPE
+- Invalid or non-existent Tailwind classes
+- Dead code (unused variables/imports)
+- Semantic incorrectness (logic that won't work as described)
+
+Do NOT flag: structural imports, forwardRef, displayName, padding — those are checked elsewhere.
+If no issues, respond with: []
+
+JSON array only. No explanation.`;
+
+      const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s max
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: llmConfig.model.trim(),
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.0,
+          max_tokens: 300,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn(`[LLM Validator] Server returned ${response.status} — skipping semantic check`);
+        return [];
+      }
+
+      const data = await response.json() as any;
+      const raw: string = data?.choices?.[0]?.message?.content ?? '[]';
+
+      // Extract JSON array from response (LLM may wrap it in prose)
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) {
+        console.warn('[LLM Validator] Response not a JSON array — skipping');
+        return [];
+      }
+
+      const issues: string[] = JSON.parse(match[0]);
+      if (!Array.isArray(issues)) { return []; }
+
+      const filtered = issues.filter((i): i is string => typeof i === 'string' && (i.includes('❌') || i.includes('⚠️')));
+      if (filtered.length > 0) {
+        console.log(`[LLM Validator] Found ${filtered.length} issue(s) in ${filePath}:`);
+        filtered.forEach(i => console.log(`  ${i}`));
+      }
+
+      return filtered;
+    } catch (err) {
+      // Non-blocking: LLM unavailable or timed out — proceed with write
+      console.warn(`[LLM Validator] Skipped (${err instanceof Error ? err.message : String(err)})`);
+      return [];
+    }
+  }
+
+  /**
    * Filter validation errors to only return critical errors.
    * Soft suggestions are logged but not returned as validation failures.
-   * 
+   *
    * This prevents the "bully effect" where suggestions distract from hard errors.
    */
   private filterCriticalErrors(
