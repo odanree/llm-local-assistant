@@ -1,27 +1,14 @@
 # Form Component Architecture Patterns
 
-> **Note**: These form component patterns are now consolidated in the project's `.lla-rules` file under "Form Component Architecture (7 Required Patterns)". This document provides **detailed explanations and examples**. For quick reference, see [.lla-rules](../.lla-rules).
+> **Note**: These form component patterns are injected into the generation prompt via `formPatternSection` in `src/executor.ts`. Patterns 1–5 are mandatory structural requirements. Patterns 6–7 (Zod validation, error states) were removed from mandatory injection — they are only generated when the REQUIREMENT explicitly requests them. See [ADR-001](../adr/ADR-001-remove-lla-rules.md) for why `.lla-rules` was removed.
 
 This guide explains the 7 required form component patterns to ensure consistent, type-safe form generation across the project.
 
-## Quick Add to .lla-rules
+## The 5 Mandatory Rules (Injected Automatically)
 
-Copy this section into your project's `.lla-rules` file:
+Patterns 1–5 are injected into the generation prompt for any file matching `*Form*.tsx`. Patterns 6–7 are only generated when explicitly requested.
 
-```
-## Form Component Patterns
-- State Interface: Always create interface for form state (e.g., LoginFormState { email: string, password: string })
-- Handler Typing: Type handlers explicitly as FormEventHandler<HTMLFormElement> not generic any
-- Consolidator Pattern: Multi-field forms must use handleChange consolidator that updates multiple fields
-  Example: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { const { name, value } = e.currentTarget; setFormData(prev => ({ ...prev, [name]: value })); };
-- Submit Handler: Always include onSubmit handler, never leave it as callback only
-  Example: const handleSubmit: FormEventHandler<HTMLFormElement> = async (e) => { e.preventDefault(); // Handle submission };
-- Validation: Use Zod schema for all form validation (not inline validators)
-- Error States: Track field-level errors in state, display near input
-- Form Tag Pattern: Always use <form onSubmit={handleSubmit}> with proper event types
-```
-
-## The 7 Rules Explained
+## All Rules Explained
 
 ### 1️⃣ State Interface
 **What**: Every form component needs a typed interface describing its state
@@ -290,32 +277,21 @@ export const SignupForm: FC = () => {
 
 ## Using With LLM Local Assistant
 
-### Step 1: Add Rules to .lla-rules
+Any file matching `*Form*.tsx` automatically gets patterns 1–5 injected. No configuration needed.
+
 ```bash
-# In your project root
-echo "## Form Component Patterns
-- State Interface: Always create interface for form state...
-# [paste the rules above]" >> .lla-rules
+/plan create a login form with email and password fields
 ```
 
-### Step 2: Reload Extension
-- Press **F5** in VS Code to reload the LLM Local Assistant extension
-- It automatically loads `.lla-rules` from your workspace
-
-### Step 3: Generate Form
-```bash
-/write src/components/LoginForm.tsx Create a login form with email and password
-```
-
-### Step 4: Verify Pattern
 The generated form will automatically:
 - ✅ Have a `LoginFormState` interface
 - ✅ Use `FormEventHandler<HTMLFormElement>` typed handlers
 - ✅ Use `handleChange` consolidator
 - ✅ Include `onSubmit` handler
-- ✅ Use Zod for validation
-- ✅ Track field errors separately
 - ✅ Use `<form>` with proper structure
+- ✅ All inputs have both `value` and `onChange` (controlled)
+
+Zod validation and field-level error tracking are **not** auto-injected — add them to the request description explicitly.
 
 ---
 
