@@ -2790,9 +2790,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
 
     // Architect pre-flight: generate task-specific acceptance criteria before code generation.
-    // The Reviewer (llmValidate / Check 5) will check the output against these specific criteria
-    // rather than using generic open-ended "find problems" prompts.
+    // Criteria are injected into the Executor prompt (so the generator knows what will be checked)
+    // AND passed to the Reviewer (llmValidate) for structured YES/NO validation after generation.
     const acceptanceCriteria = await this.generateAcceptanceCriteria(step);
+
+    // Inject criteria into the generation prompt so the Executor satisfies them upfront
+    if (acceptanceCriteria.length > 0) {
+      const criteriaBlock =
+        '\nACCEPTANCE CRITERIA (Reviewer will check each — your code MUST satisfy all):\n' +
+        acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n';
+      prompt += criteriaBlock;
+    }
 
     // Emit that we're generating content
     this.config.onStepOutput?.(step.stepId, `📝 Generating ${step.path}...`, false);
