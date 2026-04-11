@@ -967,11 +967,20 @@ export class Executor {
         );
       }
 
-      // forwardRef components must set .displayName for React DevTools
+      // Interactive components MUST use forwardRef; forwardRef components MUST set .displayName
+      const interactiveFilePattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
+      const isInteractiveFile = interactiveFilePattern.test(filePath);
       const usesForwardRef = content.includes('React.forwardRef') || /\bforwardRef\s*\(/.test(content);
       const hasDisplayName = /\.displayName\s*=/.test(content);
-      if (usesForwardRef && !hasDisplayName) {
-        const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') || 'Component';
+      const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') || 'Component';
+
+      if (isInteractiveFile && !usesForwardRef) {
+        errors.push(
+          `❌ Missing forwardRef: ${componentName} is an interactive component — it MUST use React.forwardRef to support ref forwarding. ` +
+          `Wrap with: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { ... }); ` +
+          `then add ${componentName}.displayName = '${componentName}';`
+        );
+      } else if (usesForwardRef && !hasDisplayName) {
         errors.push(
           `❌ forwardRef missing displayName: Add \`${componentName}.displayName = '${componentName}';\` ` +
           `after the component definition. Without it React DevTools shows "ForwardRef" instead of the component name.`
@@ -1136,6 +1145,7 @@ Focus ONLY on what regex cannot catch:
 - Scope creep: props/variants/features not in TASK SCOPE
 - Invalid or non-existent Tailwind classes
 - Dead code (unused variables/imports)
+- Unnecessary variable extraction: a const that holds a single Tailwind class string and is only used once (e.g. const paddingStyle = 'px-4 py-2') — flag as ⚠️ unnecessary indirection
 - Semantic incorrectness (logic that won't work as described)
 
 Do NOT flag: structural imports, forwardRef, displayName, padding — those are checked elsewhere.
@@ -2643,6 +2653,11 @@ SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly des
 - If the REQUIREMENT says "variant prop supporting primary and secondary", output EXACTLY those two variants — no size prop, no loading state, no icon slot, no extra variants.
 - Every prop, state variable, or feature NOT mentioned in the REQUIREMENT is OUT OF SCOPE and must be omitted.
 - Adding unrequested features is a spec violation. When in doubt, do less.
+
+TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into intermediate variables.
+- WRONG: const paddingStyle = 'px-4 py-2';  cn(paddingStyle, variantClasses[variant], className)
+- RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
+- Intermediate const variables for single class strings are dead indirection — inline them directly in cn().
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';
