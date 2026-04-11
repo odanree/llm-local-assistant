@@ -563,7 +563,8 @@ export class Executor {
   private async validateGeneratedCode(
     filePath: string,
     content: string,
-    step: PlanStep
+    step: PlanStep,
+    criteria: string[] = []
   ): Promise<{ valid: boolean; errors?: string[] }> {
     const errors: string[] = [];
 
@@ -678,10 +679,11 @@ export class Executor {
     }
 
     // Check 5: LLM semantic validation — only when no ❌ structural errors
-    // Catches scope creep, invalid Tailwind classes, dead code — things regex cannot catch
+    // When criteria[] is provided: structured YES/NO per acceptance criterion (Reviewer pattern)
+    // When criteria[] is empty: open-ended "find problems" fallback
     const hasCriticalStructural = errors.some(e => e.includes('❌'));
     if (!hasCriticalStructural) {
-      const llmIssues = await this.llmValidate(filePath, content, step);
+      const llmIssues = await this.llmValidate(filePath, content, step, criteria);
       if (llmIssues.length > 0) {
         errors.push(...llmIssues);
       }
@@ -1117,22 +1119,122 @@ export class Executor {
   }
 
   /**
+   * Architect pre-flight: generate a task-specific acceptance checklist BEFORE code generation.
+   * The Reviewer (llmValidate) then checks the generated code against this list item-by-item.
+   * Non-blocking — returns [] on LLM failure, falling back to open-ended review.
+   */
+  private async generateAcceptanceCriteria(step: PlanStep): Promise<string[]> {
+    try {
+      const llmConfig = this.config.llmClient.getConfig();
+      const profileConstraints = this.config.projectProfile?.getGenerationConstraints() ?? '';
+
+      const prompt = `You are an Architect defining acceptance criteria for a code generation task.
+
+TASK: ${step.description}
+FILE: ${step.path}${profileConstraints ? `\n\nPROJECT CONSTRAINTS:\n${profileConstraints}` : ''}
+
+Generate 4-8 specific, verifiable YES/NO acceptance criteria for the generated code.
+Each criterion must be concrete and checkable by reading the code.
+
+Focus on:
+- Structural requirements from the task description
+- What must NOT be present (no unrequested props, no extra variants beyond the spec)
+- Project style rules (cn() usage, named exports, forwardRef for interactive components)
+
+OUTPUT: JSON array of strings only. Example:
+["Uses React.forwardRef wrapping the component", "Button.displayName = 'Button' set after definition", "Only variant values 'primary' and 'secondary' defined"]
+
+JSON array only. No explanation.`;
+
+      const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: llmConfig.model.trim(),
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.0,
+          max_tokens: 300,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn(`[Acceptance Criteria] Server returned ${response.status} — skipping pre-flight`);
+        return [];
+      }
+
+      const data = await response.json() as any;
+      const raw: string = data?.choices?.[0]?.message?.content ?? '[]';
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) {
+        console.warn('[Acceptance Criteria] Response not a JSON array — skipping');
+        return [];
+      }
+
+      const criteria: string[] = JSON.parse(match[0]);
+      if (!Array.isArray(criteria)) { return []; }
+      const filtered = criteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
+
+      console.log(`[Acceptance Criteria] ${filtered.length} criteria for ${step.path}:`);
+      filtered.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
+      return filtered;
+    } catch (err) {
+      console.warn(`[Acceptance Criteria] Skipped (${err instanceof Error ? err.message : String(err)})`);
+      return [];
+    }
+  }
+
+  /**
    * LLM-as-judge: semantic validation that regex cannot catch.
-   * Checks scope creep, Tailwind class validity, dead code, semantic correctness.
+   * When criteria[] is provided (from generateAcceptanceCriteria), uses structured YES/NO
+   * checking against the pre-generated acceptance list.
+   * When criteria[] is empty, falls back to open-ended "find problems" review.
    * Non-blocking — returns [] on LLM failure so write proceeds.
    * Only runs when structural checks produce no ❌ errors.
    */
-  private async llmValidate(filePath: string, content: string, step: PlanStep): Promise<string[]> {
+  private async llmValidate(filePath: string, content: string, step: PlanStep, criteria: string[] = []): Promise<string[]> {
     try {
       const llmConfig = this.config.llmClient.getConfig();
-      const constraints = this.buildValidationConstraints(filePath, step);
 
       // Truncate content to avoid overwhelming small local models
       const truncatedContent = content.length > 2000
         ? content.slice(0, 2000) + '\n// ... (truncated)'
         : content;
 
-      const prompt = `You are a strict code reviewer. Evaluate the code below against the given constraints.
+      let prompt: string;
+
+      if (criteria.length > 0) {
+        // Structured review: check code against pre-generated acceptance criteria
+        const criteriaList = criteria.map((c, i) => `${i + 1}. ${c}`).join('\n');
+        prompt = `You are a strict code reviewer. Check the code against each acceptance criterion.
+
+ACCEPTANCE CRITERIA:
+${criteriaList}
+
+CODE (${filePath}):
+\`\`\`
+${truncatedContent}
+\`\`\`
+
+For each criterion, decide: YES (passes), NO (critical failure), or WARN (minor issue).
+Output ONLY a JSON array of the failures and warnings. Use:
+- "❌ Criterion N: <brief reason>" for failures
+- "⚠️ Criterion N: <brief reason>" for warnings
+
+If all criteria pass, respond with: []
+
+JSON array only. No explanation.`;
+      } else {
+        // Open-ended fallback when no criteria were pre-generated
+        const constraints = this.buildValidationConstraints(filePath, step);
+        prompt = `You are a strict code reviewer. Evaluate the code below against the given constraints.
 
 CONSTRAINTS:
 ${constraints}
@@ -1157,6 +1259,7 @@ Do NOT flag: structural imports, forwardRef, displayName, padding — those are 
 If no issues, respond with: []
 
 JSON array only. No explanation.`;
+      }
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
       const controller = new AbortController();
@@ -2686,6 +2789,11 @@ export function MyComponent() {...}
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
 
+    // Architect pre-flight: generate task-specific acceptance criteria before code generation.
+    // The Reviewer (llmValidate / Check 5) will check the output against these specific criteria
+    // rather than using generic open-ended "find problems" prompts.
+    const acceptanceCriteria = await this.generateAcceptanceCriteria(step);
+
     // Emit that we're generating content
     this.config.onStepOutput?.(step.stepId, `📝 Generating ${step.path}...`, false);
 
@@ -2746,7 +2854,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           'info'
         );
 
-        const validationResult = await this.validateGeneratedCode(step.path, content, step);
+        const validationResult = await this.validateGeneratedCode(step.path, content, step, acceptanceCriteria);
 
         // ✅ FIX: Separate critical errors from soft suggestions
         const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
@@ -2855,7 +2963,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               }
 
               // Validate the fixed code - only check CRITICAL errors
-              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step);
+              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step, acceptanceCriteria);
               const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
                 smartValidation.errors,
                 false // Don't spam logs during auto-correction
@@ -2939,7 +3047,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             }
 
             // Re-validate the corrected code - only check CRITICAL errors
-            const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step);
+            const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step, acceptanceCriteria);
             const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
               nextValidation.errors,
               false // Don't spam logs during loops
