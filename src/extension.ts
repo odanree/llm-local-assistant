@@ -205,7 +205,8 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /context show structure → Show project file organization\n` +
           `- /context show patterns → Show detected code patterns\n` +
           `- /context show dependencies → Show file dependencies\n` +
-          `- /context find similar <file> → Find similar files\n\n` +
+          `- /context find similar <file> → Find similar files\n` +
+          `- /context query <text> → Show which files RAG would inject for a query\n\n` +
           `🔧 **Refactoring:**\n` +
           `- /refactor <file> → Analyze and suggest improvements\n\n` +
           `📝 **File Operations:**\n` +
@@ -1199,13 +1200,37 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     }
                   }
 
+                } else if (subcommand.startsWith('query ')) {
+                  const queryText = contextMatch[1].trim().replace(/^query\s+/i, '');
+                  if (!queryText) {
+                    response = `Usage: /context query <text>\nExample: /context query "form validation with zod"`;
+                  } else if (!codebaseIndex) {
+                    response = `RAG index not ready yet. Try again in a moment.`;
+                  } else {
+                    const relevant = await codebaseIndex.queryByText(queryText, 8);
+                    if (relevant.length === 0) {
+                      response = `# RAG Query: "${queryText}"\n\nNo matching files found in index.`;
+                    } else {
+                      response = `# RAG Query: "${queryText}"\n\n` +
+                        `**${relevant.length} file(s) would be injected as context:**\n\n` +
+                        relevant.map(f => {
+                          const exports = f.exports.length ? f.exports.slice(0, 6).join(', ') : 'no exports';
+                          const hasChunks = f.contentChunks && f.contentChunks.length > 0;
+                          return `- \`${f.path}\` (${f.purpose}) — ${exports}${hasChunks ? ' 🧠' : ''}`;
+                        }).join('\n') +
+                        `\n\n🧠 = indexed with content chunks (semantic search)\n` +
+                        `No icon = export-list or token-overlap match`;
+                    }
+                  }
+
                 } else {
                   response = `Unknown /context subcommand: ${subcommand}\n\n` +
                     `Available commands:\n` +
                     `- /context show structure\n` +
                     `- /context show patterns\n` +
                     `- /context show dependencies\n` +
-                    `- /context find similar <term>`;
+                    `- /context find similar <term>\n` +
+                    `- /context query <text>`;
                 }
 
                 postChatMessage({

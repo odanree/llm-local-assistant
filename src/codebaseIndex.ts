@@ -70,6 +70,11 @@ function cosineSimilarity(a: number[], b: number[]): number {
  * - Enable /context command queries
  */
 
+export interface ContentChunk {
+  text: string;   // raw text of this chunk
+  vec: number[];  // embedding vector
+}
+
 export interface FileEntry {
   path: string;
   name: string;
@@ -78,7 +83,8 @@ export interface FileEntry {
   exports: string[];
   dependencies: string[]; // Other files this depends on
   patterns: string[]; // Detected patterns (Zod, TanStack Query, etc.)
-  embeddings?: number[];
+  embeddings?: number[];      // export-list embedding (legacy, kept for resolveExportSource)
+  contentChunks?: ContentChunk[]; // content-based chunk embeddings
   lastUpdated: number;
 }
 
@@ -89,7 +95,7 @@ export interface DependencyGraph {
 export interface EmbeddingsCache {
   model: string;
   savedAt: number;
-  files: Array<{ path: string; embeddings: number[] }>;
+  files: Array<{ path: string; embeddings: number[]; contentChunks?: ContentChunk[] }>;
 }
 
 export interface PatternRegistry {
@@ -527,12 +533,28 @@ export class CodebaseIndex {
     if (this.embeddingClient) {
       try {
         const queryVec = await this.embeddingClient.embed(query);
-        return Array.from(this.files.values())
-          .filter(f => f.embeddings && f.embeddings.length > 0)
-          .map(f => ({ f, score: cosineSimilarity(queryVec, f.embeddings!) }))
+
+        // Score each file by its best-matching content chunk (if available),
+        // falling back to export-list embedding
+        const scored = Array.from(this.files.values()).map(f => {
+          let score = 0;
+          if (f.contentChunks && f.contentChunks.length > 0) {
+            // Best chunk score for this file
+            score = Math.max(...f.contentChunks.map(c => cosineSimilarity(queryVec, c.vec)));
+          } else if (f.embeddings && f.embeddings.length > 0) {
+            score = cosineSimilarity(queryVec, f.embeddings);
+          }
+          return { f, score };
+        });
+
+        const results = scored
+          .filter(({ score }) => score > 0)
           .sort((a, b) => b.score - a.score)
           .slice(0, limit)
           .map(({ f }) => f);
+
+        if (results.length > 0) { return results; }
+        // Fall through if nothing scored > 0
       } catch {
         // Fall through to keyword fallback
       }
@@ -850,6 +872,9 @@ export class CodebaseIndex {
         const fileEntry = this.files.get(entry.path);
         if (fileEntry && entry.embeddings.length > 0) {
           fileEntry.embeddings = entry.embeddings;
+          if (entry.contentChunks && entry.contentChunks.length > 0) {
+            fileEntry.contentChunks = entry.contentChunks;
+          }
           restored++;
         }
       }
@@ -872,7 +897,11 @@ export class CodebaseIndex {
     if (!target) return;
     const files = Array.from(this.files.values())
       .filter(e => e.embeddings && e.embeddings.length > 0)
-      .map(e => ({ path: e.path, embeddings: e.embeddings! }));
+      .map(e => ({
+        path: e.path,
+        embeddings: e.embeddings!,
+        ...(e.contentChunks && e.contentChunks.length > 0 ? { contentChunks: e.contentChunks } : {}),
+      }));
     const cache: EmbeddingsCache = { model, savedAt: Date.now(), files };
     try {
       this.fs.writeFileSync(target, JSON.stringify(cache));
@@ -895,14 +924,39 @@ export class CodebaseIndex {
    */
   async embedAll(client: EmbeddingClient): Promise<void> {
     for (const [, entry] of this.files) {
-      if (entry.embeddings && entry.embeddings.length > 0) continue; // already done
-      if (entry.exports.length === 0) continue;                       // nothing to embed
-      // Represent the file as "exports: X, Y, Z  path: src/foo/bar.ts"
-      const text = `exports: ${entry.exports.join(', ')}  path: ${entry.path}`;
-      try {
-        entry.embeddings = await client.embed(text);
-      } catch {
-        // Skip — Ollama may not be running; degrades gracefully to dict fallback
+      // Export-list embedding (used by resolveExportSource / findSimilarByPath)
+      if (!entry.embeddings || entry.embeddings.length === 0) {
+        if (entry.exports.length > 0) {
+          const text = `exports: ${entry.exports.join(', ')}  path: ${entry.path}`;
+          try {
+            entry.embeddings = await client.embed(text);
+          } catch {
+            // Ollama unavailable — skip
+          }
+        }
+      }
+
+      // Content chunk embeddings (used by queryByText for semantic search)
+      if (!entry.contentChunks || entry.contentChunks.length === 0) {
+        try {
+          const absPath = path.join(this.projectRoot, entry.path);
+          const content = this.fs.readFileSync(absPath, 'utf-8');
+          const rawChunks = CodebaseIndex.chunkText(content, 512, 64);
+          const chunks: ContentChunk[] = [];
+          for (const { text: chunkText } of rawChunks) {
+            try {
+              const vec = await client.embed(chunkText);
+              chunks.push({ text: chunkText, vec });
+            } catch {
+              break; // Ollama unavailable mid-file — stop embedding this file
+            }
+          }
+          if (chunks.length > 0) {
+            entry.contentChunks = chunks;
+          }
+        } catch {
+          // File unreadable — skip content chunks
+        }
       }
     }
   }
