@@ -173,6 +173,17 @@ export class Planner {
       // "verify your work", "view result", "see the output", etc.
       sortedSteps = this.filterNoisyReadSteps(sortedSteps);
 
+      // POST-PROCESS: Drop test RUN steps when the project has no test files.
+      // The LLM prompt says "NO npm test" but the LLM sometimes ignores it.
+      if (!hasTests) {
+        sortedSteps = this.filterTestSteps(sortedSteps);
+      }
+
+      // POST-PROCESS: Strip dependency references that point to steps removed by filters above.
+      // Without this, remaining steps that declared dependsOn a filtered step throw
+      // DEPENDENCY_VIOLATION at execution time.
+      sortedSteps = this.stripStaleDependencies(sortedSteps);
+
       // FINAL: Re-number steps sequentially to match display order.
       // Topological sort changes execution order but stepNumber still holds the LLM's
       // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
@@ -963,6 +974,43 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     }
 
     return filtered;
+  }
+
+  /**
+   * Drop RUN steps that invoke test runners when the project has no test files.
+   * The LLM sometimes emits test steps even when the prompt says not to.
+   * Removing them in code is more reliable than relying on prompt compliance.
+   */
+  private filterTestSteps(steps: ExecutionStep[]): ExecutionStep[] {
+    const testCommandPattern = /\b(vitest|jest|pytest|npm\s+test|yarn\s+test)\b/i;
+    const filtered = steps.filter(step => {
+      if (step.action === 'run' && step.command && testCommandPattern.test(step.command)) {
+        console.log(`[Planner] filterTestSteps: removed test step (no test files in project): "${step.description}"`);
+        return false;
+      }
+      return true;
+    });
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} test step(s) — project has no test files`);
+    }
+    return filtered;
+  }
+
+  /**
+   * After any filter removes steps, strip references to those steps from dependsOn arrays.
+   * Without this, remaining steps that declared a dependency on a filtered step will throw
+   * DEPENDENCY_VIOLATION at execution time even though the dependency is gone.
+   */
+  private stripStaleDependencies(steps: ExecutionStep[]): ExecutionStep[] {
+    const remainingIds = new Set(steps.map(s => s.id).filter(Boolean) as string[]);
+    return steps.map(step => {
+      if (!step.dependsOn || step.dependsOn.length === 0) { return step; }
+      const validDeps = step.dependsOn.filter(depId => remainingIds.has(depId));
+      if (validDeps.length === step.dependsOn.length) { return step; }
+      console.log(`[Planner] stripStaleDependencies: removed ${step.dependsOn.length - validDeps.length} stale dep(s) from "${step.id}"`);
+      return { ...step, dependsOn: validDeps };
+    });
   }
 
   /**

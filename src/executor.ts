@@ -3188,6 +3188,21 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               duration: Date.now() - startTime,
             });
           } else {
+            // Special case: test runner exits code 1 because no test files exist.
+            // This is not a failure — the component simply has no tests yet.
+            const isTestCommand = /vitest|jest|npm\s+test|yarn\s+test/i.test(command);
+            const isNoTestFiles = /no test files found/i.test(output);
+            if (isTestCommand && isNoTestFiles) {
+              console.log(`[Executor] No test files found for "${command}" — treating as skip`);
+              resolve({
+                stepId: step.stepId,
+                success: true,
+                output: '⏭ No test files found — step skipped (no tests to run)',
+                duration: Date.now() - startTime,
+              });
+              return;
+            }
+
             const errorMsg = output || `Command failed with exit code ${code}`;
             const suggestion = this.suggestErrorFix('run', command, errorMsg);
             resolve({
