@@ -19,7 +19,6 @@ import { GOLDEN_TEMPLATES } from './constants/templates';
 import { ProjectProfile } from './projectProfile';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
-import { validateArchitectureRulePure } from './utils/architectureRuleValidator';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -576,11 +575,6 @@ export class Executor {
       }
     }
 
-    // Check 2: Architecture rule violations
-    const ruleErrors = await this.validateArchitectureRules(content, filePath);
-    if (ruleErrors.length > 0) {
-      errors.push(...ruleErrors);
-    }
 
     // Check 3: Common patterns (imports, syntax)
     const patternErrors = this.validateCommonPatterns(content, filePath);
@@ -754,33 +748,7 @@ export class Executor {
   }
 
   /**
-   * Check generated code against architecture rules
-   */
-  private async validateArchitectureRules(content: string, filePath?: string): Promise<string[]> {
-    const errors: string[] = [];
-
-    // Get architecture rules if available
-    const rules = this.config.llmClient && (this.config.llmClient as any).config?.architectureRules;
-    if (!rules) {
-      return errors; // No rules to validate against
-    }
-
-    // Orchestration: Call the pure validator to extract all violations
-    const violations = validateArchitectureRulePure(content, rules, filePath || '');
-
-    // Map and Wrap: Convert violations to error messages
-    // This keeps the orchestration layer thin while using the pure logic
-    violations.forEach(violation => {
-      const message = violation.message +
-        (violation.suggestion ? ` ${violation.suggestion}` : '');
-      errors.push(message);
-    });
-
-    return errors;
-  }
-
-  /**
-   * Validate form components against .lla-rules 7 required patterns
+   * Validate form components against required patterns
    */
   private validateFormComponentPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
@@ -2739,30 +2707,11 @@ Examples of hooks that need imports:
       console.log(`[Executor] ✅ Injecting required React imports for ${fileName}`);
     }
 
-    // FORM COMPONENT PATTERN INJECTION: Critical for form generation
-    // Extract and inject form patterns from .lla-rules if this is a form component
+    // FORM COMPONENT PATTERN INJECTION
     let formPatternSection = '';
     const isFormComponent = fileName.includes('Form');
     if (isFormComponent) {
-      const llmConfig = this.config.llmClient.getConfig();
-      const architectureRules = llmConfig.architectureRules || '';
-      
-      // Extract Form Component Architecture section from .lla-rules
-      const formPatternMatch = architectureRules.match(/###\s+Form Component Architecture[\s\S]*?(?=###\s+|$)/);
-      if (formPatternMatch) {
-        formPatternSection = `
-## REQUIRED: Form Component Patterns
-
-${formPatternMatch[0]}
-
-CRITICAL: State interface, event typing, consolidator pattern, form onSubmit, and controlled inputs (value + onChange) are mandatory.
-Only add validation or error state if the REQUIREMENT explicitly asks for it.
-
-`;
-        console.log(`[Executor] ✅ Injecting form component patterns for ${fileName}`);
-      } else {
-        // Fallback: Inject form patterns directly if not in rules
-        formPatternSection = `
+      formPatternSection = `
 ## REQUIRED: Form Component Patterns
 
 1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
@@ -2778,11 +2727,7 @@ CRITICAL RULES:
 - Only add validation (email format checks, length checks) if the REQUIREMENT explicitly requests it
 - Keep form logic lean — implement only what the REQUIREMENT describes
 
-Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
-
 `;
-        console.log(`[Executor] ⚠️ Fallback: Injecting hardcoded form patterns for ${fileName}`);
-      }
     }
 
     // PROJECT PROFILE CONSTRAINTS: Inject detected project conventions as hard rules

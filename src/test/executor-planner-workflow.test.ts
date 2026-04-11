@@ -190,13 +190,7 @@ describe('Executor-Planner Workflow Integration (Phase 3.1)', () => {
     ({ executorScenario, expectedPlannerBehavior }) => {
       // Create executor with test scenario
       const { instance: executor } = createMockExecutor({
-        llmResponse: JSON.stringify({
-          architectureRules: [
-            { type: 'TANSTACK_QUERY_REQUIRED', detail: 'Use TanStack Query for API calls' },
-            { type: 'ZUSTAND_REQUIRED', detail: 'Use Zustand for state' },
-            { type: 'FUNCTIONAL_COMPONENTS', detail: 'Use functional components' },
-          ],
-        }),
+        llmResponse: JSON.stringify({}),
       });
 
       // Simulate executor validation on the code
@@ -411,9 +405,7 @@ describe('Executor-Planner Workflow Integration (Phase 3.1)', () => {
   describe('Workflow Spy Tracking', () => {
     it('should track executor validation calls', () => {
       const { instance: executor, mocks } = createMockExecutor({
-        llmResponse: JSON.stringify({
-          architectureRules: [],
-        }),
+        llmResponse: JSON.stringify({}),
       });
 
       // In real workflow, executor would validate code

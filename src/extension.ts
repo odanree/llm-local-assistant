@@ -78,52 +78,6 @@ async function findWorkspaceFolderForFile(filepath: string): Promise<vscode.Work
   return folders[0];
 }
 
-/**
- * Load architecture rules from workspace root
- * Checks in priority order: .lla-rules (primary) → .cursorrules (migration/fallback)
- * @returns Rules content if file exists, undefined otherwise
- */
-async function loadArchitectureRules(): Promise<string | undefined> {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) {
-    console.log('[.lla-rules] No workspace folders found');
-    return undefined;
-  }
-
-  const workspace = folders[0];
-  const workspacePath = workspace.uri.fsPath;
-  console.log(`[.lla-rules] Checking workspace: ${workspacePath}`);
-
-  // Priority order:
-  // 1. .lla-rules (LLM Local Assistant - primary)
-  // 2. .cursorrules (Cursor IDE - fallback/migration support)
-  const filenames = ['.lla-rules', '.cursorrules'];
-
-  for (const filename of filenames) {
-    try {
-      const rulesUri = vscode.Uri.joinPath(workspace.uri, filename);
-      const rulesPath = rulesUri.fsPath;
-      console.log(`[.lla-rules] Attempting to read: ${rulesPath}`);
-      
-      const content = await vscode.workspace.fs.readFile(rulesUri);
-      const text = new TextDecoder().decode(content);
-      const lines = text.split('\n').length;
-
-      console.log(`✅ [.lla-rules] Successfully loaded ${filename} (${lines} lines, ${content.byteLength} bytes)`);
-      console.log(`[.lla-rules] First line: ${text.split('\n')[0].substring(0, 80)}`);
-      return text;
-    } catch (error) {
-      // File doesn't exist, try next
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.log(`[.lla-rules] ${filename} not found: ${errorMsg}`);
-      continue;
-    }
-  }
-
-  // No rules file found
-  console.log(`[.lla-rules] No .lla-rules or .cursorrules file found in workspace`);
-  return undefined;
-}
 
 /**
  * Get LLM configuration from VS Code settings
@@ -815,93 +769,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                         `❌ TanStack Query used but not imported correctly. ` +
                         `Add: import { useQuery, useMutation } from '@tanstack/react-query'`
                       );
-                    }
-                  }
-                  
-                  // Check 6: Architecture rules validation (if .lla-rules loaded)
-                  const architectureRules = llmClient["config"]?.architectureRules || '';
-                  console.log(`[LLM Assistant] Architecture rules loaded: ${architectureRules.length > 0 ? 'YES' : 'NO'}`);
-                  
-                  if (architectureRules) {
-                    console.log(`[LLM Assistant] Checking architecture rules...`);
-                    
-                    // Rule: No direct fetch() when TanStack Query is rule
-                    if (architectureRules.includes('TanStack Query')) {
-                      // Check for various fetch patterns
-                      const hasFetch = /fetch\s*\(|await\s+fetch|fetch\s*\{/.test(generatedContent);
-                      if (hasFetch) {
-                        validationErrors.push(
-                          `❌ Architecture rule violation: Using direct fetch() instead of TanStack Query. ` +
-                          `Use: const { data } = useQuery(...) or useMutation(...)`
-                        );
-                        console.log(`[LLM Assistant] Fetch usage detected - rule violation`);
-                      }
-                    }
-                    
-                    // Rule: No Redux when Zustand is rule
-                    if (architectureRules.includes('Zustand') && generatedContent.includes('useSelector')) {
-                      validationErrors.push(
-                        `❌ Architecture rule violation: Using Redux (useSelector) instead of Zustand. ` +
-                        `Use: const store = useStore() from your Zustand store`
-                      );
-                      console.log(`[LLM Assistant] Redux usage detected - rule violation`);
-                    }
-                    
-                    // Rule: No class components
-                    if (architectureRules.includes('functional components') && generatedContent.includes('extends React.Component')) {
-                      validationErrors.push(
-                        `❌ Architecture rule violation: Using class component instead of functional component. ` +
-                        `Convert to: export function ComponentName() { ... }`
-                      );
-                      console.log(`[LLM Assistant] Class component detected - rule violation`);
-                    }
-                    
-                    // Rule: TypeScript strict mode - return types required
-                    if (architectureRules.includes('strict TypeScript') || architectureRules.includes('Never use implicit types')) {
-                      // Check for arrow functions without return type annotation
-                      const arrowFunctionsWithoutReturnType = generatedContent.match(/const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*(?!:)/g);
-                      if (arrowFunctionsWithoutReturnType) {
-                        validationErrors.push(
-                          `✅ Architecture rule: TypeScript strict mode requires return type annotations. ` +
-                          `Arrow functions should be: const funcName = (...): ReturnType => { ... }`
-                        );
-                        console.log(`[LLM Assistant] Arrow functions missing return types`);
-                      }
-
-                      // Check for function declarations without return type
-                      const functionsWithoutReturnType = generatedContent.match(/function\s+\w+\s*\([^)]*\)\s*{/g);
-                      if (functionsWithoutReturnType) {
-                        validationErrors.push(
-                          `✅ Architecture rule: Function declarations need return type annotations. ` +
-                          `Use: function funcName(...): ReturnType { ... }`
-                        );
-                        console.log(`[LLM Assistant] Functions missing return types`);
-                      }
-                    }
-
-                    // Rule: Runtime validation with Zod for utility functions
-                    if (architectureRules.includes('Zod for all runtime validation')) {
-                      // Check for object parameters without validation
-                      const hasObjectParams = /\([^)]*{[^)]*}\s*[:|,)]/.test(generatedContent);
-                      const hasZodValidation = generatedContent.includes('z.parse') || generatedContent.includes('z.parseAsync');
-                      
-                      if (hasObjectParams && !hasZodValidation && !generatedContent.includes('z.object')) {
-                        validationErrors.push(
-                          `✅ Architecture rule: Functions accepting objects should validate input with Zod. ` +
-                          `Define schema: const schema = z.object({ ... }); ` +
-                          `Then validate: const validated = schema.parse(input);`
-                        );
-                        console.log(`[LLM Assistant] Object parameters without Zod validation`);
-                      }
-                    }
-
-                    // Rule: Zod validation
-                    if (architectureRules.includes('Zod') && generatedContent.includes('type ') && !generatedContent.includes('z.')) {
-                      validationErrors.push(
-                        `✅ Architecture rule suggestion: Define validation schemas with Zod instead of just TypeScript types. ` +
-                        `Example: const userSchema = z.object({ name: z.string(), email: z.string().email() })`
-                      );
-                      console.log(`[LLM Assistant] Zod rule suggestion`);
                     }
                   }
                   
@@ -2069,15 +1936,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize LLM client with config
   const config = getLLMConfig();
 
-  // Load architecture rules from .lla-rules or .cursorrules
-  console.log('[Extension] Loading architecture rules...');
-  const rules = await loadArchitectureRules();
-  if (rules) {
-    config.architectureRules = rules;
-    console.log('[Extension] ✅ Architecture rules loaded and injected into LLMConfig');
-  } else {
-    console.log('[Extension]  No .lla-rules or .cursorrules file found (optional)');
-  }
+
 
   llmClient = new LLMClient(config);
   console.log('[Extension] ✅ LLM Client initialized');
