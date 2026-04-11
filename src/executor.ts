@@ -2783,6 +2783,15 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
       }
     }
 
+    // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
+    const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+    const hookConstraintSection = isHookTarget
+      ? `\nHOOK FILE RULES (mandatory — hooks are pure logic, no styling):\n` +
+        `- NEVER import cn, clsx, classnames, or any CSS/style utility — hooks have no className\n` +
+        `- NEVER import React UI primitives (Button, Input, etc.) — hooks return state/callbacks only\n` +
+        `- Only import: React hooks (useState, useCallback, useEffect, useRef), types, and domain utilities\n\n`
+      : '';
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
@@ -2791,7 +2800,7 @@ Missing ANY pattern = REJECTED by validator. Regenerate with ALL 7.
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -2806,6 +2815,7 @@ ${multiStepContext ? '11. Integration Check: Does this code properly use/import 
 SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly describes.
 - If the REQUIREMENT says "variant prop supporting primary and secondary", output EXACTLY those two variants — no size prop, no loading state, no icon slot, no extra variants.
 - Every prop, state variable, or feature NOT mentioned in the REQUIREMENT is OUT OF SCOPE and must be omitted.
+- Do NOT add implicit bounds, clamping (Math.max/Math.min), guard clauses, or validation unless the REQUIREMENT explicitly asks for them. "decrement" means subtract 1 — not "subtract 1 but clamp at 0".
 - Adding unrequested features is a spec violation. When in doubt, do less.
 
 TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into intermediate variables.
