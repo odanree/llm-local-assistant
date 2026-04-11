@@ -319,7 +319,7 @@ PATH_RULES:
     }
     
     const ragSection = ragContext
-      ? `\nEXISTING CODEBASE (use these paths/exports — do NOT recreate them):\n${ragContext}\n`
+      ? `\nEXISTING CODEBASE — these files ALREADY EXIST in the project. Do NOT create or recreate them. Import and use them directly:\n${ragContext}\n`
       : '';
 
     return `You are a step planner. Output a numbered plan.
@@ -578,7 +578,9 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
 
     for (let i = 0; i < parsedSteps.length; i++) {
       const raw = parsedSteps[i];
-      const stepNumber = (raw.step || i + 1) as number;
+      // Use nullish coalescing (not ||) so step: 0 from LLM doesn't fall through to i+1
+      // Clamp to minimum 1 — step IDs are 1-indexed (step_0 would mismatch completedStepIds)
+      const stepNumber = Math.max(1, (raw.step ?? i + 1) as number);
 
       // Validate action
       let action = (raw.action || 'read').toLowerCase().trim();
