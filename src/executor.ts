@@ -310,7 +310,11 @@ export class Executor {
             completedStepIds.add(plan.steps[completed.stepId - 1].id);
           }
         }
-        this.validateDependencies(step, completedStepIds);
+        // Build the set of step IDs that are actually in this plan (after filtering)
+        const planStepIds = new Set<string>(
+          plan.steps.map(s => s.id).filter((id): id is string => !!id)
+        );
+        this.validateDependencies(step, completedStepIds, planStepIds);
 
         // ✅ SENIOR FIX: String Normalization (Danh's Markdown Artifact Handling)
         // Call BEFORE validation to ensure LLM output is clean (Tolerant Receiver pattern)
@@ -1862,7 +1866,11 @@ JSON array only. No explanation.`;
    * If Step B depends on Step A, and Step A hasn't been completed yet,
    * this throws an error to block Step B's execution.
    */
-  private validateDependencies(step: PlanStep, completedStepIds: Set<string>): void {
+  private validateDependencies(
+    step: PlanStep,
+    completedStepIds: Set<string>,
+    planStepIds?: Set<string>
+  ): void {
     // Only validate if step has dependencies
     if (!step.dependsOn || step.dependsOn.length === 0) {
       return;
@@ -1870,6 +1878,13 @@ JSON array only. No explanation.`;
 
     // Check each dependency
     for (const depId of step.dependsOn) {
+      // Skip dependencies that were filtered out of the plan before execution.
+      // stripStaleDependencies in the planner should remove these, but this is the
+      // executor-side safety net for any that slip through.
+      if (planStepIds && !planStepIds.has(depId)) {
+        console.log(`[Executor] Skipping stale dep "${depId}" on step "${step.id}" — not in current plan`);
+        continue;
+      }
       if (!completedStepIds.has(depId)) {
         throw new Error(
           `DEPENDENCY_VIOLATION: Step "${step.id}" depends on "${depId}" which hasn't been completed yet. ` +
