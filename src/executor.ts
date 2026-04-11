@@ -1076,6 +1076,31 @@ export class Executor {
       );
     }
 
+    // Hook return contract: every useState value must be in the return object.
+    // The most common failure: a hook creates `const [count, setCount] = useState(...)` but
+    // only returns the manipulation functions `{ increment, decrement, reset }`, hiding count
+    // from the consumer. The consumer then has no way to read the current value.
+    if (isHookFile) {
+      const stateVarMatches = [...content.matchAll(/const\s+\[(\w+),\s*\w+\]\s*=\s*useState/g)];
+      if (stateVarMatches.length > 0) {
+        // Find the return statement(s) in the hook
+        const returnMatch = content.match(/return\s*\{([^}]+)\}/);
+        if (returnMatch) {
+          const returnBody = returnMatch[1];
+          for (const match of stateVarMatches) {
+            const stateVar = match[1];
+            // Check if the state variable name appears in the return object
+            if (!new RegExp(`\\b${stateVar}\\b`).test(returnBody)) {
+              errors.push(
+                `❌ Hook return missing state: \`${stateVar}\` is managed by useState but not in the return object. ` +
+                `Consumers cannot read the value. Add \`${stateVar}\` to the return: return { ${stateVar}, ... }.`
+              );
+            }
+          }
+        }
+      }
+    }
+
     return errors;
   }
 
@@ -2801,7 +2826,11 @@ CRITICAL RULES:
       ? `\nHOOK FILE RULES (mandatory — hooks are pure logic, no styling):\n` +
         `- NEVER import cn, clsx, classnames, or any CSS/style utility — hooks have no className\n` +
         `- NEVER import React UI primitives (Button, Input, etc.) — hooks return state/callbacks only\n` +
-        `- Only import: React hooks (useState, useCallback, useEffect, useRef), types, and domain utilities\n\n`
+        `- Only import: React hooks (useState, useCallback, useEffect, useRef), types, and domain utilities\n` +
+        `- RETURN CONTRACT: The return object MUST expose ALL managed state values AND their manipulation functions.\n` +
+        `  WRONG: return { increment, decrement, reset }  — hides the count value from the consumer\n` +
+        `  RIGHT:  return { count, increment, decrement, reset }  — count is the primary value, always expose it\n` +
+        `  Rule: every piece of state created with useState MUST appear in the return object.\n\n`
       : '';
 
     // Add instruction to output ONLY code, no explanations
