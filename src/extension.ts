@@ -322,11 +322,33 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                   const contextBuilder = new ContextBuilder();
                   const projectContext = contextBuilder.buildContext(selectedFolder.uri.fsPath);
 
+                  // RAG: check index readiness before querying
+                  if (codebaseIndex && !codebaseIndex.hasIndex) {
+                    // Index is empty — first-time activation with no saved cache
+                    (chatPanel as any)._pendingPlanRequest = userRequest;
+                    (chatPanel as any)._pendingPlanFolder = selectedFolder;
+                    postChatMessage({
+                      command: 'addMessage',
+                      text: `⏳ **RAG index is still building** (first-time scan).\n\nWait for it to finish for better context, or skip and plan now.`,
+                      options: ['WaitRAG', 'SkipRAG'],
+                    });
+                    return;
+                  }
+
+                  let ragContext = '';
+                  if (codebaseIndex) {
+                    const relevant = await codebaseIndex.queryByText(userRequest, 5);
+                    console.log(`[RAG] queryByText matched ${relevant.length} file(s): ${relevant.map(f => f.path).join(', ') || 'none'}`);
+                    const ctx = codebaseIndex.getMetadataContext(relevant);
+                    if (ctx) { ragContext = ctx; }
+                  }
+
                   const plan = await planner.generatePlan(
                     userRequest,
                     selectedFolder.uri.fsPath,  // CRITICAL: Pass workspace path
                     selectedFolder.name,        // CRITICAL: Pass workspace name
-                    projectContext              // CONTEXT-AWARE: Pass project context
+                    projectContext,             // CONTEXT-AWARE: Pass project context
+                    ragContext                  // RAG: relevant files for this task
                   );
                   
                   // Store plan for /execute command
@@ -1222,10 +1244,20 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 const fileData = await vscode.workspace.fs.readFile(fileUri);
                 const code = new TextDecoder().decode(fileData);
 
+                // RAG: inject context from similar files
+                let ragSection = '';
+                if (codebaseIndex) {
+                  const similar = await codebaseIndex.findSimilarByPath(filepath, 4);
+                  console.log(`[RAG] findSimilarByPath matched ${similar.length} file(s): ${similar.map(f => f.path).join(', ') || 'none'}`);
+                  const ctx = codebaseIndex.getMetadataContext(similar);
+                  if (ctx) {
+                    ragSection = `\n\nRelated files in this codebase:\n${ctx}\n`;
+                  }
+                }
+
                 const refactorPrompt = `You are an expert code reviewer. Analyze this file and suggest concrete refactoring improvements.
 
-File: ${filepath}
-
+File: ${filepath}${ragSection}
 \`\`\`
 ${code}
 \`\`\`
@@ -1862,6 +1894,74 @@ ${fileContent}
                 text: '❌ Plan rejected. Use `/plan <task>` to generate a new one.',
                 type: 'info',
               });
+
+            } else if (buttonName === 'WaitRAG' || buttonName === 'SkipRAG') {
+              const pendingRequest = (chatPanel as any)._pendingPlanRequest as string | undefined;
+              const pendingFolder = (chatPanel as any)._pendingPlanFolder as { uri: { fsPath: string }; name: string } | undefined;
+              if (!pendingRequest || !pendingFolder) { break; }
+
+              (chatPanel as any)._pendingPlanRequest = null;
+              (chatPanel as any)._pendingPlanFolder = null;
+
+              let ragContext = '';
+
+              if (buttonName === 'WaitRAG' && codebaseIndex) {
+                postChatMessage({
+                  command: 'addMessage',
+                  text: '⏳ Waiting for RAG index to complete...',
+                  type: 'info',
+                });
+                await codebaseIndex.waitForReady();
+                const relevant = await codebaseIndex.queryByText(pendingRequest, 5);
+                console.log(`[RAG] queryByText matched ${relevant.length} file(s): ${relevant.map(f => f.path).join(', ') || 'none'}`);
+                ragContext = codebaseIndex.getMetadataContext(relevant);
+              }
+
+              postChatMessage({
+                command: 'addMessage',
+                text: `📊 Generating plan for: "${pendingRequest}"${ragContext ? ' (with RAG context)' : ''}`,
+                type: 'info',
+              });
+
+              try {
+                const ragPlanner = new Planner({
+                  llmCall: async (prompt: string) => {
+                    const response = await llmClient.sendMessage(prompt);
+                    if (!response.success) { throw new Error(response.error || 'LLM call failed'); }
+                    return response.message || '';
+                  },
+                  onProgress: (stage: string, details: string) => {
+                    chatPanel?.webview.postMessage({ command: 'addMessage', text: `→ ${stage}: ${details}`, type: 'info' });
+                  },
+                });
+                const contextBuilder = new ContextBuilder();
+                const projectContext = contextBuilder.buildContext(pendingFolder.uri.fsPath);
+                const plan = await ragPlanner.generatePlan(
+                  pendingRequest,
+                  pendingFolder.uri.fsPath,
+                  pendingFolder.name,
+                  projectContext,
+                  ragContext
+                );
+                (chatPanel as any)._currentPlan = plan;
+                const planDisplay = plan.steps.map(s =>
+                  `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n${s.description}\n` +
+                  (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
+                  `✅ Expected: ${s.expectedOutcome}`
+                ).join('\n\n');
+                postChatMessage({
+                  command: 'addMessage',
+                  text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
+                  success: true,
+                  options: ['Execute', 'Reject'],
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
             }
             break;
           }
@@ -1955,8 +2055,13 @@ export async function activate(context: vscode.ExtensionContext) {
     embeddingClient = new EmbeddingClient({ endpoint: config.endpoint });
     codebaseIndex = new CodebaseIndex(wsFolder.fsPath);
     const cacheFile = path.join(wsFolder.fsPath, '.lla-embeddings.json');
+    const metaFile = path.join(wsFolder.fsPath, '.lla-index.json');
+    // Fast startup: load metadata index immediately (no Ollama needed)
+    codebaseIndex.loadMetadataIndex(metaFile);
+
     codebaseIndex.scan().then(() => {
       console.log('[Extension] ✅ Codebase index scanned');
+      codebaseIndex.saveMetadataIndex(metaFile);
       const restored = codebaseIndex.loadEmbeddingsCache(cacheFile);
       if (restored > 0) {
         console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
@@ -1965,9 +2070,12 @@ export async function activate(context: vscode.ExtensionContext) {
     }).then(() => {
       codebaseIndex.saveEmbeddingsCache(cacheFile);
       codebaseIndex.setEmbeddingClient(embeddingClient);
+      codebaseIndex.markReady();
       console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text) — incremental indexing active');
     }).catch((err: unknown) => {
       console.warn('[Extension] RAG embed skipped (Ollama unavailable?):', err);
+      // Even if embedAll fails, mark ready so waitForReady() doesn't hang forever
+      codebaseIndex.markReady();
     });
   }
 
@@ -2055,6 +2163,18 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   });
 
+
+  // Background incremental indexing — re-index any saved TypeScript/JavaScript file
+  if (wsFolder) {
+    const saveWatcher = vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (!/\.[jt]sx?$/.test(doc.fileName)) { return; }
+      if (!codebaseIndex) { return; }
+      const content = doc.getText();
+      codebaseIndex.addFile(doc.fileName, content);
+      console.log(`[Extension] ♻️ Incremental index update: ${path.relative(wsFolder!.fsPath, doc.fileName)}`);
+    });
+    context.subscriptions.push(saveWatcher);
+  }
 
   // CRITICAL FIX (Issue #2): Listen for workspace folder changes
   // Update executor config globally when user selects a different folder

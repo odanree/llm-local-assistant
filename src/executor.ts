@@ -1129,6 +1129,58 @@ export class Executor {
     // Pattern 2: Run command ambiguity - ask for confirmation on various command types
     if (action === 'run' && step.command) {
       const command = step.command.toLowerCase();
+
+      // Pre-check: skip bare `npm install` / `yarn install` if node_modules already exists
+      const isBareInstall = /^(?:npm\s+install|yarn\s+install|pnpm\s+install)\s*$/i.test(step.command.trim());
+      if (isBareInstall) {
+        try {
+          const nmUri = vscode.Uri.joinPath(this.config.workspace, 'node_modules');
+          await vscode.workspace.fs.stat(nmUri);
+          // node_modules exists — no need to reinstall
+          console.log(`[Executor] Skipping bare install — node_modules already exists`);
+          this.config.onMessage?.(`⏭ Skipped install — node_modules already exists`, 'info');
+          return null;
+        } catch {
+          // node_modules doesn't exist — proceed with the install
+        }
+      }
+
+      // Pre-check: skip npm/yarn/pnpm install for packages already in package.json
+      const installMatch = step.command.match(/^(?:npm\s+install|yarn\s+add|pnpm\s+add)\s+(.+)/i);
+      if (installMatch) {
+        const requestedPkgs = installMatch[1]
+          .split(/\s+/)
+          .filter(p => p && !p.startsWith('-'))  // strip flags like --save-dev
+          .map(p => p.replace(/@[^@]+$/, ''));    // strip version specifiers like pkg@1.0.0
+        try {
+          const pkgJsonUri = vscode.Uri.joinPath(this.config.workspace, 'package.json');
+          const raw = await vscode.workspace.fs.readFile(pkgJsonUri);
+          const pkgJson = JSON.parse(new TextDecoder().decode(raw)) as {
+            dependencies?: Record<string, string>;
+            devDependencies?: Record<string, string>;
+          };
+          const installed = new Set([
+            ...Object.keys(pkgJson.dependencies ?? {}),
+            ...Object.keys(pkgJson.devDependencies ?? {}),
+          ]);
+          const alreadyInstalled = requestedPkgs.filter(p => installed.has(p));
+          const notInstalled = requestedPkgs.filter(p => !installed.has(p));
+          if (notInstalled.length === 0) {
+            console.log(`[Executor] Skipping install — all packages already in package.json: ${alreadyInstalled.join(', ')}`);
+            this.config.onMessage?.(`⏭ Skipped install — already in package.json: ${alreadyInstalled.join(', ')}`, 'info');
+            return null; // signals "skip this step" to the caller
+          }
+          if (alreadyInstalled.length > 0) {
+            console.log(`[Executor] Partial skip — already installed: ${alreadyInstalled.join(', ')}; will install: ${notInstalled.join(', ')}`);
+            // Rewrite the command to only install the missing packages
+            const pm = step.command.match(/^(npm\s+install|yarn\s+add|pnpm\s+add)/i)?.[1] ?? 'npm install';
+            const flags = installMatch[1].split(/\s+/).filter(p => p.startsWith('-')).join(' ');
+            step = { ...step, command: `${pm} ${notInstalled.join(' ')}${flags ? ' ' + flags : ''}` };
+          }
+        } catch {
+          // Can't read package.json — proceed normally
+        }
+      }
       
       // Patterns that warrant user confirmation (potentially long-running or risky)
       const confirmationPatterns = [
@@ -1257,6 +1309,26 @@ export class Executor {
 
     // VALIDATOR GATE 2: Contract Enforcement (Danh's Fix B)
     // Catch "Manual" hallucinations and missing path errors BEFORE execution
+
+    // Pre-check: read/write/delete with no path whose description looks like manual verification
+    // → auto-skip gracefully instead of failing the plan
+    const isManualVerificationMisfire = (
+      ['read', 'write', 'delete'].includes(step.action) &&
+      (!step.path || step.path.trim().length === 0) &&
+      /manual|verif|test\s+in\s+browser|check\s+in\s+browser/i.test(step.description)
+    );
+    if (isManualVerificationMisfire) {
+      console.warn(`[Executor] Manual verification step disguised as '${step.action}' — auto-skipping: "${step.description}"`);
+      this.config.onMessage?.(`📋 Manual verification (skipped by executor): ${step.description}`, 'info');
+      return {
+        stepId,
+        success: true,
+        output: `Manual verification note: ${step.description}`,
+        duration: 0,
+        timestamp: Date.now(),
+      };
+    }
+
     try {
       this.validateStepContract(step);
     } catch (err) {
@@ -2210,7 +2282,7 @@ For any React component using hooks, you MUST include these imports at the top:
 
 - If using useState: \`import { useState } from 'react';\`
 - If using React.FC or React.ReactNode: \`import React from 'react';\`
-- If using form events: \`import { FormEvent } from 'react';\`
+- If using form events: \`import { FormEvent, FormEventHandler } from 'react';\`
 - If using components from external libs: \`import { Library } from 'library-name';\`
 
 CRITICAL: Every hook you use MUST be imported. The validator will reject any hook that isn't imported.
@@ -2250,9 +2322,9 @@ Validator will REJECT if any pattern is missing.
 ## REQUIRED: Form Component Patterns (7 Mandatory)
 
 1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
-2. **Event Typing** - Use FormEvent types:
+2. **Event Typing** - Use FormEventHandler for submit, FormEvent for inputs:
    - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
-   - Form: const handleSubmit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); ... }
+   - Form: const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => { event.preventDefault(); ... }
 3. **Consolidator Pattern** - Single handleChange function that updates state: setFormData(prev => ({ ...prev, [name]: value }))
 4. **Submit Handler** - Use onSubmit on <form> element: <form onSubmit={handleSubmit}>
 5. **Error Tracking** - Use local error state: const [errors, setErrors] = useState<Record<string, string>>({})

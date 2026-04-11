@@ -100,7 +100,8 @@ export class Planner {
     userRequest: string,
     workspacePath?: string,
     workspaceName?: string,
-    projectContext?: any  // CONTEXT-AWARE PLANNING: Accept project context
+    projectContext?: any,  // CONTEXT-AWARE PLANNING: Accept project context
+    ragContext?: string    // RAG: relevant existing files for this task
   ): Promise<TaskPlan> {
     this.config.onProgress?.('Planning', 'Decomposing request into steps...');
 
@@ -111,7 +112,7 @@ export class Planner {
       console.log(`[Planner] Project context: hasTests=${hasTests}, testFramework=${projectContext.testFramework}`);
     }
 
-    const planPrompt = this.buildPlanPrompt(userRequest, hasTests);
+    const planPrompt = this.buildPlanPrompt(userRequest, hasTests, ragContext);
 
     try {
       const llmResponse = await this.config.llmCall(planPrompt);
@@ -293,7 +294,7 @@ export class Planner {
     return sorted;
   }
 
-  private buildPlanPrompt(userRequest: string, hasTests: boolean = true): string {
+  private buildPlanPrompt(userRequest: string, hasTests: boolean = true, ragContext?: string): string {
     // OPTIMIZED FOR SMALL MODELS (e.g., qwen2.5-coder:7b)
     // Use shorter, more direct prompts. Verbose prompts confuse small models.
     
@@ -317,8 +318,12 @@ PATH_RULES:
 `;
     }
     
-    return `You are a step planner. Output a numbered plan.
+    const ragSection = ragContext
+      ? `\nEXISTING CODEBASE (use these paths/exports — do NOT recreate them):\n${ragContext}\n`
+      : '';
 
+    return `You are a step planner. Output a numbered plan.
+${ragSection}
 ### CRITICAL: PLAN-CONTENT DECOUPLING (DANH'S ARCHITECTURE)
 
 THE PLANNER'S JOB: Only output Path and Reasoning
@@ -364,7 +369,7 @@ BENEFIT OF DECOUPLING:
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -419,7 +424,7 @@ ${contextSection}
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
