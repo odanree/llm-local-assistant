@@ -1023,6 +1023,24 @@ export class Executor {
           `twMerge keeps only the last one. Use a single transition utility — \`transition-colors\` is correct for most interactive components.`
         );
       }
+
+      // Detect initial* props destructured from params but never forwarded to a hook or used in body.
+      // Pattern: `({ initialCount = 0 }: Props)` but `useCounter()` called with no args.
+      // This creates a silent bug: the prop is accepted, the consumer passes a value, nothing happens.
+      // Heuristic: if the prop name appears ≤ 2 times in the whole file (interface def + destructuring)
+      // it was never referenced in the function body.
+      const initialPropDetector = /\(\s*\{[^}]*\b(initial[A-Z]\w*)[^}]*\}/g;
+      let ipMatch: RegExpExecArray | null;
+      while ((ipMatch = initialPropDetector.exec(content)) !== null) {
+        const propName = ipMatch[1];
+        const occurrences = (content.match(new RegExp(`\\b${propName}\\b`, 'g')) ?? []).length;
+        if (occurrences <= 2) {
+          errors.push(
+            `❌ Silent prop: \`${propName}\` is destructured from props but never referenced in the component body. ` +
+            `Pass it to the hook (e.g. \`use${propName.replace(/^initial/, '')}(${propName})\`) or remove the prop from the interface.`
+          );
+        }
+      }
     }
 
     // cn imported but never called — applies to both .ts and .tsx
