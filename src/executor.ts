@@ -1182,8 +1182,14 @@ JSON array only. No explanation.`;
       if (!Array.isArray(criteria)) { return []; }
       const filtered = criteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
 
-      console.log(`[Acceptance Criteria] ${filtered.length} criteria for ${step.path}:`);
-      filtered.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
+      if (filtered.length > 0) {
+        console.log(`[Acceptance Criteria] ${filtered.length} criteria for ${step.path}:`);
+        filtered.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
+        this.config.onMessage?.(
+          `🎯 Acceptance criteria (${filtered.length}): ${filtered.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join(' | ')}${filtered.length > 3 ? ' ...' : ''}`,
+          'info'
+        );
+      }
       return filtered;
     } catch (err) {
       console.warn(`[Acceptance Criteria] Skipped (${err instanceof Error ? err.message : String(err)})`);

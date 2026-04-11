@@ -184,6 +184,19 @@ export class Planner {
       // DEPENDENCY_VIOLATION at execution time.
       sortedSteps = this.stripStaleDependencies(sortedSteps);
 
+      // POST-PROCESS: Re-sort after filtering to ensure correct execution order.
+      // Filters may change the step set; the original topological order may now be stale
+      // (e.g. step_3 placed before step_2 because step_4 — which was its only predecessor in
+      // the original graph — was filtered out). Re-running topological sort on the surviving
+      // steps with their updated dependencies produces a valid execution order.
+      try {
+        sortedSteps = this.topologicalSort(sortedSteps);
+        console.log(`[Planner] Re-sorted ${sortedSteps.length} steps after filtering`);
+      } catch (resortErr) {
+        // If re-sort fails (should not happen after stripStaleDependencies), keep current order
+        console.warn(`[Planner] Post-filter re-sort failed (keeping current order): ${resortErr}`);
+      }
+
       // FINAL: Re-number steps sequentially to match display order.
       // Topological sort changes execution order but stepNumber still holds the LLM's
       // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
@@ -407,7 +420,7 @@ BENEFIT OF DECOUPLING:
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npx tsc --noEmit" to verify TypeScript compilation. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -464,7 +477,7 @@ ${contextSection}
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npm run build" or "npx tsc --noEmit" to verify compilation instead.
+- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npx tsc --noEmit" to verify TypeScript compilation. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
