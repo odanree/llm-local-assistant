@@ -1,6 +1,6 @@
 # Generation Quality Learnings
 
-**Series:** Button/useCounter/LoginForm eval runs v1–v25  
+**Series:** Button/useCounter/LoginForm eval runs v1–v30  
 **Branch:** `feature/generation-quality-v2`  
 **Status:** Active — updated as new regressions are found and fixed
 
@@ -162,6 +162,39 @@ Three distinct scope creep patterns appeared across runs. Each required both a p
 
 ---
 
+## 10. Non-Deterministic Criteria as a Hidden Failure Vector
+
+**Symptom (Test #2, run 1):** `useCounter` returned `{ increment, decrement, reset }` — omitting `count`. The consumer (`Counter.tsx`) couldn't read the current value. The LLM actually detected the missing value and worked around it by calling `useCounter()` twice — two independent state atoms. The counter incremented the first instance but displayed from the second (always 0). A comment in the JSX said *"Assuming we can destructure count, even if the previous step omitted it"* — the LLM knew the contract was broken and chose a wrong workaround.
+
+**Root cause:** `generateAcceptanceCriteria` is sampled non-deterministically. Run 1 criteria said `"Returns an object containing increment, decrement, and reset functions"` — count never mentioned. The LLM followed the spec exactly. Run 2 criteria said `"Uses React.useState to manage the count state"` — LLM understood count was the point and included it. Same prompt, different criteria, different output.
+
+**The double-call workaround signal:** When the LLM works around a bug it introduced rather than fixing the source, it's a sign the spec it was given was incomplete. The workaround is always wrong — two `useCounter()` calls = two independent state atoms = state desync.
+
+**Fix (two layers):**
+1. `hookConstraintSection` in generation prompt: explicit `RETURN CONTRACT` rule with WRONG/RIGHT examples — fires on every hook file regardless of what criteria generate
+2. Validator: scans all `const [x, setX] = useState(...)` declarations and verifies `x` appears in `return { ... }`. Fires `❌` if any state var is hidden from the consumer
+
+**Generalizes to:** Any hook that manages state. The rule is: *every piece of state created with `useState` MUST appear in the return object.* The validator now enforces this for all hook files, not just `useCounter`.
+
+**See:** [ADR-004: Deterministic Safety Nets for Non-Deterministic Criteria](../adr/ADR-004-deterministic-safety-nets.md)
+
+---
+
+## 11. Self-Referential Export from Auto-Corrector
+
+**Symptom (v18, v21, v26):** `export const Button = Button` or an internal-alias pattern (`const ButtonInner = forwardRef(...); export const Button = ButtonInner`) generated after auto-correction. TypeScript throws "Block-scoped variable used before its declaration" or a circular reference. Appeared in three separate runs across different components — always after the corrector ran, never on first-pass generations.
+
+**Root cause:** The corrector fixed one error (e.g. missing padding) and the LLM restructured the component body by wrapping in an inner const then re-exporting under the same name. The validator had no check for this pattern.
+
+**Fix (three layers):**
+1. Validator: regex `export\s+const\s+(\w+)\s*=\s*(\w+)\s*;` — fires `❌` when both sides are the same identifier
+2. `interactiveComponentSection`: explicit ban — `NEVER assign to an internal name and re-export under the same name`
+3. Auto-corrector prompt: `IMPORTANT: Never introduce an internal alias re-export`
+
+**Pattern:** If a bug appears 3+ times across different components after auto-correction, it's a corrector prompt gap, not a one-off model quirk.
+
+---
+
 ## Eval Rating Anchors
 
 These benchmarks are used to assess generation quality consistently:
@@ -177,3 +210,5 @@ These benchmarks are used to assess generation quality consistently:
 **Milestones:**
 - v11: First 10/10 on Test #1 (Button)
 - v20: First 10/10 on Test #2 (useCounter + Counter multi-file)
+- v28: First 10/10 plan (1 step) + first-pass clean execution for Test #1
+- v30: First 10/10 execution for Test #2 on run 2 after hook return contract fix
