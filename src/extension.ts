@@ -341,7 +341,16 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     const relevant = await codebaseIndex.queryByText(userRequest, 5);
                     console.log(`[RAG] queryByText matched ${relevant.length} file(s): ${relevant.map(f => f.path).join(', ') || 'none'}`);
                     const ctx = codebaseIndex.getMetadataContext(relevant);
-                    if (ctx) { ragContext = ctx; }
+                    if (ctx) {
+                      // Append explicit usage hints for well-known utilities found in context
+                      const hints: string[] = [];
+                      for (const f of relevant) {
+                        if (f.exports.includes('cn') && f.purpose === 'utility') {
+                          hints.push(`IMPORTANT: Use \`cn\` from \`${f.path}\` for ALL className merging — do NOT use string concatenation or template literals for class names.`);
+                        }
+                      }
+                      ragContext = ctx + (hints.length ? '\n\n' + hints.join('\n') : '');
+                    }
                   }
 
                   const plan = await planner.generatePlan(

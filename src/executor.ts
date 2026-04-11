@@ -885,6 +885,41 @@ export class Executor {
       errors.push(`${prefix} ${issue.message}`);
     });
 
+    // TSX component-specific checks
+    if (filePath.endsWith('.tsx')) {
+      // Detect React.ReactNode / React.ReactElement used as a runtime value (not a type)
+      // e.g. "React.ReactNode.propTypes ? React.ReactNode : children" — always falsy, renders nothing
+      if (/React\.ReactNode\s*[\?:\.](?!.*:)/.test(content) ||
+          /React\.ReactElement\s*[\?:\.](?!.*:)/.test(content)) {
+        errors.push(
+          `❌ Runtime bug: React.ReactNode or React.ReactElement used as a value expression. ` +
+          `These are TypeScript types — they don't exist at runtime. ` +
+          `Replace the ternary with just \`{children}\` or the actual JSX.`
+        );
+      }
+
+      // Detect manual className string concatenation when cn() is imported
+      const importsCn = /import\s+.*\bcn\b.*from/.test(content);
+      const hasManualConcat = /className\s*=\s*[`'"][^`'"]*\$\{/.test(content) ||
+                              /className\s*=\s*\{[^}]*\+\s*['"`]/.test(content);
+      if (importsCn && hasManualConcat) {
+        errors.push(
+          `❌ Style bug: cn() is imported but className uses manual string concatenation. ` +
+          `Use cn() for all class merging: className={cn('base', variant === 'primary' && 'bg-indigo-600', className)}`
+        );
+      }
+
+      // Detect component file with only default export and no named export
+      const hasDefaultExport = /export\s+default\b/.test(content);
+      const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
+      if (hasDefaultExport && !hasNamedExport && filePath.includes('components/')) {
+        errors.push(
+          `⚠️ Export consistency: Component has only a default export. ` +
+          `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
+        );
+      }
+    }
+
     return errors;
   }
 
