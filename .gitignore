@@ -19,6 +19,9 @@ examples/**
 # LinkedIn post (less transparency on social media strategy)
 docs/LINKEDIN_POST.md
 
+# Private learnings / interview prep (not for public repo)
+docs/LEARNINGS.md
+
 # Generated packages
 llm-local-assistant-*.vsix
 

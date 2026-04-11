@@ -32,9 +32,11 @@ export interface LLMConfig {
   model: string;
   temperature: number;
   maxTokens: number;
+  contextWindow?: number; // num_ctx: how many input tokens the model can see (default: Ollama default ~2048)
   timeout: number;
   stream?: boolean;
   architectureRules?: string; // Project-specific rules (.cursorrules content)
+  onContextUsage?: (warning: string) => void; // called when prompt tokens ≥ 85% of contextWindow
 }
 
 export interface LLMResponse {
@@ -42,6 +44,8 @@ export interface LLMResponse {
   message?: string;
   error?: string;
   tokensUsed?: number;
+  promptTokens?: number;      // input tokens used (from usage.prompt_tokens)
+  contextUsage?: string;      // always set: "X / Y tokens (N%)" — warning prefix added at ≥85%
 }
 
 export type StreamCallback = (token: string, complete: boolean) => Promise<void>;
@@ -52,6 +56,38 @@ export class LLMClient {
 
   constructor(config: LLMConfig) {
     this.config = config;
+  }
+
+  /**
+   * Check prompt token usage against context window and return a warning string if needed.
+   * Returns undefined when usage is within safe limits.
+   * Logs to console regardless so it always appears in the debug output.
+   */
+  private checkContextUsage(promptTokens: number): string | undefined {
+    const limit = this.config.contextWindow;
+    if (!limit || promptTokens === 0) { return undefined; }
+
+    const pct = Math.round((promptTokens / limit) * 100);
+    const msg = `Context usage: ${promptTokens.toLocaleString()} / ${limit.toLocaleString()} tokens (${pct}%)`;
+
+    if (promptTokens >= limit) {
+      const warning = `❌ Context window exceeded: ${msg}. The model truncated earlier conversation history. Clear chat or increase llm-assistant.contextWindow.`;
+      console.warn(`[LLM] ${warning}`);
+      this.config.onContextUsage?.(warning);
+      return warning;
+    }
+
+    if (pct >= 85) {
+      const warning = `⚠️ Context window ${pct}% full: ${msg}. Approaching the limit — consider clearing chat history soon.`;
+      console.warn(`[LLM] ${warning}`);
+      this.config.onContextUsage?.(warning);
+      return warning;
+    }
+
+    // Under threshold — always show usage in chat so it's visible without opening the console
+    console.log(`[LLM] ${msg}`);
+    this.config.onContextUsage?.(msg);
+    return undefined;
   }
 
   /**
@@ -173,6 +209,7 @@ export class LLMClient {
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         stream: true,
+        ...(this.config.contextWindow ? { options: { num_ctx: this.config.contextWindow } } : {}),
       };
 
       // [LLM DEBUG] Log request details before sending
@@ -231,6 +268,7 @@ export class LLMClient {
       const decoder = new TextDecoder();
       let buffer = '';
       let assistantMessage = '';
+      let streamPromptTokens = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -244,16 +282,22 @@ export class LLMClient {
           const line = lines[i].trim();
           if (!line || !line.startsWith('data: ')) {continue;}
 
-          try {
-            const data = JSON.parse(line.substring(6));
-            const token = data.choices?.[0]?.delta?.content;
+          const raw = line.substring(6);
+          if (raw === '[DONE]') {continue;}
 
+          try {
+            const data = JSON.parse(raw);
+            const token = data.choices?.[0]?.delta?.content;
             if (token) {
               assistantMessage += token;
               await onToken(token, false);
             }
+            // Ollama includes usage on the final chunk (finish_reason: 'stop')
+            if (data.usage?.prompt_tokens) {
+              streamPromptTokens = data.usage.prompt_tokens as number;
+            }
           } catch (e) {
-            // Ignore parse errors
+            // Ignore parse errors on individual chunks
           }
         }
       }
@@ -267,7 +311,9 @@ export class LLMClient {
       return {
         success: true,
         message: assistantMessage,
-        tokensUsed: 0,
+        tokensUsed: streamPromptTokens,
+        promptTokens: streamPromptTokens,
+        contextUsage: this.checkContextUsage(streamPromptTokens),
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -301,6 +347,7 @@ export class LLMClient {
         temperature: this.config.temperature,
         max_tokens: this.config.maxTokens,
         stream: false,
+        ...(this.config.contextWindow ? { options: { num_ctx: this.config.contextWindow } } : {}),
       };
 
       // [LLM DEBUG] Log request details before sending
@@ -358,10 +405,13 @@ export class LLMClient {
       // Add assistant response to history
       this.conversationHistory.push({ role: 'assistant', content: message });
 
+      const promptTokens = (data.usage?.prompt_tokens as number) || 0;
       return {
         success: true,
         message,
         tokensUsed: (data.usage?.total_tokens as number) || 0,
+        promptTokens,
+        contextUsage: this.checkContextUsage(promptTokens),
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
