@@ -1171,7 +1171,9 @@ export class Executor {
       const profileConstraints = this.config.projectProfile?.getGenerationConstraints() ?? '';
 
       const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
-      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
+      const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+      const hookLine = isHookTarget ? ' HOOK FILE: never include cn/clsx/classnames imports in criteria — hooks are pure logic.' : '';
+      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
       const controller = new AbortController();
