@@ -905,7 +905,8 @@ export class CodebaseIndex {
     const cache: EmbeddingsCache = { model, savedAt: Date.now(), files };
     try {
       this.fs.writeFileSync(target, JSON.stringify(cache));
-      console.log(`[CodebaseIndex] Saved ${files.length} embeddings to cache`);
+      const chunkedCount = files.filter(f => f.contentChunks && f.contentChunks.length > 0).length;
+      console.log(`[CodebaseIndex] Saved ${files.length} embeddings to cache (${chunkedCount} with content chunks)`);
     } catch (err) {
       console.warn('[CodebaseIndex] Failed to save embeddings cache:', err);
     }
@@ -959,6 +960,8 @@ export class CodebaseIndex {
         }
       }
     }
+    const chunkCount = Array.from(this.files.values()).filter(e => e.contentChunks && e.contentChunks.length > 0).length;
+    console.log(`[CodebaseIndex] embedAll complete — ${Array.from(this.files.values()).filter(e => e.embeddings && e.embeddings.length > 0).length} export embeddings, ${chunkCount} files with content chunks`);
   }
 
   /**
