@@ -296,6 +296,23 @@ export class Executor {
     }
 
     for (const step of plan.steps) {
+      // Skip steps that are manual verification disguised as read/run actions.
+      // Pattern: description contains "manual" and path is missing or contains non-code keywords.
+      // This prevents CONTRACT_VIOLATION crashes from recurring planner hallucinations.
+      const descLower = (step.description ?? '').toLowerCase();
+      const isManualVerification =
+        descLower.includes('manual verification') ||
+        (descLower.includes('browser') && step.action === 'read' && !step.path) ||
+        (step.action === 'read' && step.path && /manual|browser/i.test(step.path));
+      if (isManualVerification) {
+        this.config.onStepOutput?.(
+          step.stepId,
+          `📝 Skipped (human verification): ${step.description}`,
+          false
+        );
+        continue;
+      }
+
       try {
         // ✅ SURGICAL REFACTOR: Pre-Flight Contract Check (State-Aware)
         // Run atomic contract validation BEFORE any normalization/sanitization
@@ -1082,15 +1099,18 @@ export class Executor {
         }
       }
 
-      // Detect component file with only default export and no named export
-      // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
+      // Detect component file that uses default export without a named export.
+      // `const X = ...; export default X` is the exact anti-pattern — component consumers
+      // expect named imports: `import { LoginForm } from './LoginForm'`.
+      // A named definition without `export` is NOT acceptable — it must be `export const X`.
       const hasDefaultExport = /export\s+default\b/.test(content);
       const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
-      const hasNamedDefinition = /\b(?:const|function|class)\s+[A-Z]\w+/.test(content);
-      if (hasDefaultExport && !hasNamedExport && !hasNamedDefinition && filePath.includes('components/')) {
+      if (hasDefaultExport && !hasNamedExport && filePath.includes('components/')) {
+        const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') ?? 'Component';
         errors.push(
-          `⚠️ Export consistency: Component has only a default export. ` +
-          `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
+          `❌ Export consistency: Component uses only a default export — named exports are required. ` +
+          `Replace: \`const ${componentName} = ...; export default ${componentName};\` ` +
+          `with: \`export const ${componentName} = ...;\` (remove the default export entirely)`
         );
       }
 

@@ -128,11 +128,10 @@ export const Dashboard = () => {
       filePath: 'src/components/Dashboard.tsx',
       content: `import React from 'react';
 import { useUserStore } from '../stores/useUserStore';
-const Dashboard = () => {
+export const Dashboard = () => {
   const { name, email } = useUserStore();
   return <div>{name} {email}</div>;
-};
-export default Dashboard;`,
+};`,
       expected: { valid: true, errorCount: 0 },
       desc: 'Should accept proper Zustand destructuring pattern',
     },
