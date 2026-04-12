@@ -477,6 +477,29 @@ export const Wrapper = (props: React.ComponentProps<typeof Button>) => {
       const result = executor['validateCommonPatterns'](content, 'src/components/Wrapper.tsx');
       expect(result.some(e => e.includes('Self-referential ComponentProps'))).toBe(false);
     });
+
+    it('should flag malformed JSX attribute with 9 consecutive double-quotes', () => {
+      // T3R-v12/v13: LLM generates placeholder=""""""""" (9 quotes) — JavaScript parse error
+      const content = `import React from 'react';
+export const LoginForm = () => (
+  <form>
+    <input type="email" placeholder=""""""""" />
+  </form>
+);`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Malformed JSX attribute value'))).toBe(true);
+    });
+
+    it('should NOT flag a normal JSX attribute with a single double-quoted value', () => {
+      const content = `import React from 'react';
+export const LoginForm = () => (
+  <form>
+    <input type="email" placeholder="Enter your email" />
+  </form>
+);`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Malformed JSX attribute value'))).toBe(false);
+    });
   });
 
   // ============================================================

@@ -1065,6 +1065,21 @@ export class Executor {
       }
     }
 
+    // Malformed JSX attribute: consecutive double-quotes like placeholder="""""""""""
+    // In JSX, ="..." means the first " opens the string and the second " immediately closes it.
+    // Three or more consecutive quotes produce a syntax error that esbuild/tsc rejects.
+    // Common LLM failure: mis-escaping a placeholder value into repeated quote chars.
+    if (filePath.endsWith('.tsx')) {
+      const malformedAttrMatch = content.match(/="{3,}/);
+      if (malformedAttrMatch) {
+        errors.push(
+          `❌ Malformed JSX attribute value: Found consecutive double-quotes \`${malformedAttrMatch[0]}\` — this is a JavaScript parse error. ` +
+          `Use a plain string literal: e.g., \`placeholder="Enter your email"\`. ` +
+          `Never repeat double-quote characters in a JSX attribute value.`
+        );
+      }
+    }
+
     // Duplicate identifier: imported symbol also declared locally — crashes at runtime.
     // Happens when SmartFixer adds an import for a name already defined via create()/useState()/etc.
     if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
