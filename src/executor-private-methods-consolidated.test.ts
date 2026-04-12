@@ -539,6 +539,16 @@ export function LoginForm() {
         expect(Array.isArray(result)).toBe(true);
       }
     );
+
+    it('should flag handler annotated as FormEvent (event type, not function type)', () => {
+      const content = `import React, { FormEvent } from 'react';
+export const LoginForm = () => {
+  const handleSubmit: FormEvent<HTMLFormElement> = async (e) => { e.preventDefault(); };
+  return <form onSubmit={handleSubmit}></form>;
+};`;
+      const result = executor['validateFormComponentPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('FormEvent<') && e.includes('compile error'))).toBe(true);
+    });
   });
 
   // ============================================================

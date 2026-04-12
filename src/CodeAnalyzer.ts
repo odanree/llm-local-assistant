@@ -1028,29 +1028,53 @@ export class ArchitectureValidator {
               // Extract available state properties from Zustand store
               // Zustand pattern: export const useXxxStore = create<Type>((set) => ({ prop: value, ... }))
               // Key insight: We need to find the RUNTIME object, not TypeScript type params
-              
+
               let storeProps: Set<string> = new Set();
-              
-              // Strategy 1: Find create call and extract state object properties
-              // Pattern: => { prop1: ..., prop2: ..., etc
-              // Look for the arrow function body that contains property definitions
-              const arrowFunctionRegex = /create[^]*?\)\s*=>\s*\(\s*{([^}]+)}/;
-              const arrowMatch = storeContent.match(arrowFunctionRegex);
-              
-              if (arrowMatch) {
-                const stateBody = arrowMatch[1];
-                console.log(`[ArchitectureValidator] Found state body: ${stateBody.substring(0, 100)}...`);
-                
-                // Extract ALL property names that look like key: value
-                // Handle: propName: ..., nestedObj: { ... }, function: () => ...
-                const propRegex = /(\w+)\s*:\s*(?:[^,}]|\{[^}]*\}|function|\([^)]*\))/g;
-                let propMatch;
-                while ((propMatch = propRegex.exec(stateBody)) !== null) {
-                  storeProps.add(propMatch[1]);
-                  console.log(`[ArchitectureValidator] Found store property: ${propMatch[1]}`);
+
+              // Strategy 0: Extract property names from TypeScript interfaces defined in the store.
+              // This is the most reliable approach because interface bodies use simple `name: type`
+              // syntax without nested `{}` that confuses the create() body regex.
+              // Handles both single-interface and split-interface (State + Actions) patterns.
+              const interfaceRegex = /interface\s+\w+\s*\{([^}]+)\}/g;
+              let ifaceMatch;
+              while ((ifaceMatch = interfaceRegex.exec(storeContent)) !== null) {
+                const ifaceBody = ifaceMatch[1];
+                const memberRegex = /^\s*(\w+)\s*[?:]?\s*:/gm;
+                let memberMatch;
+                while ((memberMatch = memberRegex.exec(ifaceBody)) !== null) {
+                  storeProps.add(memberMatch[1]);
+                  console.log(`[ArchitectureValidator] Found interface property: ${memberMatch[1]}`);
                 }
-              } else {
-                console.warn(`[ArchitectureValidator] ⚠️ Could not match arrow function pattern in store`);
+              }
+
+              // Strategy 1: Brace-balanced extraction of create() callback object.
+              // The old regex used [^}]+ which stopped at the FIRST } inside the object
+              // (e.g. the } inside `set({ email })`), missing properties declared after it.
+              // Fix: locate `=> ({` then count braces to find the full top-level object body,
+              // then extract only top-level keys (lines starting with an identifier followed by `:`).
+              if (storeProps.size === 0) {
+                const arrowObjMatch = storeContent.match(/=>\s*\(\s*\{/);
+                if (arrowObjMatch && arrowObjMatch.index !== undefined) {
+                  const startIdx = arrowObjMatch.index + arrowObjMatch[0].length;
+                  let depth = 1;
+                  let i = startIdx;
+                  while (i < storeContent.length && depth > 0) {
+                    if (storeContent[i] === '{') depth++;
+                    else if (storeContent[i] === '}') depth--;
+                    i++;
+                  }
+                  const stateBody = storeContent.slice(startIdx, i - 1);
+                  console.log(`[ArchitectureValidator] Found state body (brace-balanced): ${stateBody.substring(0, 120)}...`);
+                  // Only match property names at the start of a line (top-level keys only)
+                  const propRegex = /^\s*(\w+)\s*:/gm;
+                  let propMatch;
+                  while ((propMatch = propRegex.exec(stateBody)) !== null) {
+                    storeProps.add(propMatch[1]);
+                    console.log(`[ArchitectureValidator] Found store property: ${propMatch[1]}`);
+                  }
+                } else {
+                  console.warn(`[ArchitectureValidator] ⚠️ Could not locate => ({ pattern in store`);
+                }
               }
 
               // Strategy 2: If that fails, try simpler regex

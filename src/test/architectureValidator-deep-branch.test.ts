@@ -1041,6 +1041,67 @@ describe('Phase 10D: ArchitectureValidator Deep Branch Coverage', () => {
       const deadImport = violations.find(v => v.message.includes('useState') && v.message.includes('Unused'));
       expect(deadImport).toBeDefined();
     });
+
+    it('should NOT false-positive on resetForm when store uses split interfaces (State + Actions)', async () => {
+      // Root cause: old arrowFunctionRegex used [^}]+ which stopped at the first } inside
+      // `setEmail: (email) => set({ email })`, so resetForm was never captured in storeProps.
+      // Fix: Strategy 0 extracts props from TypeScript interfaces; Strategy 1 uses brace-balanced extraction.
+      const componentCode = `
+        import { useFormStore } from '../store/useFormStore';
+        import { cn } from '@/utils/cn';
+        import React, { FormEvent } from 'react';
+
+        export const LoginForm = () => {
+          const { email, password, setEmail, setPassword, resetForm } = useFormStore();
+          const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+            e.preventDefault();
+            resetForm();
+          };
+          return (
+            <form onSubmit={handleSubmit}>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input value={password} onChange={(e) => setPassword(e.target.value)} />
+              <button type="submit" className={cn('btn')}>Login</button>
+            </form>
+          );
+        };
+      `;
+
+      const storeCode = `
+        import { create } from 'zustand';
+
+        interface LoginFormState {
+          email: string;
+          password: string;
+        }
+
+        interface LoginFormActions {
+          setEmail: (email: string) => void;
+          setPassword: (password: string) => void;
+          resetForm: () => void;
+        }
+
+        export const useFormStore = create<LoginFormState & LoginFormActions>((set) => ({
+          email: '',
+          password: '',
+          setEmail: (email) => set({ email }),
+          setPassword: (password) => set({ password }),
+          resetForm: () => set({ email: '', password: '' }),
+        }));
+      `;
+
+      const violations = await validator.validateHookUsage(
+        componentCode,
+        'src/components/LoginForm.tsx',
+        new Map([['src/store/useFormStore.ts', storeCode]])
+      );
+
+      // Must NOT fire "resetForm destructured but NOT in store" — it IS in the store
+      const falsePositive = violations.find(v =>
+        v.message.includes('resetForm') && v.message.includes('NOT in store')
+      );
+      expect(falsePositive).toBeUndefined();
+    });
   });
 
   // =========================================================================

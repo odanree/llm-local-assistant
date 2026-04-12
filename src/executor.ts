@@ -857,6 +857,16 @@ export class Executor {
         `Use: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { ... }`
       );
     }
+    // Critical: handler annotated with FormEvent (event type) instead of FormEventHandler (function type).
+    // e.g. `const handleSubmit: FormEvent<HTMLFormElement> = ...` — TypeScript compile error because
+    // FormEvent is the event object interface, not a callable function type.
+    const handlersTypedAsEvent = [...content.matchAll(/const\s+(handle\w+)\s*:\s*FormEvent\s*</g)];
+    for (const m of handlersTypedAsEvent) {
+      errors.push(
+        `❌ Pattern 2 violation: \`${m[1]}\` is annotated as \`FormEvent<...>\` which is an event object type, not a function type — this is a TypeScript compile error. ` +
+        `Use: const ${m[1]}: FormEventHandler<HTMLFormElement> = (e) => { e.preventDefault(); ... }`
+      );
+    }
     if (!hasFormEventHandler && (content.includes('handleChange') || content.includes('handleSubmit'))) {
       errors.push(
         `⚠️ Pattern 2 warning: Handlers should use FormEventHandler<HTMLFormElement> type.`
