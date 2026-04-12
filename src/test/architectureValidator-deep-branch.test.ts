@@ -136,6 +136,36 @@ describe('Phase 10D: ArchitectureValidator Deep Branch Coverage', () => {
 
       expect(result.violations.filter(v => v.type === 'missing-export').length).toBeGreaterThan(0);
     });
+
+    it('should skip JSON files — no violations for relative traversal to package.json', async () => {
+      // Regression: Zustand store docs that traverse ../../package.json were firing
+      // "Symbol 'package.json' not found in '/package.json'" — a false positive.
+      const storeCode = `
+        // See ../../package.json for zustand dependency
+        import { create } from 'zustand';
+        interface LoginFormState { email: string; password: string; }
+        export const useLoginFormStore = create<LoginFormState>()((set) => ({
+          email: '',
+          password: '',
+          setEmail: (email: string) => set({ email }),
+          setPassword: (password: string) => set({ password }),
+        }));
+      `;
+
+      const result = await validator.validateCrossFileContract(
+        storeCode,
+        'src/store/useLoginFormStore.ts',
+        { fsPath: '/project' } as any,
+        new Map()
+      );
+
+      // create from 'zustand' is an npm package → skipped
+      // No JSON-path violations should appear
+      const jsonViolations = result.violations.filter(v =>
+        v.message.includes('package.json') || v.suggestion?.includes('package.json')
+      );
+      expect(jsonViolations).toHaveLength(0);
+    });
   });
 
   // =========================================================================

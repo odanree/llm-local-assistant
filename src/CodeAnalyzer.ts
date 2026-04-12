@@ -504,6 +504,12 @@ export class ArchitectureValidator {
           continue;
         }
 
+        // Skip JSON/config files — they have no TypeScript exports to verify
+        // (handles cases where relative traversal resolves to /package.json, tsconfig.json, etc.)
+        if (resolvedPath.endsWith('.json') || resolvedPath.endsWith('.yaml') || resolvedPath.endsWith('.yml')) {
+          continue;
+        }
+
         // Handle different path formats
         if (resolvedPath.startsWith('.')) {
           // ✅ Relative paths: ../utils/cn, ./helpers

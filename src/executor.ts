@@ -518,16 +518,35 @@ export class Executor {
         const resolvedNoExt = resolved.replace(/\.[tj]sx?$/, '');
 
         // Skip known-good paths (in this plan or clearly a utility)
-        const isKnown = knownPaths.has(resolved) || knownPaths.has(resolvedNoExt) ||
-          resolved.includes('utils/cn') || resolved.includes('utils/') ||
-          resolved.includes('hooks/') || resolved.includes('stores/') ||
-          resolved.includes('types/') || resolved.includes('lib/');
+        const inThisPlan = knownPaths.has(resolved) || knownPaths.has(resolvedNoExt);
+        const isWellKnownDir = resolved.includes('utils/cn') || resolved.includes('utils/') ||
+          resolved.includes('hooks/') || resolved.includes('types/') || resolved.includes('lib/');
+
+        // For workspace paths not in this plan (e.g. a store created in a prior run),
+        // verify the file actually exists on disk before reporting a missing import.
+        let existsOnDisk = false;
+        if (!inThisPlan && !isWellKnownDir) {
+          const diskVariants = [
+            `src/${resolvedNoExt}.ts`,
+            `src/${resolvedNoExt}.tsx`,
+            `${resolvedNoExt}.ts`,
+            `${resolvedNoExt}.tsx`,
+          ];
+          for (const dv of diskVariants) {
+            try {
+              await vscode.workspace.fs.readFile(vscode.Uri.joinPath(planWorkspaceUri, dv));
+              existsOnDisk = true;
+              break;
+            } catch { /* not found */ }
+          }
+        }
+
+        const isKnown = inThisPlan || isWellKnownDir || existsOnDisk;
 
         if (!isKnown) {
           integrationErrors.push(
-            `❌ ${filePath}: Unresolvable import path '${rawPath}'. ` +
-            `This path was not created in this plan and is likely fabricated. ` +
-            `Known paths: ${[...knownPaths].slice(0, 5).join(', ')}`
+            `❌ ${filePath}: Unresolvable import '${rawPath}' — file was not created in this plan ` +
+            `and does not exist on disk. Known paths: ${[...knownPaths].slice(0, 5).join(', ')}`
           );
         }
       }
