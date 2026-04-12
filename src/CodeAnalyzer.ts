@@ -757,8 +757,8 @@ export class ArchitectureValidator {
     previousStepFiles?: Map<string, string>
   ): Promise<LayerViolation[]> {
     const violations: LayerViolation[] = [];
-    const workspace = vscode.workspace.workspaceFolders?.[0];
-    if (!workspace) {return violations;}
+
+    // ── Pure string-based checks (no vscode needed) ──────────────────────────
 
     // Step 0: Validate all React imports (useState, etc.)
     // Check if code uses useState but doesn't import it
@@ -783,10 +783,10 @@ export class ArchitectureValidator {
       'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue',
       'useId', 'useDeferredValue', 'useTransition', 'useSyncExternalStore'
     ];
-    
+
     const reactImportLine = generatedCode.match(/import\s+(?:\w+\s*,\s*)?{([^}]*)}\s+from\s+['"]react['"]/);
     const importedReactHooks = reactImportLine ? reactImportLine[1].split(',').map(h => h.trim()) : [];
-    
+
     for (const hook of reactHooks) {
       // Check if hook is USED in code
       if (new RegExp(`\\b${hook}\\s*\\(`).test(generatedCode)) {
@@ -823,11 +823,11 @@ export class ArchitectureValidator {
 
     // IMPORTANT: Detect refactoring context
     // If component has store hooks, useState being unused is OK (it's being replaced)
-    const hasStoreHook = importedHooks.some(h => 
+    const hasStoreHook = importedHooks.some(h =>
       h.names.some(n => n.includes('Store') || n.includes('store')) &&
       generatedCode.includes(`const`)
     );
-    const usingStoreHook = importedHooks.some(h => 
+    const usingStoreHook = importedHooks.some(h =>
       h.source.includes('store') &&
       h.names.some(n => {
         const escapedName = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -839,9 +839,32 @@ export class ArchitectureValidator {
       })
     );
 
+    // Dead useState check: after Zustand refactor, useState left in imports is a dead import.
+    // Handles both `import { useState }` and `import React, { useState }` since
+    // hookImportRegex only captures named-only imports.
+    if (usingStoreHook) {
+      const useStateImported =
+        importedReactHooks.includes('useState') ||
+        importedHooks.some(h => h.names.includes('useState'));
+      const useStateCalled = /\buseState\s*[(<]/.test(generatedCode);
+      if (useStateImported && !useStateCalled) {
+        violations.push({
+          type: 'semantic-error',
+          import: 'useState',
+          message: `Unused import: 'useState' is imported but never called. Remove it — all state is managed by the Zustand store hook.`,
+          suggestion: `Remove 'useState' from the React import. Keep only the hooks you actually use.`,
+          severity: 'high',
+        });
+      }
+    }
+
+    // ── Checks below require vscode workspace context (filesystem reads) ────────
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) { return violations; }
+
     // HOOK FILE DETECTION: Check if this is a custom hook file (exports use* function)
     const isHookFile = /src\/hooks\//.test(filePath) || /export\s+(?:const|function)\s+use\w+/.test(generatedCode);
-    
+
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {
       for (const hookName of hookImport.names) {
@@ -871,7 +894,7 @@ export class ArchitectureValidator {
             console.log(
               `[ArchitectureValidator] ℹ️ useState imported but not called (OK in refactoring to store)`
             );
-            continue; // Skip this error - refactoring is intentional
+            continue; // Handled by the dedicated dead-import check below
           }
           
           // EXCEPTION: For hook files, skip validation of React hooks
@@ -1245,7 +1268,17 @@ export class ArchitectureValidator {
     importedHooks.forEach(h => {
       h.names.forEach(name => importedHookNames.add(name));
     });
-    
+
+    // Hooks DEFINED (exported or declared) in this file are never missing imports —
+    // they ARE the definition. Catches: `export const useFormStore = create(...)` in
+    // a store file, where the customHookCallRegex may still find an internal call pattern.
+    const definedHookNames = new Set<string>();
+    const definedHookRegex = /(?:export\s+)?(?:const|function)\s+(use\w+)\s*(?:[=<(])/g;
+    let definedHookMatch;
+    while ((definedHookMatch = definedHookRegex.exec(generatedCode)) !== null) {
+      definedHookNames.add(definedHookMatch[1]);
+    }
+
     // Check if each called hook is imported
     customHooksCalled.forEach(hookName => {
       // Skip built-in React hooks
@@ -1254,7 +1287,12 @@ export class ArchitectureValidator {
         'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
         'useDeferredValue', 'useTransition', 'useSyncExternalStore'
       ].includes(hookName);
-      
+
+      // Skip hooks defined in this very file — they're declarations, not missing imports
+      if (definedHookNames.has(hookName)) {
+        return;
+      }
+
       if (!isBuiltinReactHook && !importedHookNames.has(hookName)) {
         console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
         violations.push({

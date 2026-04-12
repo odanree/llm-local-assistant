@@ -978,6 +978,69 @@ describe('Phase 10D: ArchitectureValidator Deep Branch Coverage', () => {
       // Should extract properties from store
       expect(violations.length).toBeGreaterThanOrEqual(0);
     });
+
+    it('should NOT fire "missing import" for a hook that is defined/exported by the same file', async () => {
+      // A Zustand store file exports useFormStore — the customHookCallRegex should not
+      // treat that exported name as a "called but not imported" hook.
+      const storeCode = `
+        import { create } from 'zustand';
+
+        interface LoginFormState {
+          email: string;
+          password: string;
+          setEmail: (email: string) => void;
+          setPassword: (password: string) => void;
+        }
+
+        export const useFormStore = create<LoginFormState>((set) => ({
+          email: '',
+          password: '',
+          setEmail: (email) => set({ email }),
+          setPassword: (password) => set({ password }),
+        }));
+      `;
+
+      const violations = await validator.validateHookUsage(storeCode, 'src/store/useFormStore.ts');
+
+      // Must not fire "Missing import: useFormStore is used but not imported"
+      const falsePositive = violations.find(v =>
+        v.message.includes('useFormStore') && v.message.includes('not imported')
+      );
+      expect(falsePositive).toBeUndefined();
+    });
+
+    it('should flag unused useState when Zustand store hook is active', async () => {
+      // After Zustand refactor, useState import left behind is a dead import
+      const componentCode = `
+        import React, { useState } from 'react';
+        import { useFormStore } from '../store/useFormStore';
+
+        export function LoginForm() {
+          const { email, password, setEmail, setPassword } = useFormStore();
+          const handleSubmit = (e: React.FormEvent) => {
+            e.preventDefault();
+            if (!email.includes('@')) return;
+          };
+          return <form onSubmit={handleSubmit}><input value={email} /></form>;
+        }
+      `;
+
+      const violations = await validator.validateHookUsage(
+        componentCode,
+        'src/components/LoginForm.tsx',
+        new Map([['src/store/useFormStore.ts', `
+          export const useFormStore = create<any>((set) => ({
+            email: '', password: '',
+            setEmail: (email: string) => set({ email }),
+            setPassword: (password: string) => set({ password }),
+          }));
+        `]])
+      );
+
+      // Should flag the dead useState import
+      const deadImport = violations.find(v => v.message.includes('useState') && v.message.includes('Unused'));
+      expect(deadImport).toBeDefined();
+    });
   });
 
   // =========================================================================
