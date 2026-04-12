@@ -401,6 +401,21 @@ describe('Executor - Private Methods (TIER 1)', () => {
         expect(Array.isArray(result)).toBe(true);
       }
     );
+
+    it('should flag bare-path cn import (src/utils/cn)', () => {
+      const content = `import { cn } from 'src/utils/cn';\nexport function Comp() { return <div className={cn('p-4')} />; }`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/Comp.tsx');
+      expect(result.some(e => e.includes('src/utils/cn') && e.includes('Import path'))).toBe(true);
+    });
+
+    it('should accept valid cn import paths (@/utils/cn and relative)', () => {
+      const aliasContent = `import { cn } from '@/utils/cn';\nexport function Comp() { return <div className={cn('p-4')} />; }`;
+      const relContent = `import { cn } from '../utils/cn';\nexport function Comp() { return <div className={cn('p-4')} />; }`;
+      const aliasResult = executor['validateCommonPatterns'](aliasContent, 'src/components/Comp.tsx');
+      const relResult = executor['validateCommonPatterns'](relContent, 'src/components/Comp.tsx');
+      expect(aliasResult.some(e => e.includes('Import path') && e.includes('cn'))).toBe(false);
+      expect(relResult.some(e => e.includes('Import path') && e.includes('cn'))).toBe(false);
+    });
   });
 
   // ============================================================

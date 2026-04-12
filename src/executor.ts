@@ -1022,6 +1022,20 @@ export class Executor {
         );
       }
 
+      // Validate cn import path: must be a relative path (../utils/cn, ./utils/cn) or alias (@/utils/cn)
+      // Catches: import { cn } from 'src/utils/cn' — a bare path that TypeScript resolves differently
+      const cnImportMatch = content.match(/import\s+[^'"]*\bcn\b[^'"]*from\s+['"]([^'"]+)['"]/);
+      if (cnImportMatch) {
+        const cnSource = cnImportMatch[1];
+        const isValidCnPath = cnSource.startsWith('./') || cnSource.startsWith('../') || cnSource.startsWith('@/');
+        if (!isValidCnPath) {
+          errors.push(
+            `❌ Import path: cn is imported from '${cnSource}' which is not a valid module specifier. ` +
+            `Use a relative path or alias: import { cn } from '@/utils/cn' or '../utils/cn'`
+          );
+        }
+      }
+
       // Detect manual className string concatenation when cn() is imported
       const importsCn = /import\s+.*\bcn\b.*from/.test(content);
       const hasManualConcat = /className\s*=\s*[`'"][^`'"]*\$\{/.test(content) ||
@@ -2973,10 +2987,12 @@ IMPORT vs RE-DEFINE:
       ? `\nZUSTAND STORE RULES (mandatory — stores are plain state objects, NOT React components):\n` +
         `- ONLY import: { create } from 'zustand' and TypeScript type definitions\n` +
         `- NEVER import React, useState, useCallback, useEffect, FormEvent, or any React type — stores have no JSX\n` +
-        `- Use FLAT state: expose email, password, setEmail, setPassword directly on the store object\n` +
+        `- Use FLAT state: expose each state field and setter directly on the store object\n` +
         `  WRONG: { state: { email: '', password: '' }, setFormData: (data) => set({ state: data }) }\n` +
         `  RIGHT:  { email: '', password: '', setEmail: (v) => set({ email: v }), setPassword: (v) => set({ password: v }) }\n` +
         `- Actions use set() from Zustand, NOT setState() from React\n` +
+        `- NEVER put event handlers (handleSubmit, handleChange, onClick) in the store — they belong in the component\n` +
+        `- Store actions are ONLY state mutations: setEmail, setPassword, reset, etc.\n` +
         `- Export the hook as: export const useFooStore = create<FooStore>((set) => ({ ... }));\n` +
         `- NEVER use export default — use named exports only\n\n`
       : '';
@@ -3011,6 +3027,13 @@ TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into inte
 - WRONG: const paddingStyle = 'px-4 py-2';  cn(paddingStyle, variantClasses[variant], className)
 - RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
 - Intermediate const variables for single class strings are dead indirection — inline them directly in cn().
+
+CN() USAGE RULE (mandatory): cn() takes a single base string plus optional conditional arguments — NEVER pass an empty string as an argument.
+- WRONG: className={cn('px-4 py-2', '')}  — the trailing '' is dead noise and fails the bare-string check
+- WRONG: className={cn('', 'px-4 py-2')}  — same problem, empty string as first arg
+- RIGHT: className={cn('px-4 py-2')}  — single string is fine
+- RIGHT: className={cn('px-4 py-2', isActive && 'bg-blue-600', className)}  — conditional booleans are fine
+- IMPORT PATH: always import cn as: import { cn } from '@/utils/cn' (not 'src/utils/cn' — bare paths don't resolve)
 
 Example format (raw code, nothing else):
 import { useForm } from 'react-hook-form';
