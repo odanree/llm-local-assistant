@@ -943,6 +943,22 @@ export class Executor {
       }
     }
 
+    // Duplicate identifier: imported symbol also declared locally — crashes at runtime.
+    // Happens when SmartFixer adds an import for a name already defined via create()/useState()/etc.
+    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
+      const importedNames = [...content.matchAll(/import\s+\{([^}]+)\}/g)]
+        .flatMap(m => m[1].split(',').map(s => s.trim().replace(/\s+as\s+\w+$/, '').trim()))
+        .filter(s => /^\w+$/.test(s));
+      for (const name of importedNames) {
+        if (new RegExp(`\\b(?:const|let|var|function|class)\\s+${name}\\b`).test(content)) {
+          errors.push(
+            `❌ Duplicate identifier: '${name}' is both imported and declared locally. ` +
+            `Remove the local declaration — import the module instead.`
+          );
+        }
+      }
+    }
+
     // Check form component patterns first
     const formErrors = this.validateFormComponentPatterns(content, filePath);
     if (formErrors.length > 0) {
@@ -3142,40 +3158,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 currentContent, lastCriticalErrors, ragResolver, step.path
               );
 
-              // 🔴 CRITICAL: Try Zustand mismatch fix if component imports from stores
-              let zustandFixed = smartFixed;
-              if (smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/) && lastCriticalErrors.some(e => e.includes('Zustand'))) {
-                this.config.onMessage?.(
-                  `🛠️ Attempting Zustand-specific fix (matching component to store exports)...`,
-                  'info'
-                );
-                
-                // Try to find and read the store file
-                const storeImportMatch = smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/);
-                if (storeImportMatch) {
-                  const storeImportPath = storeImportMatch[1];
-                  const storeFilePath = vscode.Uri.joinPath(workspaceUri, storeImportPath.replace(/^\.\//, 'src/').replace(/^\.\.\//, ''));
-                  
-                  try {
-                    const storeData = await vscode.workspace.fs.readFile(storeFilePath);
-                    const storeCode = new TextDecoder().decode(storeData);
-                    zustandFixed = SmartAutoCorrection.fixZustandComponentFromStore(smartFixed, storeCode);
-                    
-                    if (zustandFixed !== smartFixed) {
-                      this.config.onMessage?.(
-                        `✅ Applied Zustand mismatch fix`,
-                        'info'
-                      );
-                    }
-                  } catch (storeReadErr) {
-                    // Store file not found yet - will be created in later step
-                    console.warn('[Executor] Store file not yet available for Zustand mismatch fix');
-                  }
-                }
-              }
-
               // Validate the fixed code - only check CRITICAL errors
-              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step, acceptanceCriteria);
+              const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step, acceptanceCriteria);
               const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
                 smartValidation.errors,
                 false // Don't spam logs during auto-correction
@@ -3194,7 +3178,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     'info'
                   );
                 }
-                correctedContent = zustandFixed;
+                correctedContent = smartFixed;
               } else {
                 // ❌ Smart fix didn't fully work, fall back to LLM with ONLY CRITICAL ERRORS
                 this.config.onMessage?.(

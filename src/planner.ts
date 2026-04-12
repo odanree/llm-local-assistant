@@ -523,6 +523,13 @@ SCOPE CONSTRAINT — FILE CREATION:
 - If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
 - Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
 
+PREREQUISITE FILE RULE (CRITICAL):
+If a WRITE step will import from a NEW file that does NOT exist in the EXISTING CODEBASE above, that new file MUST have its own WRITE step EARLIER in this plan.
+- WRONG: Step 1: WRITE LoginForm.tsx (imports useFormStore) — useFormStore doesn't exist yet
+- RIGHT: Step 1: WRITE src/store/useFormStore.ts, Step 2: WRITE src/components/LoginForm.tsx
+This applies to any new module: state stores, custom hooks, utility files, etc.
+Never write a file that imports a module you haven't written yet in this same plan.
+
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 📌 ALL components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
