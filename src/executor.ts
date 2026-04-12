@@ -943,6 +943,28 @@ export class Executor {
       }
     }
 
+    // Invalid import names: TypeScript generic syntax used as import identifier.
+    // e.g. `import { FormEvent<HTMLFormElement> } from 'react'` — angle brackets are not valid
+    // in import specifiers; this is a syntax error that TypeScript rejects immediately.
+    // Handles both `import { ... }` and `import Foo, { ... }` forms.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const importBlockMatches = [...content.matchAll(/import\s+(?:\w+\s*,\s*)?\{([^}]+)\}/g)];
+      for (const m of importBlockMatches) {
+        const rawNames = m[1];
+        if (/</.test(rawNames)) {
+          // Extract the offending tokens
+          const badTokens = rawNames.split(',')
+            .map(s => s.trim())
+            .filter(s => s.includes('<') || s.includes('>'));
+          errors.push(
+            `❌ Invalid import syntax: Generic type syntax inside import braces is not valid. ` +
+            `Remove angle brackets from: { ${badTokens.join(', ')} }. ` +
+            `Import the base type only — TypeScript infers the generic at the call site: { ${badTokens.map(t => t.replace(/<[^>]*>/g, '').trim()).join(', ')} }`
+          );
+        }
+      }
+    }
+
     // Duplicate identifier: imported symbol also declared locally — crashes at runtime.
     // Happens when SmartFixer adds an import for a name already defined via create()/useState()/etc.
     if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
@@ -1116,19 +1138,33 @@ export class Executor {
         }
       }
 
-      // Detect self-referential export: `export const Button = Button` or `export { Button as Button }`.
+      // Detect self-referential export: `export const Button = Button` or
+      // `export const Button = forwardRef<T>(Button)` / `export const Button = React.forwardRef<T>(Button)`.
       // Auto-correction introduces this pattern when it wraps an inner const and then re-exports by name.
       // TypeScript throws "Block-scoped variable used before its declaration" or a circular reference.
       // Fires for any component file (.tsx) — not just interactive files.
       if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
-        // Pattern: export const X = X  (same identifier on both sides)
-        const selfRefExportMatch = content.match(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*;/);
-        if (selfRefExportMatch && selfRefExportMatch[1] === selfRefExportMatch[2]) {
-          const name = selfRefExportMatch[1];
+        // Pattern 1: export const X = X  (same identifier on both sides)
+        const selfRefSimple = content.match(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*;/);
+        if (selfRefSimple && selfRefSimple[1] === selfRefSimple[2]) {
+          const name = selfRefSimple[1];
           errors.push(
             `❌ Self-referential export: \`export const ${name} = ${name};\` is a circular declaration. ` +
             `Export the component directly: \`export const ${name} = React.forwardRef<...>(...)\` — ` +
             `do NOT assign to an internal name and then re-export it by the same name.`
+          );
+        }
+        // Pattern 2: export const X = forwardRef<...>(X) or React.forwardRef<...>(X)
+        // The last argument to forwardRef() is the render function — using the component itself
+        // here is a recursive reference that causes "used before declaration" errors.
+        const selfRefForwardRef = content.match(/export\s+const\s+(\w+)\s*=\s*(?:React\.)?forwardRef(?:<[^>]*>)?\s*\(\s*(\w+)\s*\)/);
+        if (selfRefForwardRef && selfRefForwardRef[1] === selfRefForwardRef[2]) {
+          const name = selfRefForwardRef[1];
+          errors.push(
+            `❌ Self-referential forwardRef: \`export const ${name} = forwardRef(${name})\` wraps the component in itself — ` +
+            `this causes a "used before declaration" error. ` +
+            `Define the render function inline: \`export const ${name} = React.forwardRef<HTMLElement, ${name}Props>((props, ref) => (<element ref={ref} {...props} />));\`. ` +
+            `If ${name} is not an interactive component (Button, Input), remove forwardRef entirely.`
           );
         }
       }
@@ -1147,6 +1183,21 @@ export class Executor {
             `Add \`px-4 py-2\` to the cn() base string so the component is usable without consumer overrides.`
           );
         }
+      }
+
+      // Detect hook calls inside JSX attribute expressions — violates Rules of Hooks.
+      // e.g. value={useFormStore((s) => s.email)} or onClick={useStore(s => s.handler)}
+      // Hooks must be called at the top level of the component body, never inside JSX props.
+      // Pattern: find =\{use\w+( anywhere that isn't a const/let/var/return assignment outside JSX.
+      // Simple heuristic: detect `prop={useXxx(` — hooks called directly as JSX attribute values.
+      const jsxHookViolations = [...content.matchAll(/\b\w+\s*=\s*\{\s*(use[A-Z]\w+)\s*\(/g)];
+      for (const m of jsxHookViolations) {
+        const hookName = m[1];
+        errors.push(
+          `❌ Rules of Hooks violation: \`${hookName}()\` is called inside a JSX prop expression. ` +
+          `Hooks must be called at the top level of the component body. ` +
+          `Extract to a variable above the return: \`const value = ${hookName}(selector);\` then use \`value\` in JSX.`
+        );
       }
 
       // Detect conflicting Tailwind transition utilities.
@@ -3141,7 +3192,10 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           let currentContent = content;
           let lastCriticalErrors = criticalErrors;
           let loopDetected = false;
-          const previousErrors: string[] = [];
+          // Track only the LAST attempt's errors (not accumulated) so the loop detector fires only
+          // when the SAME error appears on TWO CONSECUTIVE correction attempts — not after just one try.
+          let previousAttemptErrors: string[] = [];
+          let consecutiveSameErrors = 0;
 
           while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
             const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
@@ -3151,8 +3205,19 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               'error'
             );
 
-            // LOOP DETECTION: Check if same errors are repeating
-            if (previousErrors.length > 0 && JSON.stringify(lastCriticalErrors.sort()) === JSON.stringify(previousErrors.sort())) {
+            // LOOP DETECTION: Fire only when the SAME set of errors repeats for 2+ consecutive attempts.
+            // Comparing sorted JSON ensures order-insensitive matching.
+            if (
+              previousAttemptErrors.length > 0 &&
+              JSON.stringify([...lastCriticalErrors].sort()) === JSON.stringify([...previousAttemptErrors].sort())
+            ) {
+              consecutiveSameErrors++;
+            } else {
+              consecutiveSameErrors = 0;
+            }
+            previousAttemptErrors = [...lastCriticalErrors];
+
+            if (consecutiveSameErrors >= 2) {
               this.config.onMessage?.(
                 `🔄 LOOP DETECTED: Same validation errors appearing again - stopping auto-correction to prevent infinite loop`,
                 'error'
@@ -3160,7 +3225,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               loopDetected = true;
               break;
             }
-            previousErrors.push(...lastCriticalErrors);
 
             // If last attempt, give up
             if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {

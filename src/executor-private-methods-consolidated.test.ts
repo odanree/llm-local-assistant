@@ -416,6 +416,36 @@ describe('Executor - Private Methods (TIER 1)', () => {
       expect(aliasResult.some(e => e.includes('Import path') && e.includes('cn'))).toBe(false);
       expect(relResult.some(e => e.includes('Import path') && e.includes('cn'))).toBe(false);
     });
+
+    it('should flag self-referential forwardRef: export const X = forwardRef(X)', () => {
+      const content = `
+import React, { forwardRef } from 'react';
+import { cn } from '@/utils/cn';
+const LoginForm: React.FC = () => { return <form />; };
+export const LoginForm = forwardRef<HTMLFormElement, {}>(LoginForm);
+LoginForm.displayName = 'LoginForm';
+      `.trim();
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Self-referential forwardRef'))).toBe(true);
+    });
+
+    it('should flag hook called inside JSX prop (Rules of Hooks violation)', () => {
+      const content = `
+import { cn } from '@/utils/cn';
+import { useFormStore } from '../store/useFormStore';
+export function LoginForm() {
+  return <input value={useFormStore((s) => s.email)} onChange={() => {}} />;
+}
+      `.trim();
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Rules of Hooks violation'))).toBe(true);
+    });
+
+    it('should flag invalid import with generic syntax in braces', () => {
+      const content = `import React, { FormEvent, FormEvent<HTMLFormElement> } from 'react';\nexport function C() { return <div />; }`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/C.tsx');
+      expect(result.some(e => e.includes('Invalid import syntax'))).toBe(true);
+    });
   });
 
   // ============================================================
