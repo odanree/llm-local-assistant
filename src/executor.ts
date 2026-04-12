@@ -1276,6 +1276,24 @@ export class Executor {
             `If ${name} is not an interactive component (Button, Input), remove forwardRef entirely.`
           );
         }
+        // Pattern 3: export const X = (props: React.ComponentProps<typeof X>) => ...
+        // ComponentProps<typeof X> inside X's own definition is a circular self-reference —
+        // TypeScript cannot resolve it: "'X' implicitly has type 'any' because it does not have a
+        // type annotation and is referenced directly or indirectly in its own initializer".
+        // Fix: define a dedicated Props interface and use it instead.
+        const selfRefComponentProps = [...content.matchAll(
+          /export\s+const\s+(\w+)\s*=\s*\([^)]*(?:React\.)?ComponentProps<\s*typeof\s+(\w+)\s*>/g
+        )];
+        for (const m of selfRefComponentProps) {
+          if (m[1] === m[2]) {
+            errors.push(
+              `❌ Self-referential ComponentProps: \`export const ${m[1]} = (props: React.ComponentProps<typeof ${m[1]}>) => ...\` ` +
+              `references the component inside its own type annotation — TypeScript compile error. ` +
+              `Replace with a named interface: \`interface ${m[1]}Props { /* your props */ }\` ` +
+              `then use: \`export const ${m[1]} = ({ ...props }: ${m[1]}Props) => ...\``
+            );
+          }
+        }
       }
 
       // Interactive components (Button, Input, etc.) need at least one padding utility in base styles.
@@ -3134,8 +3152,10 @@ IMPORT vs RE-DEFINE:
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
         `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
-        `- Use a plain arrow function: export const ${componentName} = ({ ...props }: ${componentName}Props) => { ... };\n` +
-        `- Do NOT add .displayName — it is only needed on forwardRef components.\n\n`
+        `- Do NOT add .displayName — it is only needed on forwardRef components.\n` +
+        `- Props type: define a named interface: \`interface ${componentName}Props { email?: string; }\`\n` +
+        `  NEVER use React.ComponentProps<typeof ${componentName}> — that is a compile error (circular self-reference).\n` +
+        `- Use a plain arrow function: export const ${componentName} = ({ ...props }: ${componentName}Props) => { ... };\n\n`
       : '';
 
     // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)

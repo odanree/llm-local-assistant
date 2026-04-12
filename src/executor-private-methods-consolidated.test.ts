@@ -458,6 +458,25 @@ export function LoginForm() {
       const result = executor['validateCommonPatterns'](content, 'src/components/Comp.tsx');
       expect(result.some(e => e.includes('Fabricated JSON import'))).toBe(true);
     });
+
+    it('should flag self-referential ComponentProps<typeof X> inside X definition', () => {
+      const content = `import React from 'react';
+export const LoginForm = (props: React.ComponentProps<typeof LoginForm>) => {
+  return <form>{props.children}</form>;
+};`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Self-referential ComponentProps'))).toBe(true);
+    });
+
+    it('should NOT flag ComponentProps<typeof OtherComponent> in a different component', () => {
+      const content = `import React from 'react';
+import { Button } from './Button';
+export const Wrapper = (props: React.ComponentProps<typeof Button>) => {
+  return <Button {...props} />;
+};`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/Wrapper.tsx');
+      expect(result.some(e => e.includes('Self-referential ComponentProps'))).toBe(false);
+    });
   });
 
   // ============================================================
