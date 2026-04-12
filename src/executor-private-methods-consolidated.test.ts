@@ -446,6 +446,18 @@ export function LoginForm() {
       const result = executor['validateCommonPatterns'](content, 'src/components/C.tsx');
       expect(result.some(e => e.includes('Invalid import syntax'))).toBe(true);
     });
+
+    it('should flag fabricated package.json import in .ts file', () => {
+      const content = `import { package.json } from '../../package.json';\nimport { create } from 'zustand';\nexport const useStore = create(() => ({}));`;
+      const result = executor['validateCommonPatterns'](content, 'src/store/useStore.ts');
+      expect(result.some(e => e.includes('Fabricated JSON import'))).toBe(true);
+    });
+
+    it('should flag fabricated package.json import in .tsx file', () => {
+      const content = `import { package.json } from '../../package.json';\nimport React from 'react';\nexport const Comp = () => <div />;`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/Comp.tsx');
+      expect(result.some(e => e.includes('Fabricated JSON import'))).toBe(true);
+    });
   });
 
   // ============================================================

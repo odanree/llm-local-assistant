@@ -960,6 +960,19 @@ export class Executor {
       }
     }
 
+    // JSON file imports: importing from *.json (especially package.json) is a hallucination.
+    // e.g. `import { package.json } from '../../package.json'` — invalid identifier and wrong path.
+    // Strip these silently so they don't block the file write or propagate to integration checks.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const jsonImportMatch = content.match(/^import\s+[^'"]*\s+from\s+['"][^'"]*\.json['"]/m);
+      if (jsonImportMatch) {
+        errors.push(
+          `❌ Fabricated JSON import: \`${jsonImportMatch[0].trim()}\` — do not import JSON files. ` +
+          `Remove this line entirely. It serves no purpose in a TypeScript component or store.`
+        );
+      }
+    }
+
     // Invalid import names: TypeScript generic syntax used as import identifier.
     // e.g. `import { FormEvent<HTMLFormElement> } from 'react'` — angle brackets are not valid
     // in import specifiers; this is a syntax error that TypeScript rejects immediately.
