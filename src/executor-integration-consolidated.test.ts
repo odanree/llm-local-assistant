@@ -809,5 +809,38 @@ describe('Executor Integration (Consolidated)', () => {
       const result = await executor.executePlan(plan);
       expect(result.success).toBe(true);
     });
+
+    it('should fail when a file imports from a bare src/ path that does not exist on disk', async () => {
+      // T3R-v12/v13: LLM generates `import { api } from 'src/api'` — a fabricated module
+      // that is neither in the plan nor on disk. The integration validator must catch it.
+      // Use a plain .ts file to avoid triggering JSX/form per-step validators.
+      const utilContent = [
+        "import { api } from 'src/api';",
+        "export const fetchData = () => api.get('/data');",
+      ].join(String.fromCharCode(10));
+
+      const enc = new TextEncoder();
+      vi.spyOn(vscode.workspace.fs, 'writeFile').mockResolvedValue(undefined);
+      vi.spyOn(vscode.workspace.fs, 'createDirectory').mockResolvedValue(undefined);
+      // Return file content when executor reads back the generated file, but throw for src/api disk check
+      vi.spyOn(vscode.workspace.fs, 'readFile').mockImplementation(async (uri: any) => {
+        const p: string = (uri.fsPath ?? '') as string;
+        if (p.includes('fetchData')) return enc.encode(utilContent);
+        throw new Error('not found');
+      });
+
+      const plan = createMockPlan([
+        {
+          id: 'step-1', stepId: 1, action: 'write',
+          path: 'src/utils/fetchData.ts', content: utilContent,
+          description: 'Write util with fabricated src/api import',
+          dependencies: [], status: 'pending', result: undefined,
+        },
+      ]);
+
+      const result = await executor.executePlan(plan);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/src\/api|Unresolvable/);
+    });
   });
 });

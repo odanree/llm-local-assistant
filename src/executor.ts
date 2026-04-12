@@ -523,13 +523,15 @@ export class Executor {
       // IMPORT PATH RESOLUTION: verify @/-prefixed and relative imports resolve to known files.
       // This catches fabricated paths like `@/components/ui/form-login` when only
       // `src/components/LoginForm.tsx` was created.
-      const importLines = [...content.matchAll(/from\s+['"](@\/[^'"]+|\.\.?\/[^'"]+)['"]/g)];
+      const importLines = [...content.matchAll(/from\s+['"](@\/[^'"]+|\.\.?\/[^'"]+|src\/[^'"]+)['"]/g)];
       for (const importMatch of importLines) {
         const rawPath = importMatch[1];
 
-        // Resolve @/ alias (maps to src/)
+        // Resolve @/ alias (maps to src/), bare src/ prefix, or relative paths
         const resolved = rawPath.startsWith('@/')
           ? rawPath.slice(2)  // strip '@/' → relative to src/
+          : rawPath.startsWith('src/')
+          ? rawPath.slice(4)  // strip 'src/' → same level as src/
           : rawPath.replace(/^\.\//, '').replace(/^\.\.\//, ''); // strip leading ./ or ../
 
         const resolvedNoExt = resolved.replace(/\.[tj]sx?$/, '');
