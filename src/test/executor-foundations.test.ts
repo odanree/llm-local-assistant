@@ -461,30 +461,45 @@ describe('Executor Foundations - Core Integration Tests (v2.0)', () => {
    * ========================================================================
    * Tests for planner dependency resolution
    */
-  describe('Dependency Ordering - Planner Logic', () => {
-    it('should perform topological sort on dependencies - step ordering', async () => {
-      // Given: Steps with dependencies
+  describe('Dependency Ordering - reorderStepsByDependencies', () => {
+    it('should keep original order when already correct', () => {
       const steps: PlanStep[] = [
-        {
-          stepId: 1,
-          action: 'write',
-          path: 'file1.ts',
-          description: 'First file',
-        },
-        {
-          stepId: 2,
-          action: 'write',
-          path: 'file2.ts',
-          description: 'Second file',
-        },
+        { stepId: 1, action: 'write', path: 'file1.ts', description: 'First file' },
+        { stepId: 2, action: 'write', path: 'file2.ts', description: 'Second file' },
       ];
-
-      // When: Ordering steps
-      const ordered = steps.sort((a, b) => a.stepId - b.stepId);
-
-      // Then: Should maintain valid topological order
+      const ordered = (executor as any).reorderStepsByDependencies(steps);
       expect(ordered[0].stepId).toBe(1);
       expect(ordered[1].stepId).toBe(2);
+    });
+
+    it('should put Zustand store before component that imports it', () => {
+      // Planner generated store AFTER component — reorder should fix this
+      const steps: PlanStep[] = [
+        { stepId: 1, action: 'run', path: undefined, description: 'Install zustand' },
+        { stepId: 2, action: 'write', path: 'src/components/LoginForm.tsx', description: 'Refactor LoginForm to use Zustand store' },
+        { stepId: 3, action: 'write', path: 'src/store/useFormStore.ts', description: 'Create Zustand store for form state' },
+        { stepId: 4, action: 'run', path: undefined, description: 'Compile TypeScript' },
+      ];
+      const ordered = (executor as any).reorderStepsByDependencies(steps);
+      const writePaths = ordered.filter((s: PlanStep) => s.action === 'write').map((s: PlanStep) => s.path);
+      const storeIdx = writePaths.indexOf('src/store/useFormStore.ts');
+      const componentIdx = writePaths.indexOf('src/components/LoginForm.tsx');
+      expect(storeIdx).toBeLessThan(componentIdx);
+    });
+
+    it('should preserve non-write steps in their original interleaved positions', () => {
+      const steps: PlanStep[] = [
+        { stepId: 1, action: 'run', path: undefined, description: 'Install deps' },
+        { stepId: 2, action: 'write', path: 'src/store/useStore.ts', description: 'Create store' },
+        { stepId: 3, action: 'write', path: 'src/components/Card.tsx', description: 'Create component using useStore' },
+        { stepId: 4, action: 'run', path: undefined, description: 'Run tests' },
+      ];
+      const ordered = (executor as any).reorderStepsByDependencies(steps);
+      expect(ordered[0].action).toBe('run'); // install stays first
+      expect(ordered[3].action).toBe('run'); // tests stay last
+      const writePaths = ordered.filter((s: PlanStep) => s.action === 'write').map((s: PlanStep) => s.path);
+      expect(writePaths[0]).toBe('src/store/useStore.ts');
+      expect(writePaths[1]).toBe('src/components/Card.tsx');
     });
   });
 });

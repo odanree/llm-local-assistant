@@ -2046,10 +2046,17 @@ JSON array only. No explanation.`;
     });
 
     // Topological sort: Kahn's algorithm
+    // inDegree[i] = number of prerequisites step i has (steps that must run before it)
     const inDegree = new Map<number, number>();
     writeSteps.forEach((_, idx) => {
-      const depCount = Array.from(dependencies.values()).filter(deps => deps.has(idx)).length;
-      inDegree.set(idx, depCount);
+      inDegree.set(idx, dependencies.get(idx)?.size ?? 0);
+    });
+
+    // Build reverse map: dependents[i] = set of steps that depend on step i
+    const dependents = new Map<number, Set<number>>();
+    writeSteps.forEach((_, idx) => { dependents.set(idx, new Set()); });
+    dependencies.forEach((deps, idx) => {
+      deps.forEach(prereq => { dependents.get(prereq)?.add(idx); });
     });
 
     const queue: number[] = [];
@@ -2062,11 +2069,11 @@ JSON array only. No explanation.`;
       const current = queue.shift()!;
       sorted.push(current);
 
-      // Remove edges from current
-      dependencies.get(current)?.forEach(dependent => {
-        inDegree.set(dependent, (inDegree.get(dependent) ?? 0) - 1);
-        if (inDegree.get(dependent) === 0) {
-          queue.push(dependent);
+      // Decrement in-degree for everything that depended on current
+      dependents.get(current)?.forEach(dep => {
+        inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
+        if (inDegree.get(dep) === 0) {
+          queue.push(dep);
         }
       });
     }
