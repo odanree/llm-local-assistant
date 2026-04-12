@@ -822,7 +822,9 @@ export class Executor {
     const patternMap = new Map(patterns.map(p => [p.type, p.found]));
 
     // Pattern 1: State Interface
-    if (!patternMap.get('stateInterface')) {
+    // Skip when the form delegates state to a Zustand store — the interface lives there.
+    const importsZustandStore = /import\s+\{[^}]*use\w+Store[^}]*\}/.test(content);
+    if (!patternMap.get('stateInterface') && !importsZustandStore) {
       errors.push(
         `❌ Pattern 1 violation: Missing state interface. ` +
         `Forms require: interface LoginFormState { email: string; password: string; }`

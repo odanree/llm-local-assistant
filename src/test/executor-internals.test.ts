@@ -191,6 +191,31 @@ export const useUserStore = create<UserState>((set) => ({
       expected: { valid: true, errorCount: 0 },
       desc: 'Should accept store with proper interface and implementation',
     },
+
+    // ========== ZUSTAND FORM — PATTERN 1 SKIP ==========
+    {
+      name: 'Pattern 1 skip: Zustand form has no local state interface',
+      filePath: 'src/components/LoginForm.tsx',
+      content: `import React, { FormEventHandler } from 'react';
+import { cn } from '@/utils/cn';
+import { useLoginFormStore } from '@/store/useLoginFormStore';
+export function LoginForm() {
+  const { email, password, setEmail, setPassword } = useLoginFormStore();
+  const handleSubmit: FormEventHandler<HTMLFormElement> = (e) => {
+    e.preventDefault();
+    if (!email.includes('@')) return;
+  };
+  return (
+    <form onSubmit={handleSubmit}>
+      <input name="email" value={email} onChange={(e) => setEmail(e.target.value)} className={cn('input')} />
+      <input name="password" value={password} onChange={(e) => setPassword(e.target.value)} className={cn('input')} />
+      <button type="submit" className={cn('btn-primary')}>Login</button>
+    </form>
+  );
+}`,
+      expected: { valid: true, errorCount: 0 },
+      desc: 'Should skip Pattern 1 (missing state interface) when form imports from a Zustand store',
+    },
   ];
 
   it.each(validateGeneratedCodeMatrix)(

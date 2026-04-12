@@ -658,8 +658,13 @@ export class ArchitectureValidator {
                 if (propMatch) {
                   const property = propMatch[1];
                   // For Zustand stores, the export is the hook, but we should verify
-                  // that the accessed property makes sense (rough check)
-                  if (symbol.includes('Store') && !sourceContent.includes(property)) {
+                  // that the accessed property makes sense (rough check).
+                  // Whitelist: Zustand runtime methods (getState, setState, subscribe, destroy)
+                  // and single-char / file-extension tokens from path references (e.g. storeName.ts)
+                  const zustandBuiltins = new Set(['getState', 'setState', 'subscribe', 'destroy', 'getInitialState']);
+                  const fileExtTokens = new Set(['ts', 'tsx', 'js', 'jsx', 'json', 'css', 'svg']);
+                  if (symbol.includes('Store') && !sourceContent.includes(property) &&
+                      !zustandBuiltins.has(property) && !fileExtTokens.has(property)) {
                     violations.push({
                       type: 'semantic-error',
                       import: symbol,
@@ -1060,11 +1065,22 @@ export class ArchitectureValidator {
                       `[ArchitectureValidator] ❌ CRITICAL MISMATCH: Component destructures '${prop}' but store exports: ${Array.from(storeProps).join(', ')}`
                     );
                     hasPropertyMismatch = true;
+                    // Give actionable guidance depending on what's missing:
+                    // handleSubmit → define locally (form event handler, not a store concern)
+                    // anything else → add to store or remove from destructure
+                    const isSubmitHandler = prop === 'handleSubmit' ||
+                      (prop.startsWith('handle') && /submit/i.test(prop));
+                    const suggestion = isSubmitHandler
+                      ? `'${prop}' is a form event handler — it should be defined locally in the component, NOT destructured from the store. ` +
+                        `Remove '${prop}' from const { ... } = ${hookName}() and add: ` +
+                        `const ${prop}: FormEventHandler<HTMLFormElement> = (e) => { e.preventDefault(); /* use store state here */ };`
+                      : `Store exports: { ${Array.from(storeProps).join(', ')} } but component destructures '${prop}' which doesn't exist. ` +
+                        `Either add '${prop}' to the store's state object, or remove it from the destructure.`;
                     violations.push({
                       type: 'semantic-error',
                       import: hookName,
                       message: `❌ CRITICAL: Property '${prop}' destructured but NOT in store. Store exports: ${Array.from(storeProps).join(', ')}. This will cause runtime TypeError!`,
-                      suggestion: `Component expects: { ${properties.join(', ')} } but store has: { ${Array.from(storeProps).join(', ')} }. Refactoring is INCOMPLETE.`,
+                      suggestion,
                       severity: 'high',
                     });
                   } else {
