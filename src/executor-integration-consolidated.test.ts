@@ -733,4 +733,81 @@ describe('Executor Integration (Consolidated)', () => {
       expect(result.results instanceof Map).toBe(true);
     });
   });
+
+  // ============================================================
+  // Named Export Cross-File Check
+  // ============================================================
+
+  describe('Integration: named export mismatch detection', () => {
+    let executor: Executor;
+
+    beforeEach(() => {
+      executor = new Executor(createMockConfig());
+      vi.clearAllMocks();
+    });
+
+    it('should fail when consumer imports a name not exported by the target module', async () => {
+      // T3R-v10: store exports useLoginFormStore, consumer imports useFormStore -> runtime crash.
+      const storeContent = [
+        "import { create } from 'zustand';",
+        "export const useLoginFormStore = create(() => ({ email: '' }));",
+      ].join(String.fromCharCode(10));
+      const consumerContent = [
+        "import { useFormStore } from '../store/useFormStore';",
+        "export const getEmail = () => useFormStore();",
+      ].join(String.fromCharCode(10));
+
+      const enc = new TextEncoder();
+      vi.spyOn(vscode.workspace.fs, 'writeFile').mockResolvedValue(undefined);
+      vi.spyOn(vscode.workspace.fs, 'createDirectory').mockResolvedValue(undefined);
+      vi.spyOn(vscode.workspace.fs, 'readFile').mockImplementation(async (uri: any) => {
+        const p: string = (uri.fsPath ?? '') as string;
+        if (p.includes('useFormStore')) return enc.encode(storeContent);
+        if (p.includes('getEmail')) return enc.encode(consumerContent);
+        throw new Error('not found');
+      });
+
+      const plan = createMockPlan([
+        { id: 'step-1', stepId: 1, action: 'write', path: 'src/store/useFormStore.ts', content: storeContent,
+          description: 'Write store', dependencies: [], status: 'pending', result: undefined },
+        { id: 'step-2', stepId: 2, action: 'write', path: 'src/utils/getEmail.ts', content: consumerContent,
+          description: 'Write consumer', dependencies: ['step-1'], status: 'pending', result: undefined },
+      ]);
+
+      const result = await executor.executePlan(plan);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/useFormStore/);
+    });
+
+    it('should pass when consumer imports a name that IS exported by the target module', async () => {
+      const storeContent = [
+        "import { create } from 'zustand';",
+        "export const useFormStore = create(() => ({ email: '' }));",
+      ].join(String.fromCharCode(10));
+      const consumerContent = [
+        "import { useFormStore } from '../store/useFormStore';",
+        "export const getEmail = () => useFormStore();",
+      ].join(String.fromCharCode(10));
+
+      const enc = new TextEncoder();
+      vi.spyOn(vscode.workspace.fs, 'writeFile').mockResolvedValue(undefined);
+      vi.spyOn(vscode.workspace.fs, 'createDirectory').mockResolvedValue(undefined);
+      vi.spyOn(vscode.workspace.fs, 'readFile').mockImplementation(async (uri: any) => {
+        const p: string = (uri.fsPath ?? '') as string;
+        if (p.includes('useFormStore')) return enc.encode(storeContent);
+        if (p.includes('getEmail')) return enc.encode(consumerContent);
+        throw new Error('not found');
+      });
+
+      const plan = createMockPlan([
+        { id: 'step-1', stepId: 1, action: 'write', path: 'src/store/useFormStore.ts', content: storeContent,
+          description: 'Write store', dependencies: [], status: 'pending', result: undefined },
+        { id: 'step-2', stepId: 2, action: 'write', path: 'src/utils/getEmail.ts', content: consumerContent,
+          description: 'Write consumer', dependencies: ['step-1'], status: 'pending', result: undefined },
+      ]);
+
+      const result = await executor.executePlan(plan);
+      expect(result.success).toBe(true);
+    });
+  });
 });

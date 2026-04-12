@@ -566,6 +566,64 @@ export class Executor {
             `and does not exist on disk. Known paths: ${[...knownPaths].slice(0, 5).join(', ')}`
           );
         }
+
+        // NAMED EXPORT CHECK: for files written in this plan, verify each imported name is
+        // actually exported by the target file. This catches hook name mismatches like
+        // importing `useFormStore` when the store file exports `useLoginFormStore`.
+        if (inThisPlan) {
+          // Find the full importLine to extract named imports (e.g. `import { useFormStore }`)
+          const fullImportRegex = new RegExp(
+            `import\\s+(?:type\\s+)?\\{([^}]+)\\}\\s+from\\s+['"]${rawPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`
+          );
+          const namedImportMatch = content.match(fullImportRegex);
+          if (namedImportMatch) {
+            const importedNames = namedImportMatch[1]
+              .split(',')
+              .map(s => s.trim().replace(/\s+as\s+\w+$/, '').trim())
+              .filter(s => /^\w+$/.test(s));
+
+            // Find the target file content in generatedFileContents
+            let targetContent: string | undefined;
+            for (const [tp, tc] of generatedFileContents) {
+              const tpNorm = tp.replace(/\\/g, '/').replace(/^src\//, '').replace(/\.[tj]sx?$/, '');
+              if (tpNorm === resolvedNoExt || tp.replace(/\\/g, '/').endsWith(resolvedNoExt + '.ts') ||
+                  tp.replace(/\\/g, '/').endsWith(resolvedNoExt + '.tsx')) {
+                targetContent = tc;
+                break;
+              }
+            }
+
+            if (targetContent) {
+              // Extract all named exports from the target file
+              const namedExports = new Set<string>();
+              const exportMatches = [
+                ...targetContent.matchAll(/export\s+(?:const|function|class|type|interface|enum)\s+(\w+)/g),
+                ...targetContent.matchAll(/export\s*\{([^}]+)\}/g),
+              ];
+              for (const m of exportMatches) {
+                if (m[0].includes('{')) {
+                  // export { a, b as c } form
+                  m[1].split(',').forEach(s => {
+                    const name = s.trim().replace(/\s+as\s+\w+$/, '').trim();
+                    if (/^\w+$/.test(name)) namedExports.add(name);
+                  });
+                } else {
+                  namedExports.add(m[1]);
+                }
+              }
+
+              for (const importedName of importedNames) {
+                if (!namedExports.has(importedName)) {
+                  integrationErrors.push(
+                    `❌ ${filePath}: Imports \`${importedName}\` from '${rawPath}' but that file does not export it. ` +
+                    `Available exports: { ${[...namedExports].join(', ')} }. ` +
+                    `Rename the export in the store to match the import, or update the import to match the export.`
+                  );
+                }
+              }
+            }
+          }
+        }
       }
 
       // Check if this file imports from stores but doesn't use the hook correctly
