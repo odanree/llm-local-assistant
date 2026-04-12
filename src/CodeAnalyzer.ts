@@ -862,8 +862,14 @@ export class ArchitectureValidator {
     const workspace = vscode.workspace.workspaceFolders?.[0];
     if (!workspace) { return violations; }
 
-    // HOOK FILE DETECTION: Check if this is a custom hook file (exports use* function)
-    const isHookFile = /src\/hooks\//.test(filePath) || /export\s+(?:const|function)\s+use\w+/.test(generatedCode);
+    // HOOK FILE DETECTION: Check if this is a hook/store definition file.
+    // Covers: src/hooks/, src/store/, src/stores/ directories, plus any file that
+    // exports a use* symbol via any export syntax (inline or re-export).
+    const isHookFile =
+      /src\/hooks\//.test(filePath) ||
+      /src\/store[s]?\//.test(filePath) ||
+      /export\s+(?:const|function)\s+use\w+/.test(generatedCode) ||
+      /export\s*\{[^}]*\buse\w+/.test(generatedCode);
 
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {

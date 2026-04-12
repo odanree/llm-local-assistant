@@ -2967,6 +2967,20 @@ IMPORT vs RE-DEFINE:
         `  Rule: every piece of state created with useState MUST appear in the return object.\n\n`
       : '';
 
+    // Zustand store constraint block: injected when the target file is in store/ or stores/
+    const isStoreTarget = /[\\/]store[s]?[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+    const storeConstraintSection = isStoreTarget
+      ? `\nZUSTAND STORE RULES (mandatory — stores are plain state objects, NOT React components):\n` +
+        `- ONLY import: { create } from 'zustand' and TypeScript type definitions\n` +
+        `- NEVER import React, useState, useCallback, useEffect, FormEvent, or any React type — stores have no JSX\n` +
+        `- Use FLAT state: expose email, password, setEmail, setPassword directly on the store object\n` +
+        `  WRONG: { state: { email: '', password: '' }, setFormData: (data) => set({ state: data }) }\n` +
+        `  RIGHT:  { email: '', password: '', setEmail: (v) => set({ email: v }), setPassword: (v) => set({ password: v }) }\n` +
+        `- Actions use set() from Zustand, NOT setState() from React\n` +
+        `- Export the hook as: export const useFooStore = create<FooStore>((set) => ({ ... }));\n` +
+        `- NEVER use export default — use named exports only\n\n`
+      : '';
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
@@ -2975,7 +2989,7 @@ IMPORT vs RE-DEFINE:
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${interactiveComponentSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
