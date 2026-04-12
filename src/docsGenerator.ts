@@ -374,7 +374,6 @@ Natural language conversation about code, architecture, problems
 ### File Operations
 - **/read** - Analyze project files
 - **/write** - Generate new files with AI
-- **/suggestwrite** - Preview AI suggestions before writing
 
 ### Git Integration
 - **/git-commit-msg** - Auto-generate conventional commit messages
@@ -558,7 +557,7 @@ MIT - Free to use, modify, and distribute
       commands: [
         '/read <path> - Read and analyze a file',
         '/write <path> <prompt> - Generate file content with AI',
-        '/suggestwrite <path> <prompt> - Preview before writing',
+
         '/git-commit-msg - Generate commit message from staged changes',
         '/git-review [staged|unstaged|all] - Review code for quality/issues',
         '/auto-docs - Generate README and documentation',

@@ -16,7 +16,7 @@
  *
  * CRITICAL: Planner is constrained to Executor's action types.
  * - Valid actions: read, write, run, delete
- * - Invalid actions: analyze, review, suggestwrite (do these in planning, not execution)
+ * - Invalid actions: analyze, review (do these in planning, not execution)
  * - Schema enforcement: Prevents Interface Drift between modules
  */
 

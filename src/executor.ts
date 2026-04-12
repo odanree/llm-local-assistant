@@ -996,6 +996,19 @@ export class Executor {
         );
       }
 
+      // Detect bare string classNames when cn() is imported.
+      // Every className prop must go through cn() — no exceptions, including submit buttons.
+      // Catches: className="..." and className={"..."} but NOT className={cn(...)}
+      if (importsCn) {
+        const bareStringClassName = /className\s*=\s*(?:"[^"]*"|'[^']*'|\{["'][^"']*["']\})/.test(content);
+        if (bareStringClassName) {
+          errors.push(
+            `❌ Style bug: cn() is imported but a className prop uses a bare string literal. ` +
+            `Every className must go through cn(): className={cn('your-classes')} — this applies to every element, including submit buttons.`
+          );
+        }
+      }
+
       // Detect component file with only default export and no named export
       // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
       const hasDefaultExport = /export\s+default\b/.test(content);
