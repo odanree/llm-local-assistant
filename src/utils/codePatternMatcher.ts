@@ -362,9 +362,16 @@ export function findImportAndSyntaxIssuesPure(
   const localVariables = new Set<string>();
 
   // Helper: extract param names from "email: string, password: string"
+  // Handles: plain params, typed params, rest spread (...props), destructured ({ onSubmit, ...rest })
   const addParamsCPM = (params: string) => {
     params.split(',').forEach((p: string) => {
-      const name = p.trim().split(/[:\s=<(]/)[0].trim();
+      const trimmed = p.trim();
+      // Rest/spread param: ...props → extract "props"
+      const restMatch = trimmed.match(/^\.\.\.(\w+)/);
+      if (restMatch) { localVariables.add(restMatch[1]); return; }
+      // Strip leading { from object destructuring: "{ onSubmit" → "onSubmit"
+      const stripped = trimmed.startsWith('{') ? trimmed.slice(1).trim() : trimmed;
+      const name = stripped.split(/[:\s=<(]/)[0].trim();
       if (name && /^[a-zA-Z_$]/.test(name)) { localVariables.add(name); }
     });
   };

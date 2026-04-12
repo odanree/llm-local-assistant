@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchFormPatterns, matchArchitecturePatterns, matchImportPatterns } from './codePatternMatcher';
+import { matchFormPatterns, matchArchitecturePatterns, matchImportPatterns, findImportAndSyntaxIssuesPure } from './codePatternMatcher';
 
 describe('codePatternMatcher - Pure Pattern Detection', () => {
   describe('Form Pattern Matching', () => {
@@ -325,6 +325,40 @@ describe('codePatternMatcher - Pure Pattern Detection', () => {
       const duration = performance.now() - start;
 
       expect(duration).toBeLessThan(50);
+    });
+  });
+
+  // ============================================================
+  // findImportAndSyntaxIssuesPure - namespace false-positive guards
+  // ============================================================
+  describe('findImportAndSyntaxIssuesPure - rest-spread params not flagged as missing imports', () => {
+    it('should NOT flag rest-spread param ...props as a missing import', () => {
+      // Regression: LLM generates ({ onSubmit, ...props }: LoginFormProps) =>
+      // The old addParamsCPM didn't handle "...props" and failed the /^[a-zA-Z_$]/ check,
+      // so props was not added to localVariables and props.onSubmit() triggered "Missing import: props".
+      const code = `
+import React from 'react';
+interface LoginFormProps { onSubmit: (data: { email: string }) => void; }
+export const LoginFormRefactor = ({ onSubmit, ...props }: LoginFormProps) => {
+  const handleSubmit = () => onSubmit({ email: 'test' });
+  return <form {...props} onSubmit={handleSubmit}><button type="submit">Submit</button></form>;
+};`;
+      const issues = findImportAndSyntaxIssuesPure(code, 'src/components/LoginFormRefactor.tsx');
+      const propsError = issues.filter(i => i.message.includes("'props'") && i.message.includes('Missing import'));
+      expect(propsError).toHaveLength(0);
+    });
+
+    it('should NOT flag plain props param as a missing import when props.method() is called', () => {
+      const code = `
+import React from 'react';
+interface LoginFormProps { onSubmit: (data: { email: string }) => void; }
+export const LoginFormRefactor = (props: LoginFormProps) => {
+  const handleSubmit = () => props.onSubmit({ email: 'test' });
+  return <form onSubmit={handleSubmit}><button type="submit">Submit</button></form>;
+};`;
+      const issues = findImportAndSyntaxIssuesPure(code, 'src/components/LoginFormRefactor.tsx');
+      const propsError = issues.filter(i => i.message.includes("'props'") && i.message.includes('Missing import'));
+      expect(propsError).toHaveLength(0);
     });
   });
 });
