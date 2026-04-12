@@ -3129,6 +3129,13 @@ IMPORT vs RE-DEFINE:
 - NEVER write a comment like "// Assuming Input exists in scope" and then define it locally — either import it or use a plain HTML <input> element
 - If the REQUIREMENT does not mention creating a new Input component, do NOT create one
 
+STRICTLY FORBIDDEN (these will be rejected):
+- NEVER import from a fabricated API module: no \`import { api } from 'src/api'\`, no \`import { api } from '../api'\`, no \`import axios from 'axios'\` unless the REQUIREMENT explicitly names it
+- NEVER add isSubmitting / setIsSubmitting / isLoading / setIsLoading state unless the REQUIREMENT explicitly asks for a loading indicator
+- NEVER call setTimeout, setInterval, or any async delay inside a form handler
+- NEVER call api.post, api.get, fetch(), or axios() unless the REQUIREMENT explicitly specifies an API call
+- The submit handler MUST only read formData and call the onSubmit/onLogin prop — do NOT fabricate network logic
+
 `;
     }
 
