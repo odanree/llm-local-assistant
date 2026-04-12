@@ -1209,10 +1209,18 @@ export class Executor {
           `Wrap with: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { ... }); ` +
           `then add ${componentName}.displayName = '${componentName}';`
         );
-      } else if (usesForwardRef && !hasDisplayName) {
+      } else if (usesForwardRef && isInteractiveFile && !hasDisplayName) {
+        // displayName is only required for interactive components that use forwardRef.
+        // For form/page/layout components (LoginForm, Dashboard, etc.) forwardRef is never needed —
+        // flag its presence as scope creep instead of requiring displayName.
         errors.push(
           `❌ forwardRef missing displayName: Add \`${componentName}.displayName = '${componentName}';\` ` +
           `after the component definition. Without it React DevTools shows "ForwardRef" instead of the component name.`
+        );
+      } else if (usesForwardRef && !isInteractiveFile) {
+        errors.push(
+          `❌ Unnecessary forwardRef: \`${componentName}\` is not an interactive form control (Button/Input/Select/etc.) and does not need forwardRef. ` +
+          `Remove it and use a plain arrow function: \`export const ${componentName} = ({ ...props }: ${componentName}Props) => { ... };\``
         );
       }
 
@@ -3120,6 +3128,16 @@ IMPORT vs RE-DEFINE:
         `- NEVER use an internal alias: do NOT write \`const ${componentName}Inner = ...\` then \`export const ${componentName} = ${componentName}Inner\` or \`export const ${componentName} = ${componentName}\`. Export forwardRef directly.\n\n`
       : '';
 
+    // Non-interactive component guard: injected for .tsx files that are NOT interactive controls.
+    // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
+    const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
+    const noForwardRefSection = isNonInteractiveTsx
+      ? `\nCOMPONENT RULES (mandatory):\n` +
+        `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
+        `- Use a plain arrow function: export const ${componentName} = ({ ...props }: ${componentName}Props) => { ... };\n` +
+        `- Do NOT add .displayName — it is only needed on forwardRef components.\n\n`
+      : '';
+
     // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
     const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
     const hookConstraintSection = isHookTarget
@@ -3157,7 +3175,7 @@ IMPORT vs RE-DEFINE:
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -3293,10 +3311,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           let currentContent = content;
           let lastCriticalErrors = criticalErrors;
           let loopDetected = false;
-          // Track only the LAST attempt's errors (not accumulated) so the loop detector fires only
-          // when the SAME error appears on TWO CONSECUTIVE correction attempts — not after just one try.
+          // Loop detection: catch both consecutive-same (A→A) and oscillation (A→B→A) cycles.
           let previousAttemptErrors: string[] = [];
           let consecutiveSameErrors = 0;
+          // Sliding window of error fingerprints — detect repeated sets within 3 attempts
+          const recentErrorFingerprints: string[] = [];
 
           while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
             const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
@@ -3306,11 +3325,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               'error'
             );
 
-            // LOOP DETECTION: Fire only when the SAME set of errors repeats for 2+ consecutive attempts.
-            // Comparing sorted JSON ensures order-insensitive matching.
+            const currentFingerprint = JSON.stringify([...lastCriticalErrors].sort());
+
+            // LOOP DETECTION 1: same errors on consecutive attempts (A→A)
             if (
               previousAttemptErrors.length > 0 &&
-              JSON.stringify([...lastCriticalErrors].sort()) === JSON.stringify([...previousAttemptErrors].sort())
+              currentFingerprint === JSON.stringify([...previousAttemptErrors].sort())
             ) {
               consecutiveSameErrors++;
             } else {
@@ -3318,9 +3338,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             }
             previousAttemptErrors = [...lastCriticalErrors];
 
-            if (consecutiveSameErrors >= 2) {
+            // LOOP DETECTION 2: oscillation within a window of 3 (A→B→A)
+            recentErrorFingerprints.push(currentFingerprint);
+            if (recentErrorFingerprints.length > 3) recentErrorFingerprints.shift();
+            const isOscillating =
+              recentErrorFingerprints.length === 3 &&
+              recentErrorFingerprints[0] === recentErrorFingerprints[2] &&
+              recentErrorFingerprints[0] !== recentErrorFingerprints[1];
+
+            if (consecutiveSameErrors >= 2 || isOscillating) {
               this.config.onMessage?.(
-                `🔄 LOOP DETECTED: Same validation errors appearing again - stopping auto-correction to prevent infinite loop`,
+                `🔄 LOOP DETECTED: Validation errors oscillating — stopping auto-correction to prevent infinite loop`,
                 'error'
               );
               loopDetected = true;
@@ -3342,6 +3370,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
               'info'
             );
+
+            // Fast-path: forwardRef missing displayName is a pure append — no LLM needed.
+            // Pattern: last non-whitespace line is `});` or `});` and component name is known.
+            const displayNameError = lastCriticalErrors.find(e => e.includes('forwardRef missing displayName'));
+            if (displayNameError && lastCriticalErrors.length === 1) {
+              const compNameMatch = displayNameError.match(/Add `(\w+)\.displayName/);
+              if (compNameMatch) {
+                const compName = compNameMatch[1];
+                const patched = currentContent.trimEnd() + `\n${compName}.displayName = '${compName}';\n`;
+                const patchValidation = await this.validateGeneratedCode(step.path, patched, step, acceptanceCriteria);
+                const { critical: patchCritical } = this.filterCriticalErrors(patchValidation.errors, false);
+                if (patchCritical.length === 0) {
+                  currentContent = patched;
+                  lastCriticalErrors = [];
+                  break;
+                }
+              }
+            }
 
             // ✅ FIX: Only pass CRITICAL errors to auto-correction, not soft suggestions
             const canAutoFix = SmartAutoCorrection.isAutoFixable(lastCriticalErrors);
