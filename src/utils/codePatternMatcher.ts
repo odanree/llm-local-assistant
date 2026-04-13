@@ -410,8 +410,24 @@ export function findImportAndSyntaxIssuesPure(
   const namespaceUsages = new Set<string>();
   code.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
     const globalKeywords = [
-      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date',
-      'window', 'document', 'this', 'super',
+      // JS built-ins
+      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'Boolean',
+      'JSON', 'Date', 'Promise', 'Symbol', 'Map', 'Set', 'WeakMap', 'WeakSet',
+      'Error', 'TypeError', 'RangeError', 'SyntaxError', 'RegExp', 'Function',
+      'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+      // Browser Web APIs (NOT importable — they are globals on window)
+      'window', 'document', 'navigator', 'location', 'history', 'screen',
+      'localStorage', 'sessionStorage', 'indexedDB', 'crypto',
+      'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource',
+      'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+      'requestAnimationFrame', 'cancelAnimationFrame',
+      'MutationObserver', 'IntersectionObserver', 'ResizeObserver',
+      'URL', 'URLSearchParams', 'FormData', 'Blob', 'File', 'FileReader',
+      'CustomEvent', 'Event',
+      // Node.js globals
+      'process', 'Buffer', 'global', '__dirname', '__filename',
+      // OOP keywords
+      'this', 'super',
       // Common event/error parameter names
       'event', 'e', 'err', 'error', 'ev',
     ];

@@ -72,6 +72,8 @@ export class Executor {
   private paused: boolean = false;
   private cancelled: boolean = false;
   private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
+  /** Packages available in the workspace (populated from package.json at execution start) */
+  private availablePackages: string[] = [];
 
   // Phase 3A: Dependency Injection for side effects
   private fs: IFileSystem;
@@ -281,6 +283,11 @@ export class Executor {
 
     const startTime = Date.now();
     let succeededSteps = 0;
+
+    // Read package.json once before the step loop so every code generation step
+    // knows which packages are actually installed. Non-fatal: missing package.json
+    // (e.g. greenfield workspaces) just leaves availablePackages empty.
+    this.availablePackages = await this.readInstalledPackages(planWorkspaceUri);
 
     // ✅ SURGICAL REFACTOR: Greenfield Guard (State-Aware Contract Enforcement)
     // Check if workspace is greenfield (empty) and enforce READ constraints
@@ -538,8 +545,9 @@ export class Executor {
 
         // Skip known-good paths (in this plan or clearly a utility)
         const inThisPlan = knownPaths.has(resolved) || knownPaths.has(resolvedNoExt);
-        const isWellKnownDir = resolved.includes('utils/cn') || resolved.includes('utils/') ||
-          resolved.includes('hooks/') || resolved.includes('types/') || resolved.includes('lib/');
+        // Only skip disk verification for utilities known to exist in every project.
+        // Do NOT skip hooks/, types/, lib/ — those may or may not exist and must be verified.
+        const isWellKnownDir = resolved.includes('utils/cn');
 
         // For workspace paths not in this plan (e.g. a store created in a prior run),
         // verify the file actually exists on disk before reporting a missing import.
@@ -639,6 +647,39 @@ export class Executor {
         }
       }
 
+      // NPM PACKAGE CHECK: verify bare package imports (e.g. 'react-router-dom', 'zod')
+      // are actually in package.json. Only runs when we successfully read package.json.
+      if (this.availablePackages.length > 0) {
+        // Match bare package imports: 'react-router-dom', '@tanstack/react-query', etc.
+        // Exclude relative paths (./ ../), @/ alias paths, and node builtins.
+        const pkgImportLines = [...content.matchAll(/from\s+['"]([^.@'"\/][^'"]*|@[^/'"]+\/[^'"]+)['"]/g)];
+        const nodeBuiltins = new Set([
+          'path', 'fs', 'os', 'http', 'https', 'url', 'util', 'crypto', 'stream',
+          'events', 'buffer', 'child_process', 'cluster', 'net', 'tls', 'dns',
+          'readline', 'zlib', 'assert', 'vm', 'module', 'perf_hooks', 'worker_threads',
+        ]);
+        // Always-available packages that don't need to be in package.json
+        const alwaysAvailable = new Set(['react', 'react-dom', 'typescript']);
+        for (const pkgMatch of pkgImportLines) {
+          const pkgName = pkgMatch[1];
+          // Normalize scoped packages to their root (e.g. '@tanstack/react-query' → '@tanstack/react-query')
+          const rootPkg = pkgName.startsWith('@')
+            ? pkgName  // keep full scoped name
+            : pkgName.split('/')[0];  // e.g. 'react-router-dom/server' → 'react-router-dom'
+          if (
+            nodeBuiltins.has(rootPkg) ||
+            alwaysAvailable.has(rootPkg) ||
+            this.availablePackages.includes(rootPkg)
+          ) {
+            continue; // ✅ package is available
+          }
+          integrationErrors.push(
+            `❌ ${filePath}: Imports from '${pkgName}' but this package is NOT in package.json. ` +
+            `Either install it (\`npm install ${rootPkg}\`) or use a different approach that doesn't require it.`
+          );
+        }
+      }
+
       // Check if this file imports from stores but doesn't use the hook correctly
       const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
       if (storeImportMatch) {
@@ -666,20 +707,17 @@ export class Executor {
     }
 
     if (integrationErrors.length > 0) {
-      console.error('[Executor] \u274c Integration validation failed:');
+      console.warn('[Executor] ⚠ Integration warnings (non-blocking):');
       for (const error of integrationErrors) {
-        console.error(`  ${error}`);
-        this.config.onMessage?.(error, 'error');
+        console.warn(`  ${error}`);
+        this.config.onMessage?.(
+          `⚠ Integration warning: ${error}`,
+          'info'
+        );
       }
-      
-      // Integration failures are CRITICAL - files won't work together
-      return {
-        success: false,
-        completedSteps: succeededSteps,
-        results: plan.results,
-        error: `Integration validation failed: ${integrationErrors[0]}`,
-        totalDuration: Date.now() - startTime,
-      };
+      // Integration errors are warnings only — the generated files may still be useful.
+      // A plan that writes every file it imports is correct; unresolved imports may be
+      // pre-existing workspace files or installed packages not scanned here.
     }
 
     this.config.onMessage?.(
@@ -808,6 +846,35 @@ export class Executor {
           errors.push(
             `❌ Zustand Pattern: Component imports from stores but doesn't use destructuring pattern. ` +
             `Expected: const { x, y } = useStoreHook();`
+          );
+        }
+
+        // Detect .getState() anti-pattern in React components
+        // useXxxStore.getState() bypasses React's render cycle — setters and state must come from the hook call
+        if (content.match(/use\w+Store\.getState\s*\(\)/)) {
+          errors.push(
+            `❌ Zustand Anti-Pattern: NEVER call useXxxStore.getState() inside a React component. ` +
+            `Destructure everything you need from the hook: const { email, password, setEmail, setPassword, login } = useAuthStore();`
+          );
+        }
+
+        // Detect react-hook-form imports — banned when the task is Zustand-based state management
+        if (content.match(/from\s+['"]react-hook-form['"]/)) {
+          errors.push(
+            `❌ Wrong Library: react-hook-form is imported. This task uses Zustand for state management. ` +
+            `Remove react-hook-form entirely. State comes from the Zustand store hook: const { email, password, setEmail, setPassword } = useAuthStore();`
+          );
+        }
+
+        // Detect mock auth service returning true — makes redirect untestable
+        // Only fires for files in services/ that contain "auth" in the name
+        const isMockAuthFile = /[\\/]services[\\/][^/]*auth[^/]*\.ts$/i.test(filePath)
+          && !filePath.endsWith('.tsx');
+        if (isMockAuthFile && /\breturn\s+true\s*;/.test(content)) {
+          errors.push(
+            `❌ Mock Auth Bug: auth service returns \`true\` by default. ` +
+            `A hardcoded \`return true\` makes the ProtectedRoute always pass — the redirect to /login NEVER fires. ` +
+            `Change to \`return false\` so the redirect path is observable and testable.`
           );
         }
       } catch (error) {
@@ -1263,14 +1330,16 @@ export class Executor {
       // Also allow `return null` as a valid empty render.
       if (filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
         const hasJsxReturn =
-          /<[a-z][a-z0-9-]*[\s/>]/.test(content) ||   // lowercase HTML element (<button, <input, <div …)
+          /<[a-z][a-z0-9-]*[\s/>]/.test(content) ||    // lowercase HTML element (<button, <input, <div …)
+          /<>|<\/>/.test(content) ||                    // React fragment opener/closer (<> </>)
+          /return\s*\(?\s*<[A-Z]/.test(content) ||     // uppercase component in return (<Navigate, <Outlet …)
           /return\s+null\b/.test(content);              // explicit null render is valid
         if (!hasJsxReturn) {
           errors.push(
-            `❌ Component returns no JSX: The component body has no JSX HTML element (no <button>, <input>, <div>, etc.). ` +
-            `React components MUST return JSX — e.g. return <button ref={ref} {...props} />. ` +
+            `❌ Component returns no JSX: The component body has no JSX HTML element (no <div>, <Navigate />, <>{children}</>, etc.). ` +
+            `React components MUST return JSX — e.g. return <>{children}</> or return <Navigate to="/login" />. ` +
             `A bare cn() call or string return will throw "Nothing was returned from render" at runtime. ` +
-            `NOTE: TypeScript generics like <HTMLInputElement> are NOT JSX — the check requires a real HTML tag.`
+            `NOTE: TypeScript generics like <HTMLInputElement> are NOT JSX — the check requires a real HTML tag or component.`
           );
         }
       }
@@ -1386,15 +1455,34 @@ export class Executor {
       }
     }
 
-    // cn imported but never called — applies to both .ts and .tsx
-    // A dead `import { cn }` means copy-paste residue or scope creep; it will be tree-shaken
-    // but signals the LLM deviated from the step's intent.
+    // cn imported — severity depends on file type and component role
+    // .ts files (services, hooks, utils): ❌ cn must never appear
+    // .tsx non-visual wrappers (Route/Guard/Wrapper/Provider/Layout/Context/HOC/Outlet): ❌ cn must never appear
+    // .tsx regular components: ⚠️ dead import warning only when cn is imported but not called
     const importsCn = /import\s+.*\bcn\b.*from/.test(content);
-    if (importsCn && !/\bcn\s*\(/.test(content)) {
-      errors.push(
-        `⚠️ Dead import: \`cn\` is imported but never called. ` +
-        `Either use it for class merging (className={cn(...)}) or remove the import.`
-      );
+    if (importsCn) {
+      const isPureTs = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
+      const fileBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+      const isNonVisualWrapperFile = filePath.endsWith('.tsx')
+        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(fileBaseName);
+      if (isPureTs) {
+        errors.push(
+          `❌ Wrong import: \`cn\` is imported in a non-component .ts file. ` +
+          `cn is a UI class-merging utility — it must NEVER appear in service, utility, or hook files. Remove the import.`
+        );
+      } else if (isNonVisualWrapperFile) {
+        errors.push(
+          `❌ Wrong import: \`cn\` is imported in a non-visual wrapper component. ` +
+          `${fileBaseName} is a logic wrapper (redirects/renders children) with NO styled elements. ` +
+          `NEVER import cn here — remove the import entirely.`
+        );
+      } else if (!/\bcn\s*\(/.test(content)) {
+        // Regular .tsx component: warn only when cn is imported but never called
+        errors.push(
+          `⚠️ Dead import: \`cn\` is imported but never called. ` +
+          `Either use it for class merging (className={cn(...)}) or remove the import.`
+        );
+      }
     }
 
     // cn must never appear in hook files (.ts in hooks/ directory)
@@ -1406,6 +1494,26 @@ export class Executor {
         `❌ Wrong layer: \`cn\` is a style utility and must not be imported in a hook. ` +
         `Hooks are pure logic — remove the cn import from \`${filePath.split('/').pop()}\`.`
       );
+    }
+
+    // JSX in a pure .ts file is a TypeScript compiler error — it must be .tsx
+    // Use unambiguous JSX patterns that never appear in plain TypeScript generics:
+    //   - closing tags </Foo>   — TypeScript generics never have closing tags
+    //   - fragments <>  </>     — unambiguous JSX syntax
+    //   - self-closing <Foo />  — uppercase component followed by space or /
+    //   - type annotations      — React.FC, JSX.Element (only meaningful with JSX)
+    const isPureTsFile = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
+    if (isPureTsFile) {
+      const hasJsx = /<\/[A-Za-z]/.test(content)        // closing tag e.g. </div> </Component>
+        || /<>|<\/>/.test(content)                       // React fragment <> </>
+        || /<[A-Z][a-zA-Z]*[\s/]/.test(content)         // self-closing or spaced JSX <Foo /> <Foo >
+        || /React\.FC|JSX\.Element/.test(content);       // JSX-specific type annotations
+      if (hasJsx) {
+        errors.push(
+          `❌ Wrong file extension: This file contains JSX but has a .ts extension. ` +
+          `Rename to .tsx (e.g. Routes.tsx, App.tsx). TypeScript cannot compile JSX in .ts files.`
+        );
+      }
     }
 
     // Hook return contract: every useState value must be in the return object.
@@ -1540,7 +1648,24 @@ export class Executor {
 
       const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
       const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
-      const hookLine = isHookTarget ? ' HOOK FILE: never include cn/clsx/classnames imports in criteria — hooks are pure logic.' : '';
+      const isServiceTarget = /[\\/](?:services|utils|lib|api|helpers)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+      const isPureLogicFile = isHookTarget || isServiceTarget;
+      // Non-visual wrapper components (Route, Guard, Provider, Layout, Context, HOC) render children
+      // or redirect — they have no styled elements, so cn/className criteria are nonsensical
+      const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '';
+      const isNonVisualWrapper = step.path.endsWith('.tsx')
+        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+      // For mock auth services, add a rule about the default return value
+      const isMockAuthService = isPureLogicFile
+        && /mockAuth|authService|authHelper/i.test(componentName);
+      const mockAuthNote = isMockAuthService
+        ? ' MOCK AUTH SERVICE: one criterion MUST check that the auth function returns false by default (not true). A mock that returns true makes the redirect unreachable and untestable.'
+        : '';
+      const hookLine = isPureLogicFile
+        ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
+        : isNonVisualWrapper
+        ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
+        : '';
       const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
@@ -2474,6 +2599,33 @@ JSON array only. No explanation.`;
   /**
    * ✅ SURGICAL REFACTOR: Check if workspace exists
    *
+   * Reads package.json from the workspace root and returns the union of all
+   * dependency keys (dependencies + devDependencies + peerDependencies).
+   * Returns an empty array if package.json doesn't exist or can't be parsed.
+   */
+  private async readInstalledPackages(workspaceUri: vscode.Uri): Promise<string[]> {
+    try {
+      const pkgUri = vscode.Uri.joinPath(workspaceUri, 'package.json');
+      const raw = new TextDecoder().decode(await vscode.workspace.fs.readFile(pkgUri));
+      const pkg = JSON.parse(raw) as Record<string, unknown>;
+      const sections = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+      const names = new Set<string>();
+      for (const section of sections) {
+        const deps = pkg[section];
+        if (deps && typeof deps === 'object') {
+          for (const name of Object.keys(deps)) {
+            names.add(name);
+          }
+        }
+      }
+      console.log(`[Executor] 📦 Read ${names.size} packages from package.json`);
+      return [...names];
+    } catch {
+      // No package.json or parse error — not fatal
+      return [];
+    }
+  }
+
    * Determines if workspace has any files (greenfield check)
    */
   private async checkWorkspaceExists(workspaceUri: vscode.Uri): Promise<boolean> {
@@ -2695,6 +2847,63 @@ JSON array only. No explanation.`;
         `Failed to read ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
     }
+  }
+
+  /**
+   * Scan workspace for dependency files whose names appear in the step description.
+   * Extracts identifiers ending in Store/Hook/Context/Service/etc., globs for matching
+   * .ts/.tsx files in the workspace, and returns their content for injection into the
+   * generation prompt. Gracefully returns [] when VS Code API is unavailable (tests).
+   */
+  private async scanWorkspaceForDependencies(
+    step: PlanStep,
+    workspaceUri: vscode.Uri,
+    alreadyInjected: Set<string>
+  ): Promise<{ path: string; content: string }[]> {
+    const results: { path: string; content: string }[] = [];
+    try {
+      const desc = step.description ?? '';
+
+      // Extract identifiers that look like module/hook/store names
+      const matches =
+        desc.match(/\b([A-Za-z][a-zA-Z0-9]*(?:Store|Hook|Context|Service|Api|Util|Client|Provider))\b/g) ?? [];
+      if (matches.length === 0) return results;
+
+      const candidates = new Set<string>();
+      for (const m of matches) {
+        candidates.add(m);
+        // Strip 'use' prefix: useAuthStore → authStore
+        if (m.startsWith('use') && m.length > 4) {
+          candidates.add(m.charAt(3).toLowerCase() + m.slice(4));
+        }
+        // Lowercase first char: AuthStore → authStore
+        if (m.charAt(0) !== m.charAt(0).toLowerCase()) {
+          candidates.add(m.charAt(0).toLowerCase() + m.slice(1));
+        }
+      }
+
+      for (const name of candidates) {
+        const pattern = new vscode.RelativePattern(workspaceUri, `**/${name}.{ts,tsx}`);
+        const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 3);
+
+        for (const file of files) {
+          const relPath = path.relative(workspaceUri.fsPath, file.fsPath).replace(/\\/g, '/');
+          if (alreadyInjected.has(relPath)) continue;
+
+          try {
+            const content = this.fs.readFileSync(file.fsPath, 'utf-8');
+            if (content.length > 0) {
+              results.push({ path: relPath, content });
+              alreadyInjected.add(relPath);
+              console.log(`[Executor] ℹ️ Auto-injected workspace dependency: ${relPath}`);
+            }
+          } catch { /* file unreadable — skip */ }
+        }
+      }
+    } catch {
+      // VS Code API unavailable (unit test env) or glob failed — skip gracefully
+    }
+    return results;
   }
 
   /**
@@ -2991,6 +3200,18 @@ JSON array only. No explanation.`;
         }
       }
 
+      // Auto-scan workspace for dependency files mentioned in step description.
+      // Handles the case where the planner forgot to add a READ step for a dependency
+      // (e.g., "using the existing authStore" without a READ step for authStore.ts).
+      const workspaceDeps = await this.scanWorkspaceForDependencies(
+        step,
+        workspaceUri,
+        new Set(readStepContents.map(r => r.path))
+      );
+      if (workspaceDeps.length > 0) {
+        readStepContents.push(...workspaceDeps);
+      }
+
       // Collect files created in previous steps
       for (let i = 1; i < step.stepId; i++) {
         const prevStep = this.plan.steps.find(s => s.stepId === i);
@@ -3000,7 +3221,7 @@ JSON array only. No explanation.`;
           previouslyCreatedFiles.push(prevStep.path);
         }
       }
-      
+
       if (previouslyCreatedFiles.length > 0 || readStepContents.length > 0) {
         // ✅ CRITICAL: Use STORED CONTRACTS from previous steps (actual APIs)
         // NOT calculated/guessed paths
@@ -3180,6 +3401,13 @@ STRICTLY FORBIDDEN (these will be rejected):
 - NEVER call setTimeout, setInterval, or any async delay inside a form handler
 - NEVER call api.post, api.get, fetch(), or axios() unless the REQUIREMENT explicitly specifies an API call
 - The submit handler MUST only read formData and call the onSubmit/onLogin prop — do NOT fabricate network logic
+- NEVER import from react-hook-form: no \`useForm\`, \`register\`, \`Controller\`, \`FormProvider\`, \`FieldValues\`, \`zodResolver\`, \`@hookform/resolvers\`
+  React Hook Form is a completely different library — it is NOT related to Zustand.
+  If the REQUIREMENT says "use Zustand", state comes from: const { field, setField } = useXxxStore();
+  If the REQUIREMENT says "use local state", state comes from: const [value, setValue] = useState('');
+- NEVER call useXxxStore.getState() inside a React component — it bypasses React's render cycle
+  WRONG: useAuthStore.getState().setEmail(value)
+  RIGHT:  const { email, password, setEmail, setPassword, login } = useAuthStore();  ← destructure everything at the top
 
 `;
     }
@@ -3218,13 +3446,23 @@ STRICTLY FORBIDDEN (these will be rejected):
     // Non-interactive component guard: injected for .tsx files that are NOT interactive controls.
     // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
     const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
+    const isNonVisualWrapperTsx = isNonInteractiveTsx
+      && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
         `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
         `- Do NOT add .displayName — it is only needed on forwardRef components.\n` +
-        `- Props type: define a named interface: \`interface ${componentName}Props { email?: string; }\`\n` +
-        `  NEVER use React.ComponentProps<typeof ${componentName}> — that is a compile error (circular self-reference).\n` +
-        `- Use a plain arrow function: export const ${componentName} = ({ ...props }: ${componentName}Props) => { ... };\n\n`
+        `- Props type: ONLY define a props interface if the component actually accepts external props.\n` +
+        `  If the component takes NO props (e.g. reads everything from a Zustand store), omit props entirely:\n` +
+        `  export const ${componentName} = () => { ... };  ← no interface, no { ...props }\n` +
+        `  If props ARE needed: interface ${componentName}Props { onSubmit?: () => void; className?: string; }\n` +
+        `  NEVER create an empty interface \`interface ${componentName}Props {}\` — that is dead code.\n` +
+        `  NEVER use React.ComponentProps<typeof ${componentName}> — compile error (circular self-reference).\n` +
+        `- Use a plain arrow function. NEVER spread \`...props\` unless there are actual props to forward.\n` +
+        (isNonVisualWrapperTsx
+          ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n`
+          : '') +
+        `\n`
       : '';
 
     // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
@@ -3237,7 +3475,12 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- RETURN CONTRACT: The return object MUST expose ALL managed state values AND their manipulation functions.\n` +
         `  WRONG: return { increment, decrement, reset }  — hides the count value from the consumer\n` +
         `  RIGHT:  return { count, increment, decrement, reset }  — count is the primary value, always expose it\n` +
-        `  Rule: every piece of state created with useState MUST appear in the return object.\n\n`
+        `  Rule: every piece of state created with useState MUST appear in the return object.\n` +
+        `- MOCK DETERMINISM: NEVER use Math.random(), Date.now(), or any non-deterministic value for auth/permission state\n` +
+        `  A mock auth hook must return predictable results — use a simple boolean constant or read from a Zustand store\n` +
+        `  WRONG: const isAuthenticated = Math.random() > 0.3  — random on every render, causes flickering\n` +
+        `  RIGHT:  const isAuthenticated = true  // or: const { isLoggedIn } = useAuthStore();\n` +
+        `- TIMER LOOPS: NEVER use setInterval or setTimeout to update auth state — auth does not change on a timer\n\n`
       : '';
 
     // Zustand store constraint block: injected when the target file is in store/ or stores/
@@ -3256,6 +3499,17 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER use export default — use named exports only\n\n`
       : '';
 
+    // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
+    // doesn't import from packages that don't exist in this project.
+    // Only injected for TS/TSX files; no-op when package.json wasn't found.
+    const isTypescriptFile = (step.path.endsWith('.ts') || step.path.endsWith('.tsx'));
+    const availablePackagesSection = (isTypescriptFile && this.availablePackages.length > 0)
+      ? `\nINSTALLED PACKAGES (ONLY import from these — do NOT import from packages not on this list):\n` +
+        `${this.availablePackages.join(', ')}\n` +
+        `- If a package you want isn't listed, use a different approach (e.g. window.location for navigation, built-in React for state)\n` +
+        `- react, react-dom, typescript are always available even if not listed\n\n`
+      : '';
+
     // Add instruction to output ONLY code, no explanations
     // Detect file type from extension
     const fileExtension = step.path.split('.').pop()?.toLowerCase();
@@ -3264,7 +3518,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -3295,12 +3549,12 @@ CN() USAGE RULE (mandatory): cn() takes a single base string plus optional condi
 - IMPORT PATH: always import cn as: import { cn } from '@/utils/cn' (not 'src/utils/cn' — bare paths don't resolve)
 
 Example format (raw code, nothing else):
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import React from 'react';
+import { cn } from '@/utils/cn';
 
-const schema = z.object({...});
-export function MyComponent() {...}
+export const MyComponent = ({ className }: { className?: string }) => {
+  return <div className={cn('p-4', className)}>...</div>;
+};
 
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
@@ -3388,7 +3642,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
         if (criticalErrors.length === 0) {
           // ✅ No critical errors - validation passed!
-          // (Soft suggestions are logged but not blocking)
+          // Apply smart cleanup for actionable suggestions (e.g. dead cn import in .tsx)
+          const actionableSuggestions = softSuggestions.filter(
+            s => s.includes('Dead import') && s.includes('cn')
+          );
+          if (actionableSuggestions.length > 0) {
+            const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
+              ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
+              : () => Promise.resolve(null);
+            content = await SmartAutoCorrection.fixCommonPatternsAsync(
+              content, actionableSuggestions, ragResolver, step.path
+            );
+          }
           this.config.onMessage?.(
             `✅ Validation passed for ${step.path}`,
             'info'
@@ -3529,11 +3794,15 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   if (e.includes('Hook') && e.includes('imported but never called')) {
                     const hookMatch = e.match(/Hook '(\w+)'/);
                     const hookName = hookMatch ? hookMatch[1] : 'hook';
-                    return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR use the hook. If using the hook, call it like: const [state, setState] = ${hookName}(initialValue);`;
+                    // Zustand stores return objects (destructure), not [state, setter] tuples
+                    const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
+                      ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
+                      : `const value = ${hookName}();`;
+                    return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
                   }
                   return `${i + 1}. ${e}`;
                 }).join('\n');
-                
+
                 const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
@@ -3560,7 +3829,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 if (e.includes('Hook') && e.includes('imported but never called')) {
                   const hookMatch = e.match(/Hook '(\w+)'/);
                   const hookName = hookMatch ? hookMatch[1] : 'hook';
-                  return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR use the hook. If using the hook, call it like: const [state, setState] = ${hookName}(initialValue);`;
+                  // Zustand stores return objects (destructure), not [state, setter] tuples
+                  const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
+                    ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
+                    : `const value = ${hookName}();`;
+                  return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
                 }
                 return `${i + 1}. ${e}`;
               }).join('\n');

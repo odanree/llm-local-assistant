@@ -858,6 +858,63 @@ export class ArchitectureValidator {
       }
     }
 
+    // Step 6: CRITICAL - Check for CUSTOM HOOKS that are CALLED but NOT IMPORTED
+    // Pure string analysis — runs before the workspace guard so it works in all environments.
+    // Pattern: const { x } = useCustomHook() but no import statement for useCustomHook.
+    {
+      const customHookCallRegex = /const\s+(?:\[[\w\s,]*\]|\{[^}]+\})\s*=\s*(use\w+)\s*\(/g;
+      let customHookCallMatch;
+      const customHooksCalled = new Set<string>();
+      while ((customHookCallMatch = customHookCallRegex.exec(generatedCode)) !== null) {
+        customHooksCalled.add(customHookCallMatch[1]);
+      }
+
+      // Collect imported hook names — both named and default import styles.
+      // Named: `import { useAuthStore } from '...'`
+      // Default: `import useAuthStore from '@/stores/authStore'`
+      const importedHookNames = new Set<string>();
+      importedHooks.forEach(h => h.names.forEach(name => importedHookNames.add(name)));
+      const defaultHookImportRegex = /import\s+(use\w+)\s+from\s+['"][^'"]+['"]/g;
+      let defaultHookImport;
+      while ((defaultHookImport = defaultHookImportRegex.exec(generatedCode)) !== null) {
+        importedHookNames.add(defaultHookImport[1]);
+      }
+
+      // Hooks DEFINED in this file are not missing imports — they ARE the definition.
+      const definedHookNames = new Set<string>();
+      const definedHookRegex = /(?:export\s+)?(?:const|function)\s+(use\w+)\s*(?:[=<(])/g;
+      let definedHookMatch;
+      while ((definedHookMatch = definedHookRegex.exec(generatedCode)) !== null) {
+        definedHookNames.add(definedHookMatch[1]);
+      }
+
+      const builtinReactHooks = new Set([
+        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
+        'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
+        'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+      ]);
+
+      customHooksCalled.forEach(hookName => {
+        if (builtinReactHooks.has(hookName)) return;
+        if (definedHookNames.has(hookName)) return;
+        if (importedHookNames.has(hookName)) return;
+
+        console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
+        // Do NOT suggest a hardcoded '../hooks/' path — the hook may live in stores/, hooks/,
+        // or any other directory. A wrong path leads the auto-corrector into an import loop.
+        const importHint = hookName.endsWith('Store') || hookName.toLowerCase().includes('store')
+          ? `import ${hookName} from '@/stores/...';`
+          : `import { ${hookName} } from '../hooks/${hookName}';`;
+        violations.push({
+          type: 'semantic-error',
+          import: hookName,
+          message: `Missing import: ${hookName} is called but not imported`,
+          suggestion: `Add an import for ${hookName} from the correct file. Example: ${importHint}`,
+          severity: 'high',
+        });
+      });
+    }
+
     // ── Checks below require vscode workspace context (filesystem reads) ────────
     const workspace = vscode.workspace.workspaceFolders?.[0];
     if (!workspace) { return violations; }
@@ -1281,61 +1338,7 @@ export class ArchitectureValidator {
       });
     }
 
-    // Step 6: CRITICAL - Check for CUSTOM HOOKS that are CALLED but NOT IMPORTED
-    // Pattern: const { x } = useCounter() but no import statement
-    // This catches: `const { increment } = useCounter()` without import
-    const customHookCallRegex = /const\s+(?:\[[\w\s,]*\]|\{[^}]+\})\s*=\s*(use\w+)\s*\(/g;
-    let customHookCallMatch;
-    const customHooksCalled = new Set<string>();
-    
-    while ((customHookCallMatch = customHookCallRegex.exec(generatedCode)) !== null) {
-      const hookName = customHookCallMatch[1];
-      customHooksCalled.add(hookName);
-    }
-    
-    // Get list of imported hook names
-    const importedHookNames = new Set<string>();
-    importedHooks.forEach(h => {
-      h.names.forEach(name => importedHookNames.add(name));
-    });
-
-    // Hooks DEFINED (exported or declared) in this file are never missing imports —
-    // they ARE the definition. Catches: `export const useFormStore = create(...)` in
-    // a store file, where the customHookCallRegex may still find an internal call pattern.
-    const definedHookNames = new Set<string>();
-    const definedHookRegex = /(?:export\s+)?(?:const|function)\s+(use\w+)\s*(?:[=<(])/g;
-    let definedHookMatch;
-    while ((definedHookMatch = definedHookRegex.exec(generatedCode)) !== null) {
-      definedHookNames.add(definedHookMatch[1]);
-    }
-
-    // Check if each called hook is imported
-    customHooksCalled.forEach(hookName => {
-      // Skip built-in React hooks
-      const isBuiltinReactHook = [
-        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
-        'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
-        'useDeferredValue', 'useTransition', 'useSyncExternalStore'
-      ].includes(hookName);
-
-      // Skip hooks defined in this very file — they're declarations, not missing imports
-      if (definedHookNames.has(hookName)) {
-        return;
-      }
-
-      if (!isBuiltinReactHook && !importedHookNames.has(hookName)) {
-        console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
-        violations.push({
-          type: 'semantic-error',
-          import: hookName,
-          message: `Missing import: ${hookName} is used but not imported from '../hooks/${hookName}'`,
-          suggestion: `Add: import { ${hookName} } from '../hooks/${hookName}';`,
-          severity: 'high',
-        });
-      }
-    });
-
-    // Step 7: CRITICAL - Check for UTILITY FUNCTIONS that are called but NOT IMPORTED
+    // Step 7: (Step 6 was moved before the workspace guard — it's pure string analysis) CRITICAL - Check for UTILITY FUNCTIONS that are called but NOT IMPORTED
     // Utilities: cn(), clsx(), twMerge(), logger(), etc.
     // These commonly get used but are easy to forget to import
     const utilityFunctions: { [key: string]: string[] } = {
@@ -1846,6 +1849,27 @@ export class SmartAutoCorrection {
         continue;
       }
 
+      // Wrong import: cn in a non-component .ts file — remove the cn import entirely
+      if (error.includes('Wrong import') && error.includes('cn')) {
+        fixed = this.removeUnusedImport(fixed, 'cn');
+        console.log(`[SmartAutoCorrection] Removed cn import from non-component .ts file`);
+        continue;
+      }
+
+      // Dead import: cn imported in a .tsx file but never called — remove it
+      if (error.includes('Dead import') && error.includes('cn')) {
+        fixed = this.removeUnusedImport(fixed, 'cn');
+        console.log(`[SmartAutoCorrection] Removed unused cn import from .tsx file`);
+        continue;
+      }
+
+      // Mock Auth Bug: service returns `true` — swap to `false`
+      if (error.includes('Mock Auth Bug')) {
+        fixed = fixed.replace(/\breturn\s+true\s*;/g, 'return false;');
+        console.log(`[SmartAutoCorrection] Changed return true → return false in mock auth service`);
+        continue;
+      }
+
       // Missing import — try RAG first, then dict fallback
       if (error.includes('Missing import')) {
         const m = error.match(/Missing import: '(\w+)'/)
@@ -1889,6 +1913,9 @@ export class SmartAutoCorrection {
       'typo',
       'Hook',  // Added: Hook usage errors (imported but never called)
       'imported but never called',  // Added: More specific pattern
+      'Wrong import',  // Added: cn/UI import in a non-component .ts file
+      'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
+      'Mock Auth Bug', // Added: mock auth service returns true (swap to false)
     ];
 
     const unfixablePatterns = [
@@ -1896,6 +1923,7 @@ export class SmartAutoCorrection {
       'unmatched brace',
       'documentation instead of code',
       'multiple file',
+      'Wrong file extension',  // Can't rename a file in code — planner must generate correct extension
     ];
 
     let hasFixable = false;

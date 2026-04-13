@@ -119,7 +119,7 @@ export const LoginForm: React.FC = () => {
 ```bash
 /plan refactor the existing LoginForm.tsx to use Zustand for state instead of local useState
 
-/plan read src/components/LoginForm.tsx and create src/components/LoginForm-Refactor.tsx replacing local useState with Zustand using the existing authStore
+/plan read src/components/LoginForm.tsx and create src/components/LoginFormRefactor.tsx replacing local useState with Zustand using the existing authStore
 ```
 
 **What it tests:**

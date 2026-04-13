@@ -692,7 +692,25 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Find all namespace.method() patterns — (?<!\.) excludes chained access like foo.bar.baz()
                   const namespaceUsages = new Set<string>();
                   generatedContent.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
-                    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e', 'err', 'error', 'ev'];
+                    const globalKeywords = [
+                      // JS built-ins
+                      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'Boolean',
+                      'JSON', 'Date', 'Promise', 'Symbol', 'Map', 'Set', 'WeakMap', 'WeakSet',
+                      'Error', 'TypeError', 'RegExp', 'Function',
+                      // Browser Web APIs
+                      'window', 'document', 'navigator', 'location', 'history', 'screen',
+                      'localStorage', 'sessionStorage', 'indexedDB', 'crypto',
+                      'fetch', 'XMLHttpRequest', 'WebSocket',
+                      'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+                      'requestAnimationFrame', 'cancelAnimationFrame',
+                      'URL', 'URLSearchParams', 'FormData', 'Blob', 'CustomEvent', 'Event',
+                      // Node.js globals
+                      'process', 'Buffer', 'global',
+                      // OOP keywords
+                      'this', 'super',
+                      // Common parameter names
+                      'event', 'e', 'err', 'error', 'ev',
+                    ];
                     if (!globalKeywords.includes(namespace) && !localNames.has(namespace)) {
                       namespaceUsages.add(namespace);
                     }
