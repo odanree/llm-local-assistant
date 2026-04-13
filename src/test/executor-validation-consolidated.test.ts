@@ -124,7 +124,7 @@ describe('Executor Validation Consolidated - Phase 5 Wave 1 Migration', () => {
     {
       name: 'accept proper Zustand destructuring',
       filePath: 'src/components/Dashboard.tsx',
-      content: 'import React from "react"; import { useUserStore } from "../stores/useUserStore"; const Dashboard = () => { const { name, email } = useUserStore(); return <div>{name} {email}</div>; }; export default Dashboard;',
+      content: 'import React from "react"; import { useUserStore } from "../stores/useUserStore"; export const Dashboard = () => { const { name, email } = useUserStore(); return <div>{name} {email}</div>; };',
       expectedValid: true,
       expectedErrorCount: 0,
     },

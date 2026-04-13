@@ -547,4 +547,93 @@ export const useUserStore = create((set) => ({
       expect(result).toBeDefined();
     });
   });
+
+  // ========================================================================
+  // Default import + missing import regression tests
+  // Regression for: "Missing import: useAuthStore from '../hooks/useAuthStore'"
+  // false positive caused by the custom hook check not recognising default imports.
+  // ========================================================================
+
+  describe('Default import recognition — no false positive for useAuthStore', () => {
+    it('should NOT flag useAuthStore as missing when imported as a default import', async () => {
+      // Correct pattern: default import from stores/ directory, destructured at top level
+      const code = `
+import React, { FormEvent } from 'react';
+import { cn } from '@/utils/cn';
+import useAuthStore from '@/stores/authStore';
+
+export const LoginFormRefactor = () => {
+  const { email, password, setEmail, setPassword } = useAuthStore();
+
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    console.log('Login:', email, password);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className={cn('space-y-4')}>
+      <input name="email" value={email} onChange={e => setEmail(e.target.value)} />
+      <input name="password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+      <button type="submit" className={cn('px-4 py-2 bg-blue-500 text-white rounded')}>Login</button>
+    </form>
+  );
+};`;
+
+      const result = await validator.validateHookUsage(
+        code,
+        'src/components/LoginFormRefactor.tsx',
+        new Map()
+      );
+
+      const missingImportErrors = result.filter(
+        v => v.message.includes('Missing import') && v.message.includes('useAuthStore')
+      );
+      expect(missingImportErrors).toHaveLength(0);
+    });
+
+    it('should still flag useAuthStore when it is truly not imported at all', async () => {
+      // Bug scenario: hook called without any import statement
+      const code = `
+import React from 'react';
+
+export const BadComponent = () => {
+  const { email } = useAuthStore();
+  return <div>{email}</div>;
+};`;
+
+      const result = await validator.validateHookUsage(
+        code,
+        'src/components/BadComponent.tsx',
+        new Map()
+      );
+
+      const missingImportErrors = result.filter(
+        v => v.message.includes('useAuthStore') && v.message.toLowerCase().includes('import')
+      );
+      expect(missingImportErrors.length).toBeGreaterThan(0);
+    });
+
+    it('should NOT flag useAuthStore when imported as named import', async () => {
+      // Named import variant — less common for Zustand stores but valid
+      const code = `
+import React from 'react';
+import { useAuthStore } from '@/stores/authStore';
+
+export const Component = () => {
+  const { email } = useAuthStore();
+  return <div>{email}</div>;
+};`;
+
+      const result = await validator.validateHookUsage(
+        code,
+        'src/components/Component.tsx',
+        new Map()
+      );
+
+      const missingImportErrors = result.filter(
+        v => v.message.includes('Missing import') && v.message.includes('useAuthStore')
+      );
+      expect(missingImportErrors).toHaveLength(0);
+    });
+  });
 });

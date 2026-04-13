@@ -95,49 +95,16 @@ describe('Extension Command Parsing', () => {
     });
   });
 
-  describe('/suggestwrite command parser', () => {
-    const suggestPattern = /\/suggestwrite\s+(\S+)(?:\s+(.+))?$/;
-
-    it('should parse /suggestwrite command with file path only', () => {
-      const match = '/suggestwrite test.ts'.match(suggestPattern);
-      expect(match).not.toBeNull();
-      expect(match?.[1]).toBe('test.ts');
-      expect(match?.[2]).toBeUndefined();
-    });
-
-    it('should parse /suggestwrite with file path and prompt', () => {
-      const match = '/suggestwrite test.ts add comments and improve formatting'.match(suggestPattern);
-      expect(match).not.toBeNull();
-      expect(match?.[1]).toBe('test.ts');
-      expect(match?.[2]).toBe('add comments and improve formatting');
-    });
-
-    it('should parse /suggestwrite with nested path', () => {
-      const match = '/suggestwrite src/main.ts refactor for performance'.match(suggestPattern);
-      expect(match).not.toBeNull();
-      expect(match?.[1]).toBe('src/main.ts');
-      expect(match?.[2]).toBe('refactor for performance');
-    });
-
-    it('should not match /suggestwrite without path', () => {
-      const match = '/suggestwrite'.match(suggestPattern);
-      expect(match).toBeNull();
-    });
-  });
-
   describe('command detection', () => {
     it('should distinguish between different command types', () => {
       const readCmd = '/read src/file.ts';
       const writeCmd = '/write src/file.ts create something';
-      const suggestCmd = '/suggestwrite src/file.ts improve this';
 
       const readPattern = /\/read\s+(\S+)/;
       const writePattern = /\/write\s+(\S+)(?:\s+(.+))?$/;
-      const suggestPattern = /\/suggestwrite\s+(\S+)(?:\s+(.+))?$/;
 
       expect(readCmd.match(readPattern)).not.toBeNull();
       expect(writeCmd.match(writePattern)).not.toBeNull();
-      expect(suggestCmd.match(suggestPattern)).not.toBeNull();
     });
 
     it('should handle non-command messages', () => {
@@ -218,7 +185,6 @@ describe('Extension Command Parsing', () => {
       const malformed = [
         '/read',
         '/write',
-        '/suggestwrite',
         '/ read file.ts',
         '/read  ',
       ];

@@ -504,6 +504,12 @@ export class ArchitectureValidator {
           continue;
         }
 
+        // Skip JSON/config files — they have no TypeScript exports to verify
+        // (handles cases where relative traversal resolves to /package.json, tsconfig.json, etc.)
+        if (resolvedPath.endsWith('.json') || resolvedPath.endsWith('.yaml') || resolvedPath.endsWith('.yml')) {
+          continue;
+        }
+
         // Handle different path formats
         if (resolvedPath.startsWith('.')) {
           // ✅ Relative paths: ../utils/cn, ./helpers
@@ -652,8 +658,13 @@ export class ArchitectureValidator {
                 if (propMatch) {
                   const property = propMatch[1];
                   // For Zustand stores, the export is the hook, but we should verify
-                  // that the accessed property makes sense (rough check)
-                  if (symbol.includes('Store') && !sourceContent.includes(property)) {
+                  // that the accessed property makes sense (rough check).
+                  // Whitelist: Zustand runtime methods (getState, setState, subscribe, destroy)
+                  // and single-char / file-extension tokens from path references (e.g. storeName.ts)
+                  const zustandBuiltins = new Set(['getState', 'setState', 'subscribe', 'destroy', 'getInitialState']);
+                  const fileExtTokens = new Set(['ts', 'tsx', 'js', 'jsx', 'json', 'css', 'svg']);
+                  if (symbol.includes('Store') && !sourceContent.includes(property) &&
+                      !zustandBuiltins.has(property) && !fileExtTokens.has(property)) {
                     violations.push({
                       type: 'semantic-error',
                       import: symbol,
@@ -746,8 +757,8 @@ export class ArchitectureValidator {
     previousStepFiles?: Map<string, string>
   ): Promise<LayerViolation[]> {
     const violations: LayerViolation[] = [];
-    const workspace = vscode.workspace.workspaceFolders?.[0];
-    if (!workspace) {return violations;}
+
+    // ── Pure string-based checks (no vscode needed) ──────────────────────────
 
     // Step 0: Validate all React imports (useState, etc.)
     // Check if code uses useState but doesn't import it
@@ -772,10 +783,10 @@ export class ArchitectureValidator {
       'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue',
       'useId', 'useDeferredValue', 'useTransition', 'useSyncExternalStore'
     ];
-    
+
     const reactImportLine = generatedCode.match(/import\s+(?:\w+\s*,\s*)?{([^}]*)}\s+from\s+['"]react['"]/);
     const importedReactHooks = reactImportLine ? reactImportLine[1].split(',').map(h => h.trim()) : [];
-    
+
     for (const hook of reactHooks) {
       // Check if hook is USED in code
       if (new RegExp(`\\b${hook}\\s*\\(`).test(generatedCode)) {
@@ -812,11 +823,11 @@ export class ArchitectureValidator {
 
     // IMPORTANT: Detect refactoring context
     // If component has store hooks, useState being unused is OK (it's being replaced)
-    const hasStoreHook = importedHooks.some(h => 
+    const hasStoreHook = importedHooks.some(h =>
       h.names.some(n => n.includes('Store') || n.includes('store')) &&
       generatedCode.includes(`const`)
     );
-    const usingStoreHook = importedHooks.some(h => 
+    const usingStoreHook = importedHooks.some(h =>
       h.source.includes('store') &&
       h.names.some(n => {
         const escapedName = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -828,9 +839,95 @@ export class ArchitectureValidator {
       })
     );
 
-    // HOOK FILE DETECTION: Check if this is a custom hook file (exports use* function)
-    const isHookFile = /src\/hooks\//.test(filePath) || /export\s+(?:const|function)\s+use\w+/.test(generatedCode);
-    
+    // Dead useState check: after Zustand refactor, useState left in imports is a dead import.
+    // Handles both `import { useState }` and `import React, { useState }` since
+    // hookImportRegex only captures named-only imports.
+    if (usingStoreHook) {
+      const useStateImported =
+        importedReactHooks.includes('useState') ||
+        importedHooks.some(h => h.names.includes('useState'));
+      const useStateCalled = /\buseState\s*[(<]/.test(generatedCode);
+      if (useStateImported && !useStateCalled) {
+        violations.push({
+          type: 'semantic-error',
+          import: 'useState',
+          message: `Unused import: 'useState' is imported but never called. Remove it — all state is managed by the Zustand store hook.`,
+          suggestion: `Remove 'useState' from the React import. Keep only the hooks you actually use.`,
+          severity: 'high',
+        });
+      }
+    }
+
+    // Step 6: CRITICAL - Check for CUSTOM HOOKS that are CALLED but NOT IMPORTED
+    // Pure string analysis — runs before the workspace guard so it works in all environments.
+    // Pattern: const { x } = useCustomHook() but no import statement for useCustomHook.
+    {
+      const customHookCallRegex = /const\s+(?:\[[\w\s,]*\]|\{[^}]+\})\s*=\s*(use\w+)\s*\(/g;
+      let customHookCallMatch;
+      const customHooksCalled = new Set<string>();
+      while ((customHookCallMatch = customHookCallRegex.exec(generatedCode)) !== null) {
+        customHooksCalled.add(customHookCallMatch[1]);
+      }
+
+      // Collect imported hook names — both named and default import styles.
+      // Named: `import { useAuthStore } from '...'`
+      // Default: `import useAuthStore from '@/stores/authStore'`
+      const importedHookNames = new Set<string>();
+      importedHooks.forEach(h => h.names.forEach(name => importedHookNames.add(name)));
+      const defaultHookImportRegex = /import\s+(use\w+)\s+from\s+['"][^'"]+['"]/g;
+      let defaultHookImport;
+      while ((defaultHookImport = defaultHookImportRegex.exec(generatedCode)) !== null) {
+        importedHookNames.add(defaultHookImport[1]);
+      }
+
+      // Hooks DEFINED in this file are not missing imports — they ARE the definition.
+      const definedHookNames = new Set<string>();
+      const definedHookRegex = /(?:export\s+)?(?:const|function)\s+(use\w+)\s*(?:[=<(])/g;
+      let definedHookMatch;
+      while ((definedHookMatch = definedHookRegex.exec(generatedCode)) !== null) {
+        definedHookNames.add(definedHookMatch[1]);
+      }
+
+      const builtinReactHooks = new Set([
+        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
+        'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
+        'useDeferredValue', 'useTransition', 'useSyncExternalStore'
+      ]);
+
+      customHooksCalled.forEach(hookName => {
+        if (builtinReactHooks.has(hookName)) return;
+        if (definedHookNames.has(hookName)) return;
+        if (importedHookNames.has(hookName)) return;
+
+        console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
+        // Do NOT suggest a hardcoded '../hooks/' path — the hook may live in stores/, hooks/,
+        // or any other directory. A wrong path leads the auto-corrector into an import loop.
+        const importHint = hookName.endsWith('Store') || hookName.toLowerCase().includes('store')
+          ? `import ${hookName} from '@/stores/...';`
+          : `import { ${hookName} } from '../hooks/${hookName}';`;
+        violations.push({
+          type: 'semantic-error',
+          import: hookName,
+          message: `Missing import: ${hookName} is called but not imported`,
+          suggestion: `Add an import for ${hookName} from the correct file. Example: ${importHint}`,
+          severity: 'high',
+        });
+      });
+    }
+
+    // ── Checks below require vscode workspace context (filesystem reads) ────────
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) { return violations; }
+
+    // HOOK FILE DETECTION: Check if this is a hook/store definition file.
+    // Covers: src/hooks/, src/store/, src/stores/ directories, plus any file that
+    // exports a use* symbol via any export syntax (inline or re-export).
+    const isHookFile =
+      /src\/hooks\//.test(filePath) ||
+      /src\/store[s]?\//.test(filePath) ||
+      /export\s+(?:const|function)\s+use\w+/.test(generatedCode) ||
+      /export\s*\{[^}]*\buse\w+/.test(generatedCode);
+
     // Step 2: For each imported hook, check if it's actually CALLED in the component
     for (const hookImport of importedHooks) {
       for (const hookName of hookImport.names) {
@@ -860,7 +957,7 @@ export class ArchitectureValidator {
             console.log(
               `[ArchitectureValidator] ℹ️ useState imported but not called (OK in refactoring to store)`
             );
-            continue; // Skip this error - refactoring is intentional
+            continue; // Handled by the dedicated dead-import check below
           }
           
           // EXCEPTION: For hook files, skip validation of React hooks
@@ -988,29 +1085,53 @@ export class ArchitectureValidator {
               // Extract available state properties from Zustand store
               // Zustand pattern: export const useXxxStore = create<Type>((set) => ({ prop: value, ... }))
               // Key insight: We need to find the RUNTIME object, not TypeScript type params
-              
+
               let storeProps: Set<string> = new Set();
-              
-              // Strategy 1: Find create call and extract state object properties
-              // Pattern: => { prop1: ..., prop2: ..., etc
-              // Look for the arrow function body that contains property definitions
-              const arrowFunctionRegex = /create[^]*?\)\s*=>\s*\(\s*{([^}]+)}/;
-              const arrowMatch = storeContent.match(arrowFunctionRegex);
-              
-              if (arrowMatch) {
-                const stateBody = arrowMatch[1];
-                console.log(`[ArchitectureValidator] Found state body: ${stateBody.substring(0, 100)}...`);
-                
-                // Extract ALL property names that look like key: value
-                // Handle: propName: ..., nestedObj: { ... }, function: () => ...
-                const propRegex = /(\w+)\s*:\s*(?:[^,}]|\{[^}]*\}|function|\([^)]*\))/g;
-                let propMatch;
-                while ((propMatch = propRegex.exec(stateBody)) !== null) {
-                  storeProps.add(propMatch[1]);
-                  console.log(`[ArchitectureValidator] Found store property: ${propMatch[1]}`);
+
+              // Strategy 0: Extract property names from TypeScript interfaces defined in the store.
+              // This is the most reliable approach because interface bodies use simple `name: type`
+              // syntax without nested `{}` that confuses the create() body regex.
+              // Handles both single-interface and split-interface (State + Actions) patterns.
+              const interfaceRegex = /interface\s+\w+\s*\{([^}]+)\}/g;
+              let ifaceMatch;
+              while ((ifaceMatch = interfaceRegex.exec(storeContent)) !== null) {
+                const ifaceBody = ifaceMatch[1];
+                const memberRegex = /^\s*(\w+)\s*[?:]?\s*:/gm;
+                let memberMatch;
+                while ((memberMatch = memberRegex.exec(ifaceBody)) !== null) {
+                  storeProps.add(memberMatch[1]);
+                  console.log(`[ArchitectureValidator] Found interface property: ${memberMatch[1]}`);
                 }
-              } else {
-                console.warn(`[ArchitectureValidator] ⚠️ Could not match arrow function pattern in store`);
+              }
+
+              // Strategy 1: Brace-balanced extraction of create() callback object.
+              // The old regex used [^}]+ which stopped at the FIRST } inside the object
+              // (e.g. the } inside `set({ email })`), missing properties declared after it.
+              // Fix: locate `=> ({` then count braces to find the full top-level object body,
+              // then extract only top-level keys (lines starting with an identifier followed by `:`).
+              if (storeProps.size === 0) {
+                const arrowObjMatch = storeContent.match(/=>\s*\(\s*\{/);
+                if (arrowObjMatch && arrowObjMatch.index !== undefined) {
+                  const startIdx = arrowObjMatch.index + arrowObjMatch[0].length;
+                  let depth = 1;
+                  let i = startIdx;
+                  while (i < storeContent.length && depth > 0) {
+                    if (storeContent[i] === '{') depth++;
+                    else if (storeContent[i] === '}') depth--;
+                    i++;
+                  }
+                  const stateBody = storeContent.slice(startIdx, i - 1);
+                  console.log(`[ArchitectureValidator] Found state body (brace-balanced): ${stateBody.substring(0, 120)}...`);
+                  // Only match property names at the start of a line (top-level keys only)
+                  const propRegex = /^\s*(\w+)\s*:/gm;
+                  let propMatch;
+                  while ((propMatch = propRegex.exec(stateBody)) !== null) {
+                    storeProps.add(propMatch[1]);
+                    console.log(`[ArchitectureValidator] Found store property: ${propMatch[1]}`);
+                  }
+                } else {
+                  console.warn(`[ArchitectureValidator] ⚠️ Could not locate => ({ pattern in store`);
+                }
               }
 
               // Strategy 2: If that fails, try simpler regex
@@ -1054,11 +1175,22 @@ export class ArchitectureValidator {
                       `[ArchitectureValidator] ❌ CRITICAL MISMATCH: Component destructures '${prop}' but store exports: ${Array.from(storeProps).join(', ')}`
                     );
                     hasPropertyMismatch = true;
+                    // Give actionable guidance depending on what's missing:
+                    // handleSubmit → define locally (form event handler, not a store concern)
+                    // anything else → add to store or remove from destructure
+                    const isSubmitHandler = prop === 'handleSubmit' ||
+                      (prop.startsWith('handle') && /submit/i.test(prop));
+                    const suggestion = isSubmitHandler
+                      ? `'${prop}' is a form event handler — it should be defined locally in the component, NOT destructured from the store. ` +
+                        `Remove '${prop}' from const { ... } = ${hookName}() and add: ` +
+                        `const ${prop}: FormEventHandler<HTMLFormElement> = (e) => { e.preventDefault(); /* use store state here */ };`
+                      : `Store exports: { ${Array.from(storeProps).join(', ')} } but component destructures '${prop}' which doesn't exist. ` +
+                        `Either add '${prop}' to the store's state object, or remove it from the destructure.`;
                     violations.push({
                       type: 'semantic-error',
                       import: hookName,
                       message: `❌ CRITICAL: Property '${prop}' destructured but NOT in store. Store exports: ${Array.from(storeProps).join(', ')}. This will cause runtime TypeError!`,
-                      suggestion: `Component expects: { ${properties.join(', ')} } but store has: { ${Array.from(storeProps).join(', ')} }. Refactoring is INCOMPLETE.`,
+                      suggestion,
                       severity: 'high',
                     });
                   } else {
@@ -1206,46 +1338,7 @@ export class ArchitectureValidator {
       });
     }
 
-    // Step 6: CRITICAL - Check for CUSTOM HOOKS that are CALLED but NOT IMPORTED
-    // Pattern: const { x } = useCounter() but no import statement
-    // This catches: `const { increment } = useCounter()` without import
-    const customHookCallRegex = /const\s+(?:\[[\w\s,]*\]|\{[^}]+\})\s*=\s*(use\w+)\s*\(/g;
-    let customHookCallMatch;
-    const customHooksCalled = new Set<string>();
-    
-    while ((customHookCallMatch = customHookCallRegex.exec(generatedCode)) !== null) {
-      const hookName = customHookCallMatch[1];
-      customHooksCalled.add(hookName);
-    }
-    
-    // Get list of imported hook names
-    const importedHookNames = new Set<string>();
-    importedHooks.forEach(h => {
-      h.names.forEach(name => importedHookNames.add(name));
-    });
-    
-    // Check if each called hook is imported
-    customHooksCalled.forEach(hookName => {
-      // Skip built-in React hooks
-      const isBuiltinReactHook = [
-        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 'useMemo',
-        'useRef', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue', 'useId',
-        'useDeferredValue', 'useTransition', 'useSyncExternalStore'
-      ].includes(hookName);
-      
-      if (!isBuiltinReactHook && !importedHookNames.has(hookName)) {
-        console.log(`[ArchitectureValidator] ⚠️ Custom hook '${hookName}' is called but not imported`);
-        violations.push({
-          type: 'semantic-error',
-          import: hookName,
-          message: `Missing import: ${hookName} is used but not imported from '../hooks/${hookName}'`,
-          suggestion: `Add: import { ${hookName} } from '../hooks/${hookName}';`,
-          severity: 'high',
-        });
-      }
-    });
-
-    // Step 7: CRITICAL - Check for UTILITY FUNCTIONS that are called but NOT IMPORTED
+    // Step 7: (Step 6 was moved before the workspace guard — it's pure string analysis) CRITICAL - Check for UTILITY FUNCTIONS that are called but NOT IMPORTED
     // Utilities: cn(), clsx(), twMerge(), logger(), etc.
     // These commonly get used but are easy to forget to import
     const utilityFunctions: { [key: string]: string[] } = {
@@ -1756,6 +1849,26 @@ export class SmartAutoCorrection {
         continue;
       }
 
+      // Wrong import: cn in a non-component .ts file — remove the cn import entirely
+      if (error.includes('Wrong import') && error.includes('cn')) {
+        fixed = this.removeUnusedImport(fixed, 'cn');
+        console.log(`[SmartAutoCorrection] Removed cn import from non-component .ts file`);
+        continue;
+      }
+
+      // Dead import: cn imported in a .tsx file but never called — remove it
+      if (error.includes('Dead import') && error.includes('cn')) {
+        fixed = this.removeUnusedImport(fixed, 'cn');
+        console.log(`[SmartAutoCorrection] Removed unused cn import from .tsx file`);
+        continue;
+      }
+
+      // Mock Auth Bug: no falsy return path — cannot be fixed with a simple regex swap
+      // (the truthy value may be !!token, Boolean(x), etc. — LLM correction handles it)
+      if (error.includes('Mock Auth Bug')) {
+        continue; // let the error propagate to LLM correction with the full error message
+      }
+
       // Missing import — try RAG first, then dict fallback
       if (error.includes('Missing import')) {
         const m = error.match(/Missing import: '(\w+)'/)
@@ -1799,6 +1912,8 @@ export class SmartAutoCorrection {
       'typo',
       'Hook',  // Added: Hook usage errors (imported but never called)
       'imported but never called',  // Added: More specific pattern
+      'Wrong import',  // Added: cn/UI import in a non-component .ts file
+      'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
     ];
 
     const unfixablePatterns = [
@@ -1806,6 +1921,7 @@ export class SmartAutoCorrection {
       'unmatched brace',
       'documentation instead of code',
       'multiple file',
+      'Wrong file extension',  // Can't rename a file in code — planner must generate correct extension
     ];
 
     let hasFixable = false;

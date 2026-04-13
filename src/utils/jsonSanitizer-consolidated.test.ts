@@ -164,12 +164,30 @@ describe('jsonSanitizer (Consolidated)', () => {
   // ============================================================
   // safeParse - Failure Cases Matrix
   // ============================================================
+  // trailing comma is now auto-fixed by sanitizeJson — test it succeeds
+  it('should fix trailing comma in object', () => {
+    const result = safeParse('{"test": "value",}');
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ test: 'value' });
+  });
+
+  it('should fix trailing comma in array', () => {
+    const result = safeParse('[1, 2, 3,]');
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual([1, 2, 3]);
+  });
+
+  it('should fix unescaped newline inside string value', () => {
+    const result = safeParse('{"desc": "line one\nline two"}');
+    expect(result.success).toBe(true);
+    expect(result.data.desc).toBe('line one\nline two');
+  });
+
   const safeParseFailureCases = [
     { name: 'invalid JSON', input: '{invalid}' },
     { name: 'unclosed brace', input: '{"test": "value"' },
     { name: 'unclosed bracket', input: '[1, 2, 3' },
     { name: 'malformed array', input: '[1, 2,,,]' },
-    { name: 'trailing comma', input: '{"test": "value",}' },
     { name: 'plain text', input: 'invalid' },
   ];
 

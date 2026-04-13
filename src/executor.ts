@@ -72,6 +72,8 @@ export class Executor {
   private paused: boolean = false;
   private cancelled: boolean = false;
   private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
+  /** Packages available in the workspace (populated from package.json at execution start) */
+  private availablePackages: string[] = [];
 
   // Phase 3A: Dependency Injection for side effects
   private fs: IFileSystem;
@@ -282,6 +284,11 @@ export class Executor {
     const startTime = Date.now();
     let succeededSteps = 0;
 
+    // Read package.json once before the step loop so every code generation step
+    // knows which packages are actually installed. Non-fatal: missing package.json
+    // (e.g. greenfield workspaces) just leaves availablePackages empty.
+    this.availablePackages = await this.readInstalledPackages(planWorkspaceUri);
+
     // ✅ SURGICAL REFACTOR: Greenfield Guard (State-Aware Contract Enforcement)
     // Check if workspace is greenfield (empty) and enforce READ constraints
     const workspaceExists = await this.checkWorkspaceExists(planWorkspaceUri);
@@ -296,6 +303,23 @@ export class Executor {
     }
 
     for (const step of plan.steps) {
+      // Skip steps that are manual verification disguised as read/run actions.
+      // Pattern: description contains "manual" and path is missing or contains non-code keywords.
+      // This prevents CONTRACT_VIOLATION crashes from recurring planner hallucinations.
+      const descLower = (step.description ?? '').toLowerCase();
+      const isManualVerification =
+        descLower.includes('manual verification') ||
+        (descLower.includes('browser') && step.action === 'read' && !step.path) ||
+        (step.action === 'read' && step.path && /manual|browser/i.test(step.path));
+      if (isManualVerification) {
+        this.config.onStepOutput?.(
+          step.stepId,
+          `📝 Skipped (human verification): ${step.description}`,
+          false
+        );
+        continue;
+      }
+
       try {
         // ✅ SURGICAL REFACTOR: Pre-Flight Contract Check (State-Aware)
         // Run atomic contract validation BEFORE any normalization/sanitization
@@ -490,7 +514,8 @@ export class Executor {
     }
 
     // Check each file against all others for integration issues
-    const integrationErrors: string[] = [];
+    const integrationErrors: string[] = []; // hard failures: unresolvable paths, wrong export names
+    const pkgWarnings: string[] = [];       // soft warnings: npm packages not in package.json
     
     // Build a set of all "known" file paths for import resolution checks.
     // Includes files created this run + canonical base paths without extensions.
@@ -506,28 +531,152 @@ export class Executor {
       // IMPORT PATH RESOLUTION: verify @/-prefixed and relative imports resolve to known files.
       // This catches fabricated paths like `@/components/ui/form-login` when only
       // `src/components/LoginForm.tsx` was created.
-      const importLines = [...content.matchAll(/from\s+['"](@\/[^'"]+|\.\.?\/[^'"]+)['"]/g)];
+      const importLines = [...content.matchAll(/from\s+['"](@\/[^'"]+|\.\.?\/[^'"]+|src\/[^'"]+)['"]/g)];
       for (const importMatch of importLines) {
         const rawPath = importMatch[1];
 
-        // Resolve @/ alias (maps to src/)
+        // Resolve @/ alias (maps to src/), bare src/ prefix, or relative paths
         const resolved = rawPath.startsWith('@/')
           ? rawPath.slice(2)  // strip '@/' → relative to src/
+          : rawPath.startsWith('src/')
+          ? rawPath.slice(4)  // strip 'src/' → same level as src/
           : rawPath.replace(/^\.\//, '').replace(/^\.\.\//, ''); // strip leading ./ or ../
 
         const resolvedNoExt = resolved.replace(/\.[tj]sx?$/, '');
 
         // Skip known-good paths (in this plan or clearly a utility)
-        const isKnown = knownPaths.has(resolved) || knownPaths.has(resolvedNoExt) ||
-          resolved.includes('utils/cn') || resolved.includes('utils/') ||
-          resolved.includes('hooks/') || resolved.includes('stores/') ||
-          resolved.includes('types/') || resolved.includes('lib/');
+        const inThisPlan = knownPaths.has(resolved) || knownPaths.has(resolvedNoExt);
+        // Only skip disk verification for utilities known to exist in every project.
+        // Do NOT skip hooks/, types/, lib/ — those may or may not exist and must be verified.
+        const isWellKnownDir = resolved.includes('utils/cn');
+
+        // For workspace paths not in this plan (e.g. a store created in a prior run),
+        // verify the file actually exists on disk before reporting a missing import.
+        let existsOnDisk = false;
+        if (!inThisPlan && !isWellKnownDir) {
+          // Build store/ ↔ stores/ normalization variants: authStore might be in
+          // either `store/` or `stores/` depending on the project convention.
+          const storeNormVariants: string[] = [];
+          if (resolvedNoExt.startsWith('store/')) {
+            storeNormVariants.push(`src/stores/${resolvedNoExt.slice(6)}.ts`);
+            storeNormVariants.push(`src/stores/${resolvedNoExt.slice(6)}.tsx`);
+          } else if (resolvedNoExt.startsWith('stores/')) {
+            storeNormVariants.push(`src/store/${resolvedNoExt.slice(7)}.ts`);
+            storeNormVariants.push(`src/store/${resolvedNoExt.slice(7)}.tsx`);
+          }
+          const diskVariants = [
+            `src/${resolvedNoExt}.ts`,
+            `src/${resolvedNoExt}.tsx`,
+            `${resolvedNoExt}.ts`,
+            `${resolvedNoExt}.tsx`,
+            ...storeNormVariants,
+          ];
+          for (const dv of diskVariants) {
+            try {
+              await vscode.workspace.fs.readFile(vscode.Uri.joinPath(planWorkspaceUri, dv));
+              existsOnDisk = true;
+              break;
+            } catch { /* not found */ }
+          }
+        }
+
+        const isKnown = inThisPlan || isWellKnownDir || existsOnDisk;
 
         if (!isKnown) {
           integrationErrors.push(
-            `❌ ${filePath}: Unresolvable import path '${rawPath}'. ` +
-            `This path was not created in this plan and is likely fabricated. ` +
-            `Known paths: ${[...knownPaths].slice(0, 5).join(', ')}`
+            `❌ ${filePath}: Unresolvable import '${rawPath}' — file was not created in this plan ` +
+            `and does not exist on disk. Known paths: ${[...knownPaths].slice(0, 5).join(', ')}`
+          );
+        }
+
+        // NAMED EXPORT CHECK: for files written in this plan, verify each imported name is
+        // actually exported by the target file. This catches hook name mismatches like
+        // importing `useFormStore` when the store file exports `useLoginFormStore`.
+        if (inThisPlan) {
+          // Find the full importLine to extract named imports (e.g. `import { useFormStore }`)
+          const fullImportRegex = new RegExp(
+            `import\\s+(?:type\\s+)?\\{([^}]+)\\}\\s+from\\s+['"]${rawPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`
+          );
+          const namedImportMatch = content.match(fullImportRegex);
+          if (namedImportMatch) {
+            const importedNames = namedImportMatch[1]
+              .split(',')
+              .map(s => s.trim().replace(/\s+as\s+\w+$/, '').trim())
+              .filter(s => /^\w+$/.test(s));
+
+            // Find the target file content in generatedFileContents
+            let targetContent: string | undefined;
+            for (const [tp, tc] of generatedFileContents) {
+              const tpNorm = tp.replace(/\\/g, '/').replace(/^src\//, '').replace(/\.[tj]sx?$/, '');
+              if (tpNorm === resolvedNoExt || tp.replace(/\\/g, '/').endsWith(resolvedNoExt + '.ts') ||
+                  tp.replace(/\\/g, '/').endsWith(resolvedNoExt + '.tsx')) {
+                targetContent = tc;
+                break;
+              }
+            }
+
+            if (targetContent) {
+              // Extract all named exports from the target file
+              const namedExports = new Set<string>();
+              const exportMatches = [
+                ...targetContent.matchAll(/export\s+(?:const|function|class|type|interface|enum)\s+(\w+)/g),
+                ...targetContent.matchAll(/export\s*\{([^}]+)\}/g),
+              ];
+              for (const m of exportMatches) {
+                if (m[0].includes('{')) {
+                  // export { a, b as c } form
+                  m[1].split(',').forEach(s => {
+                    const name = s.trim().replace(/\s+as\s+\w+$/, '').trim();
+                    if (/^\w+$/.test(name)) namedExports.add(name);
+                  });
+                } else {
+                  namedExports.add(m[1]);
+                }
+              }
+
+              for (const importedName of importedNames) {
+                if (!namedExports.has(importedName)) {
+                  integrationErrors.push(
+                    `❌ ${filePath}: Imports \`${importedName}\` from '${rawPath}' but that file does not export it. ` +
+                    `Available exports: { ${[...namedExports].join(', ')} }. ` +
+                    `Rename the export in the store to match the import, or update the import to match the export.`
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // NPM PACKAGE CHECK: verify bare package imports (e.g. 'react-router-dom', 'zod')
+      // are actually in package.json. Only runs when we successfully read package.json.
+      if (this.availablePackages.length > 0) {
+        // Match bare package imports: 'react-router-dom', '@tanstack/react-query', etc.
+        // Exclude relative paths (./ ../), @/ alias paths, and node builtins.
+        const pkgImportLines = [...content.matchAll(/from\s+['"]([^.@'"\/][^'"]*|@[^/'"]+\/[^'"]+)['"]/g)];
+        const nodeBuiltins = new Set([
+          'path', 'fs', 'os', 'http', 'https', 'url', 'util', 'crypto', 'stream',
+          'events', 'buffer', 'child_process', 'cluster', 'net', 'tls', 'dns',
+          'readline', 'zlib', 'assert', 'vm', 'module', 'perf_hooks', 'worker_threads',
+        ]);
+        // Always-available packages that don't need to be in package.json
+        const alwaysAvailable = new Set(['react', 'react-dom', 'typescript']);
+        for (const pkgMatch of pkgImportLines) {
+          const pkgName = pkgMatch[1];
+          // Normalize scoped packages to their root (e.g. '@tanstack/react-query' → '@tanstack/react-query')
+          const rootPkg = pkgName.startsWith('@')
+            ? pkgName  // keep full scoped name
+            : pkgName.split('/')[0];  // e.g. 'react-router-dom/server' → 'react-router-dom'
+          if (
+            nodeBuiltins.has(rootPkg) ||
+            alwaysAvailable.has(rootPkg) ||
+            this.availablePackages.includes(rootPkg)
+          ) {
+            continue; // ✅ package is available
+          }
+          pkgWarnings.push(
+            `❌ ${filePath}: Imports from '${pkgName}' but this package is NOT in package.json. ` +
+            `Either install it (\`npm install ${rootPkg}\`) or use a different approach that doesn't require it.`
           );
         }
       }
@@ -558,14 +707,21 @@ export class Executor {
       }
     }
 
+    // Soft warnings: npm packages not in package.json (non-blocking — user may install separately)
+    if (pkgWarnings.length > 0) {
+      for (const warning of pkgWarnings) {
+        console.warn(`[Executor] ⚠ Package warning: ${warning}`);
+        this.config.onMessage?.(`⚠ Integration warning: ${warning}`, 'info');
+      }
+    }
+
+    // Hard failures: unresolvable file paths, wrong export names, store hook misuse
     if (integrationErrors.length > 0) {
-      console.error('[Executor] \u274c Integration validation failed:');
+      console.error('[Executor] ❌ Integration validation failed:');
       for (const error of integrationErrors) {
         console.error(`  ${error}`);
         this.config.onMessage?.(error, 'error');
       }
-      
-      // Integration failures are CRITICAL - files won't work together
       return {
         success: false,
         completedSteps: succeededSteps,
@@ -703,6 +859,51 @@ export class Executor {
             `Expected: const { x, y } = useStoreHook();`
           );
         }
+
+        // Detect .getState() anti-pattern in React components
+        // useXxxStore.getState() bypasses React's render cycle — setters and state must come from the hook call
+        if (content.match(/use\w+Store\.getState\s*\(\)/)) {
+          errors.push(
+            `❌ Zustand Anti-Pattern: NEVER call useXxxStore.getState() inside a React component. ` +
+            `Destructure everything you need from the hook: const { email, password, setEmail, setPassword, login } = useAuthStore();`
+          );
+        }
+
+        // Detect react-hook-form imports — banned when the task is Zustand-based state management
+        if (content.match(/from\s+['"]react-hook-form['"]/)) {
+          errors.push(
+            `❌ Wrong Library: react-hook-form is imported. This task uses Zustand for state management. ` +
+            `Remove react-hook-form entirely. State comes from the Zustand store hook: const { email, password, setEmail, setPassword } = useAuthStore();`
+          );
+        }
+
+        // Detect mock auth service that always evaluates truthy — makes redirect untestable.
+        // Checks for a falsy code path rather than a specific literal, so it catches:
+        //   return true            → ❌ literal true
+        //   return !!token         → ❌ non-empty string always truthy
+        //   return Boolean(token)  → ❌ same
+        //   return token !== null  → ❌ non-null string always truthy
+        // But passes:
+        //   return false           → ✅ explicit false
+        //   return null            → ✅ falsy
+        //   return storedFlag      → ✅ (could be false at runtime; we trust it)
+        const isMockAuthFile = /[\\/]services[\\/][^/]*auth[^/]*\.ts$/i.test(filePath)
+          && !filePath.endsWith('.tsx');
+        if (isMockAuthFile) {
+          const hasExplicitFalsy =
+            /\breturn\s+false\b/.test(content) ||
+            /\breturn\s+(null|undefined|0)\b/.test(content) ||
+            /\breturn\s+''/.test(content) ||
+            /\breturn\s+""/.test(content);
+          if (!hasExplicitFalsy) {
+            errors.push(
+              `❌ Mock Auth Bug: no code path in this auth service returns a falsy value. ` +
+              `The redirect to /login will NEVER fire — ProtectedRoute always passes. ` +
+              `Add \`return false\` as the default so the redirect path is observable and testable. ` +
+              `WRONG: return !!token  WRONG: return true  RIGHT: return false`
+            );
+          }
+        }
       } catch (error) {
         console.error(`[Executor] ❌ CRITICAL: Cross-file validation threw exception:`, error);
         // Don't silently swallow - this is a critical issue
@@ -803,7 +1004,9 @@ export class Executor {
     const patternMap = new Map(patterns.map(p => [p.type, p.found]));
 
     // Pattern 1: State Interface
-    if (!patternMap.get('stateInterface')) {
+    // Skip when the form delegates state to a Zustand store — the interface lives there.
+    const importsZustandStore = /import\s+\{[^}]*use\w+Store[^}]*\}/.test(content);
+    if (!patternMap.get('stateInterface') && !importsZustandStore) {
       errors.push(
         `❌ Pattern 1 violation: Missing state interface. ` +
         `Forms require: interface LoginFormState { email: string; password: string; }`
@@ -817,6 +1020,16 @@ export class Executor {
       errors.push(
         `❌ Pattern 2 violation: Handler typed as 'any'. ` +
         `Use: const handleChange: FormEventHandler<HTMLFormElement> = (e) => { ... }`
+      );
+    }
+    // Critical: handler annotated with FormEvent (event type) instead of FormEventHandler (function type).
+    // e.g. `const handleSubmit: FormEvent<HTMLFormElement> = ...` — TypeScript compile error because
+    // FormEvent is the event object interface, not a callable function type.
+    const handlersTypedAsEvent = [...content.matchAll(/const\s+(handle\w+)\s*:\s*FormEvent\s*</g)];
+    for (const m of handlersTypedAsEvent) {
+      errors.push(
+        `❌ Pattern 2 violation: \`${m[1]}\` is annotated as \`FormEvent<...>\` which is an event object type, not a function type — this is a TypeScript compile error. ` +
+        `Use: const ${m[1]}: FormEventHandler<HTMLFormElement> = (e) => { e.preventDefault(); ... }`
       );
     }
     if (!hasFormEventHandler && (content.includes('handleChange') || content.includes('handleSubmit'))) {
@@ -922,6 +1135,72 @@ export class Executor {
       }
     }
 
+    // JSON file imports: importing from *.json (especially package.json) is a hallucination.
+    // e.g. `import { package.json } from '../../package.json'` — invalid identifier and wrong path.
+    // Strip these silently so they don't block the file write or propagate to integration checks.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const jsonImportMatch = content.match(/^import\s+[^'"]*\s+from\s+['"][^'"]*\.json['"]/m);
+      if (jsonImportMatch) {
+        errors.push(
+          `❌ Fabricated JSON import: \`${jsonImportMatch[0].trim()}\` — do not import JSON files. ` +
+          `Remove this line entirely. It serves no purpose in a TypeScript component or store.`
+        );
+      }
+    }
+
+    // Invalid import names: TypeScript generic syntax used as import identifier.
+    // e.g. `import { FormEvent<HTMLFormElement> } from 'react'` — angle brackets are not valid
+    // in import specifiers; this is a syntax error that TypeScript rejects immediately.
+    // Handles both `import { ... }` and `import Foo, { ... }` forms.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const importBlockMatches = [...content.matchAll(/import\s+(?:\w+\s*,\s*)?\{([^}]+)\}/g)];
+      for (const m of importBlockMatches) {
+        const rawNames = m[1];
+        if (/</.test(rawNames)) {
+          // Extract the offending tokens
+          const badTokens = rawNames.split(',')
+            .map(s => s.trim())
+            .filter(s => s.includes('<') || s.includes('>'));
+          errors.push(
+            `❌ Invalid import syntax: Generic type syntax inside import braces is not valid. ` +
+            `Remove angle brackets from: { ${badTokens.join(', ')} }. ` +
+            `Import the base type only — TypeScript infers the generic at the call site: { ${badTokens.map(t => t.replace(/<[^>]*>/g, '').trim()).join(', ')} }`
+          );
+        }
+      }
+    }
+
+    // Malformed JSX attribute: consecutive double-quotes like placeholder="""""""""""
+    // In JSX, ="..." means the first " opens the string and the second " immediately closes it.
+    // Three or more consecutive quotes produce a syntax error that esbuild/tsc rejects.
+    // Common LLM failure: mis-escaping a placeholder value into repeated quote chars.
+    if (filePath.endsWith('.tsx')) {
+      const malformedAttrMatch = content.match(/="{3,}/);
+      if (malformedAttrMatch) {
+        errors.push(
+          `❌ Malformed JSX attribute value: Found consecutive double-quotes \`${malformedAttrMatch[0]}\` — this is a JavaScript parse error. ` +
+          `Use a plain string literal: e.g., \`placeholder="Enter your email"\`. ` +
+          `Never repeat double-quote characters in a JSX attribute value.`
+        );
+      }
+    }
+
+    // Duplicate identifier: imported symbol also declared locally — crashes at runtime.
+    // Happens when SmartFixer adds an import for a name already defined via create()/useState()/etc.
+    if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
+      const importedNames = [...content.matchAll(/import\s+\{([^}]+)\}/g)]
+        .flatMap(m => m[1].split(',').map(s => s.trim().replace(/\s+as\s+\w+$/, '').trim()))
+        .filter(s => /^\w+$/.test(s));
+      for (const name of importedNames) {
+        if (new RegExp(`\\b(?:const|let|var|function|class)\\s+${name}\\b`).test(content)) {
+          errors.push(
+            `❌ Duplicate identifier: '${name}' is both imported and declared locally. ` +
+            `Remove the local declaration — import the module instead.`
+          );
+        }
+      }
+    }
+
     // Check form component patterns first
     const formErrors = this.validateFormComponentPatterns(content, filePath);
     if (formErrors.length > 0) {
@@ -985,6 +1264,20 @@ export class Executor {
         );
       }
 
+      // Validate cn import path: must be a relative path (../utils/cn, ./utils/cn) or alias (@/utils/cn)
+      // Catches: import { cn } from 'src/utils/cn' — a bare path that TypeScript resolves differently
+      const cnImportMatch = content.match(/import\s+[^'"]*\bcn\b[^'"]*from\s+['"]([^'"]+)['"]/);
+      if (cnImportMatch) {
+        const cnSource = cnImportMatch[1];
+        const isValidCnPath = cnSource.startsWith('./') || cnSource.startsWith('../') || cnSource.startsWith('@/');
+        if (!isValidCnPath) {
+          errors.push(
+            `❌ Import path: cn is imported from '${cnSource}' which is not a valid module specifier. ` +
+            `Use a relative path or alias: import { cn } from '@/utils/cn' or '../utils/cn'`
+          );
+        }
+      }
+
       // Detect manual className string concatenation when cn() is imported
       const importsCn = /import\s+.*\bcn\b.*from/.test(content);
       const hasManualConcat = /className\s*=\s*[`'"][^`'"]*\$\{/.test(content) ||
@@ -996,15 +1289,31 @@ export class Executor {
         );
       }
 
-      // Detect component file with only default export and no named export
-      // Only warn for truly anonymous patterns — allow `const X = ...; export default X;`
+      // Detect bare string classNames when cn() is imported.
+      // Every className prop must go through cn() — no exceptions, including submit buttons.
+      // Catches: className="..." and className={"..."} but NOT className={cn(...)}
+      if (importsCn) {
+        const bareStringClassName = /className\s*=\s*(?:"[^"]*"|'[^']*'|\{["'][^"']*["']\})/.test(content);
+        if (bareStringClassName) {
+          errors.push(
+            `❌ Style bug: cn() is imported but a className prop uses a bare string literal. ` +
+            `Every className must go through cn(): className={cn('your-classes')} — this applies to every element, including submit buttons.`
+          );
+        }
+      }
+
+      // Detect component file that uses default export without a named export.
+      // `const X = ...; export default X` is the exact anti-pattern — component consumers
+      // expect named imports: `import { LoginForm } from './LoginForm'`.
+      // A named definition without `export` is NOT acceptable — it must be `export const X`.
       const hasDefaultExport = /export\s+default\b/.test(content);
       const hasNamedExport = /export\s+(?:const|function|class)\s+[A-Z]/.test(content);
-      const hasNamedDefinition = /\b(?:const|function|class)\s+[A-Z]\w+/.test(content);
-      if (hasDefaultExport && !hasNamedExport && !hasNamedDefinition && filePath.includes('components/')) {
+      if (hasDefaultExport && !hasNamedExport && filePath.includes('components/')) {
+        const componentName = filePath.split('/').pop()?.replace(/\.[tj]sx?$/, '') ?? 'Component';
         errors.push(
-          `⚠️ Export consistency: Component has only a default export. ` +
-          `Add a named export for consistency: export const ${filePath.split('/').pop()?.replace('.tsx', '')} = ...`
+          `❌ Export consistency: Component uses only a default export — named exports are required. ` +
+          `Replace: \`const ${componentName} = ...; export default ${componentName};\` ` +
+          `with: \`export const ${componentName} = ...;\` (remove the default export entirely)`
         );
       }
 
@@ -1022,10 +1331,18 @@ export class Executor {
           `Wrap with: export const ${componentName} = React.forwardRef<HTMLButtonElement, ${componentName}Props>(({ ...props }, ref) => { ... }); ` +
           `then add ${componentName}.displayName = '${componentName}';`
         );
-      } else if (usesForwardRef && !hasDisplayName) {
+      } else if (usesForwardRef && isInteractiveFile && !hasDisplayName) {
+        // displayName is only required for interactive components that use forwardRef.
+        // For form/page/layout components (LoginForm, Dashboard, etc.) forwardRef is never needed —
+        // flag its presence as scope creep instead of requiring displayName.
         errors.push(
           `❌ forwardRef missing displayName: Add \`${componentName}.displayName = '${componentName}';\` ` +
           `after the component definition. Without it React DevTools shows "ForwardRef" instead of the component name.`
+        );
+      } else if (usesForwardRef && !isInteractiveFile) {
+        errors.push(
+          `❌ Unnecessary forwardRef: \`${componentName}\` is not an interactive form control (Button/Input/Select/etc.) and does not need forwardRef. ` +
+          `Remove it and use a plain arrow function: \`export const ${componentName} = ({ ...props }: ${componentName}Props) => { ... };\``
         );
       }
 
@@ -1040,32 +1357,66 @@ export class Executor {
       // Also allow `return null` as a valid empty render.
       if (filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
         const hasJsxReturn =
-          /<[a-z][a-z0-9-]*[\s/>]/.test(content) ||   // lowercase HTML element (<button, <input, <div …)
+          /<[a-z][a-z0-9-]*[\s/>]/.test(content) ||    // lowercase HTML element (<button, <input, <div …)
+          /<>|<\/>/.test(content) ||                    // React fragment opener/closer (<> </>)
+          /return\s*\(?\s*<[A-Z]/.test(content) ||     // uppercase component in return (<Navigate, <Outlet …)
           /return\s+null\b/.test(content);              // explicit null render is valid
         if (!hasJsxReturn) {
           errors.push(
-            `❌ Component returns no JSX: The component body has no JSX HTML element (no <button>, <input>, <div>, etc.). ` +
-            `React components MUST return JSX — e.g. return <button ref={ref} {...props} />. ` +
+            `❌ Component returns no JSX: The component body has no JSX HTML element (no <div>, <Navigate />, <>{children}</>, etc.). ` +
+            `React components MUST return JSX — e.g. return <>{children}</> or return <Navigate to="/login" />. ` +
             `A bare cn() call or string return will throw "Nothing was returned from render" at runtime. ` +
-            `NOTE: TypeScript generics like <HTMLInputElement> are NOT JSX — the check requires a real HTML tag.`
+            `NOTE: TypeScript generics like <HTMLInputElement> are NOT JSX — the check requires a real HTML tag or component.`
           );
         }
       }
 
-      // Detect self-referential export: `export const Button = Button` or `export { Button as Button }`.
+      // Detect self-referential export: `export const Button = Button` or
+      // `export const Button = forwardRef<T>(Button)` / `export const Button = React.forwardRef<T>(Button)`.
       // Auto-correction introduces this pattern when it wraps an inner const and then re-exports by name.
       // TypeScript throws "Block-scoped variable used before its declaration" or a circular reference.
       // Fires for any component file (.tsx) — not just interactive files.
       if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
-        // Pattern: export const X = X  (same identifier on both sides)
-        const selfRefExportMatch = content.match(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*;/);
-        if (selfRefExportMatch && selfRefExportMatch[1] === selfRefExportMatch[2]) {
-          const name = selfRefExportMatch[1];
+        // Pattern 1: export const X = X  (same identifier on both sides)
+        const selfRefSimple = content.match(/export\s+const\s+(\w+)\s*=\s*(\w+)\s*;/);
+        if (selfRefSimple && selfRefSimple[1] === selfRefSimple[2]) {
+          const name = selfRefSimple[1];
           errors.push(
             `❌ Self-referential export: \`export const ${name} = ${name};\` is a circular declaration. ` +
             `Export the component directly: \`export const ${name} = React.forwardRef<...>(...)\` — ` +
             `do NOT assign to an internal name and then re-export it by the same name.`
           );
+        }
+        // Pattern 2: export const X = forwardRef<...>(X) or React.forwardRef<...>(X)
+        // The last argument to forwardRef() is the render function — using the component itself
+        // here is a recursive reference that causes "used before declaration" errors.
+        const selfRefForwardRef = content.match(/export\s+const\s+(\w+)\s*=\s*(?:React\.)?forwardRef(?:<[^>]*>)?\s*\(\s*(\w+)\s*\)/);
+        if (selfRefForwardRef && selfRefForwardRef[1] === selfRefForwardRef[2]) {
+          const name = selfRefForwardRef[1];
+          errors.push(
+            `❌ Self-referential forwardRef: \`export const ${name} = forwardRef(${name})\` wraps the component in itself — ` +
+            `this causes a "used before declaration" error. ` +
+            `Define the render function inline: \`export const ${name} = React.forwardRef<HTMLElement, ${name}Props>((props, ref) => (<element ref={ref} {...props} />));\`. ` +
+            `If ${name} is not an interactive component (Button, Input), remove forwardRef entirely.`
+          );
+        }
+        // Pattern 3: export const X = (props: React.ComponentProps<typeof X>) => ...
+        // ComponentProps<typeof X> inside X's own definition is a circular self-reference —
+        // TypeScript cannot resolve it: "'X' implicitly has type 'any' because it does not have a
+        // type annotation and is referenced directly or indirectly in its own initializer".
+        // Fix: define a dedicated Props interface and use it instead.
+        const selfRefComponentProps = [...content.matchAll(
+          /export\s+const\s+(\w+)\s*=\s*\([^)]*(?:React\.)?ComponentProps<\s*typeof\s+(\w+)\s*>/g
+        )];
+        for (const m of selfRefComponentProps) {
+          if (m[1] === m[2]) {
+            errors.push(
+              `❌ Self-referential ComponentProps: \`export const ${m[1]} = (props: React.ComponentProps<typeof ${m[1]}>) => ...\` ` +
+              `references the component inside its own type annotation — TypeScript compile error. ` +
+              `Replace with a named interface: \`interface ${m[1]}Props { /* your props */ }\` ` +
+              `then use: \`export const ${m[1]} = ({ ...props }: ${m[1]}Props) => ...\``
+            );
+          }
         }
       }
 
@@ -1083,6 +1434,35 @@ export class Executor {
             `Add \`px-4 py-2\` to the cn() base string so the component is usable without consumer overrides.`
           );
         }
+      }
+
+      // Detect hook calls inside JSX attribute expressions — violates Rules of Hooks.
+      // e.g. value={useFormStore((s) => s.email)} or onClick={useStore(s => s.handler)}
+      // Hooks must be called at the top level of the component body, never inside JSX props.
+      // Pattern: find =\{use\w+( anywhere that isn't a const/let/var/return assignment outside JSX.
+      // Simple heuristic: detect `prop={useXxx(` — hooks called directly as JSX attribute values.
+      const jsxHookViolations = [...content.matchAll(/\b\w+\s*=\s*\{\s*(use[A-Z]\w+)\s*\(/g)];
+      for (const m of jsxHookViolations) {
+        const hookName = m[1];
+        errors.push(
+          `❌ Rules of Hooks violation: \`${hookName}()\` is called inside a JSX prop expression. ` +
+          `Hooks must be called at the top level of the component body. ` +
+          `Extract to a variable above the return: \`const value = ${hookName}(selector);\` then use \`value\` in JSX.`
+        );
+      }
+
+      // Detect non-visual wrapper components that don't accept or render children.
+      // A Route/Guard/Wrapper/Provider component that ignores children is a broken wrapper —
+      // it can never render the protected content it's supposed to wrap.
+      const componentBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+      const isWrapperComponent = filePath.endsWith('.tsx')
+        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentBaseName);
+      if (isWrapperComponent && !/\bchildren\b/.test(content)) {
+        errors.push(
+          `❌ Missing children prop: ${componentBaseName} is a wrapper component but never references \`children\`. ` +
+          `A wrapper must accept and render children: \`({ children }: { children: React.ReactNode })\` ` +
+          `and return \`<>{children}</>\` when the user is authenticated.`
+        );
       }
 
       // Detect conflicting Tailwind transition utilities.
@@ -1116,15 +1496,34 @@ export class Executor {
       }
     }
 
-    // cn imported but never called — applies to both .ts and .tsx
-    // A dead `import { cn }` means copy-paste residue or scope creep; it will be tree-shaken
-    // but signals the LLM deviated from the step's intent.
+    // cn imported — severity depends on file type and component role
+    // .ts files (services, hooks, utils): ❌ cn must never appear
+    // .tsx non-visual wrappers (Route/Guard/Wrapper/Provider/Layout/Context/HOC/Outlet): ❌ cn must never appear
+    // .tsx regular components: ⚠️ dead import warning only when cn is imported but not called
     const importsCn = /import\s+.*\bcn\b.*from/.test(content);
-    if (importsCn && !/\bcn\s*\(/.test(content)) {
-      errors.push(
-        `⚠️ Dead import: \`cn\` is imported but never called. ` +
-        `Either use it for class merging (className={cn(...)}) or remove the import.`
-      );
+    if (importsCn) {
+      const isPureTs = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
+      const fileBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+      const isNonVisualWrapperFile = filePath.endsWith('.tsx')
+        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(fileBaseName);
+      if (isPureTs) {
+        errors.push(
+          `❌ Wrong import: \`cn\` is imported in a non-component .ts file. ` +
+          `cn is a UI class-merging utility — it must NEVER appear in service, utility, or hook files. Remove the import.`
+        );
+      } else if (isNonVisualWrapperFile) {
+        errors.push(
+          `❌ Wrong import: \`cn\` is imported in a non-visual wrapper component. ` +
+          `${fileBaseName} is a logic wrapper (redirects/renders children) with NO styled elements. ` +
+          `NEVER import cn here — remove the import entirely.`
+        );
+      } else if (!/\bcn\s*\(/.test(content)) {
+        // Regular .tsx component: warn only when cn is imported but never called
+        errors.push(
+          `⚠️ Dead import: \`cn\` is imported but never called. ` +
+          `Either use it for class merging (className={cn(...)}) or remove the import.`
+        );
+      }
     }
 
     // cn must never appear in hook files (.ts in hooks/ directory)
@@ -1136,6 +1535,26 @@ export class Executor {
         `❌ Wrong layer: \`cn\` is a style utility and must not be imported in a hook. ` +
         `Hooks are pure logic — remove the cn import from \`${filePath.split('/').pop()}\`.`
       );
+    }
+
+    // JSX in a pure .ts file is a TypeScript compiler error — it must be .tsx
+    // Use unambiguous JSX patterns that never appear in plain TypeScript generics:
+    //   - closing tags </Foo>   — TypeScript generics never have closing tags
+    //   - fragments <>  </>     — unambiguous JSX syntax
+    //   - self-closing <Foo />  — uppercase component followed by space or /
+    //   - type annotations      — React.FC, JSX.Element (only meaningful with JSX)
+    const isPureTsFile = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
+    if (isPureTsFile) {
+      const hasJsx = /<\/[A-Za-z]/.test(content)        // closing tag e.g. </div> </Component>
+        || /<>|<\/>/.test(content)                       // React fragment <> </>
+        || /<[A-Z][a-zA-Z]*[\s/]/.test(content)         // self-closing or spaced JSX <Foo /> <Foo >
+        || /React\.FC|JSX\.Element/.test(content);       // JSX-specific type annotations
+      if (hasJsx) {
+        errors.push(
+          `❌ Wrong file extension: This file contains JSX but has a .ts extension. ` +
+          `Rename to .tsx (e.g. Routes.tsx, App.tsx). TypeScript cannot compile JSX in .ts files.`
+        );
+      }
     }
 
     // Hook return contract: every useState value must be in the return object.
@@ -1270,7 +1689,24 @@ export class Executor {
 
       const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
       const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
-      const hookLine = isHookTarget ? ' HOOK FILE: never include cn/clsx/classnames imports in criteria — hooks are pure logic.' : '';
+      const isServiceTarget = /[\\/](?:services|utils|lib|api|helpers)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+      const isPureLogicFile = isHookTarget || isServiceTarget;
+      // Non-visual wrapper components (Route, Guard, Provider, Layout, Context, HOC) render children
+      // or redirect — they have no styled elements, so cn/className criteria are nonsensical
+      const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '';
+      const isNonVisualWrapper = step.path.endsWith('.tsx')
+        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+      // For mock auth services, add a rule about the default return value
+      const isMockAuthService = isPureLogicFile
+        && /mockAuth|authService|authHelper/i.test(componentName);
+      const mockAuthNote = isMockAuthService
+        ? ' MOCK AUTH SERVICE: one criterion MUST check that the auth function returns false by default (not true). A mock that returns true makes the redirect unreachable and untestable.'
+        : '';
+      const hookLine = isPureLogicFile
+        ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
+        : isNonVisualWrapper
+        ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). ALWAYS include one criterion that checks: "Accepts and renders children prop" — a wrapper that ignores children is broken. Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
+        : '';
       const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
@@ -2033,10 +2469,17 @@ JSON array only. No explanation.`;
     });
 
     // Topological sort: Kahn's algorithm
+    // inDegree[i] = number of prerequisites step i has (steps that must run before it)
     const inDegree = new Map<number, number>();
     writeSteps.forEach((_, idx) => {
-      const depCount = Array.from(dependencies.values()).filter(deps => deps.has(idx)).length;
-      inDegree.set(idx, depCount);
+      inDegree.set(idx, dependencies.get(idx)?.size ?? 0);
+    });
+
+    // Build reverse map: dependents[i] = set of steps that depend on step i
+    const dependents = new Map<number, Set<number>>();
+    writeSteps.forEach((_, idx) => { dependents.set(idx, new Set()); });
+    dependencies.forEach((deps, idx) => {
+      deps.forEach(prereq => { dependents.get(prereq)?.add(idx); });
     });
 
     const queue: number[] = [];
@@ -2049,11 +2492,11 @@ JSON array only. No explanation.`;
       const current = queue.shift()!;
       sorted.push(current);
 
-      // Remove edges from current
-      dependencies.get(current)?.forEach(dependent => {
-        inDegree.set(dependent, (inDegree.get(dependent) ?? 0) - 1);
-        if (inDegree.get(dependent) === 0) {
-          queue.push(dependent);
+      // Decrement in-degree for everything that depended on current
+      dependents.get(current)?.forEach(dep => {
+        inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
+        if (inDegree.get(dep) === 0) {
+          queue.push(dep);
         }
       });
     }
@@ -2197,6 +2640,34 @@ JSON array only. No explanation.`;
   /**
    * ✅ SURGICAL REFACTOR: Check if workspace exists
    *
+   * Reads package.json from the workspace root and returns the union of all
+   * dependency keys (dependencies + devDependencies + peerDependencies).
+   * Returns an empty array if package.json doesn't exist or can't be parsed.
+   */
+  private async readInstalledPackages(workspaceUri: vscode.Uri): Promise<string[]> {
+    try {
+      const pkgUri = vscode.Uri.joinPath(workspaceUri, 'package.json');
+      const raw = new TextDecoder().decode(await vscode.workspace.fs.readFile(pkgUri));
+      const pkg = JSON.parse(raw) as Record<string, unknown>;
+      const sections = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+      const names = new Set<string>();
+      for (const section of sections) {
+        const deps = pkg[section];
+        if (deps && typeof deps === 'object') {
+          for (const name of Object.keys(deps)) {
+            names.add(name);
+          }
+        }
+      }
+      console.log(`[Executor] 📦 Read ${names.size} packages from package.json`);
+      return [...names];
+    } catch {
+      // No package.json or parse error — not fatal
+      return [];
+    }
+  }
+
+  /**
    * Determines if workspace has any files (greenfield check)
    */
   private async checkWorkspaceExists(workspaceUri: vscode.Uri): Promise<boolean> {
@@ -2403,10 +2874,12 @@ JSON array only. No explanation.`;
       for (let i = 0; i < content.length; i++) {
         text += String.fromCharCode(content[i]);
       }
+      this.config.onMessage?.(`Read ${step.path} (${text.length} bytes)`, 'info');
       return {
         stepId: step.stepId,
         success: true,
-        output: `Read ${step.path} (${text.length} bytes)`,
+        // Store actual file content in output so subsequent WRITE steps can use it as context
+        output: text,
         duration: Date.now() - startTime,
       };
     } catch (error) {
@@ -2416,6 +2889,63 @@ JSON array only. No explanation.`;
         `Failed to read ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
     }
+  }
+
+  /**
+   * Scan workspace for dependency files whose names appear in the step description.
+   * Extracts identifiers ending in Store/Hook/Context/Service/etc., globs for matching
+   * .ts/.tsx files in the workspace, and returns their content for injection into the
+   * generation prompt. Gracefully returns [] when VS Code API is unavailable (tests).
+   */
+  private async scanWorkspaceForDependencies(
+    step: PlanStep,
+    workspaceUri: vscode.Uri,
+    alreadyInjected: Set<string>
+  ): Promise<{ path: string; content: string }[]> {
+    const results: { path: string; content: string }[] = [];
+    try {
+      const desc = step.description ?? '';
+
+      // Extract identifiers that look like module/hook/store names
+      const matches =
+        desc.match(/\b([A-Za-z][a-zA-Z0-9]*(?:Store|Hook|Context|Service|Api|Util|Client|Provider))\b/g) ?? [];
+      if (matches.length === 0) return results;
+
+      const candidates = new Set<string>();
+      for (const m of matches) {
+        candidates.add(m);
+        // Strip 'use' prefix: useAuthStore → authStore
+        if (m.startsWith('use') && m.length > 4) {
+          candidates.add(m.charAt(3).toLowerCase() + m.slice(4));
+        }
+        // Lowercase first char: AuthStore → authStore
+        if (m.charAt(0) !== m.charAt(0).toLowerCase()) {
+          candidates.add(m.charAt(0).toLowerCase() + m.slice(1));
+        }
+      }
+
+      for (const name of candidates) {
+        const pattern = new vscode.RelativePattern(workspaceUri, `**/${name}.{ts,tsx}`);
+        const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 3);
+
+        for (const file of files) {
+          const relPath = path.relative(workspaceUri.fsPath, file.fsPath).replace(/\\/g, '/');
+          if (alreadyInjected.has(relPath)) continue;
+
+          try {
+            const content = this.fs.readFileSync(file.fsPath, 'utf-8');
+            if (content.length > 0) {
+              results.push({ path: relPath, content });
+              alreadyInjected.add(relPath);
+              console.log(`[Executor] ℹ️ Auto-injected workspace dependency: ${relPath}`);
+            }
+          } catch { /* file unreadable — skip */ }
+        }
+      }
+    } catch {
+      // VS Code API unavailable (unit test env) or glob failed — skip gracefully
+    }
+    return results;
   }
 
   /**
@@ -2696,18 +3226,45 @@ JSON array only. No explanation.`;
     if (this.plan && step.stepId > 1) {
       const previouslyCreatedFiles: string[] = [];
       const completedSteps = new Map(this.plan.results || new Map());
-      
+
+      // Collect prior READ step content so the LLM knows the exact API of existing files.
+      // This prevents guessing import paths (e.g. store/ vs stores/) and export names.
+      const readStepContents: { path: string; content: string }[] = [];
+      for (let i = 1; i < step.stepId; i++) {
+        const prevStep = this.plan.steps.find(s => s.stepId === i);
+        const prevResult = completedSteps.get(i);
+        if (prevStep && prevResult?.success && prevStep.action === 'read' && prevResult.output) {
+          // output now stores actual file content (not just the summary message)
+          const isSummary = prevResult.output.startsWith('Read ') && prevResult.output.includes(' bytes)');
+          if (!isSummary && prevResult.output.length > 0) {
+            readStepContents.push({ path: prevStep.path, content: prevResult.output });
+          }
+        }
+      }
+
+      // Auto-scan workspace for dependency files mentioned in step description.
+      // Handles the case where the planner forgot to add a READ step for a dependency
+      // (e.g., "using the existing authStore" without a READ step for authStore.ts).
+      const workspaceDeps = await this.scanWorkspaceForDependencies(
+        step,
+        workspaceUri,
+        new Set(readStepContents.map(r => r.path))
+      );
+      if (workspaceDeps.length > 0) {
+        readStepContents.push(...workspaceDeps);
+      }
+
       // Collect files created in previous steps
       for (let i = 1; i < step.stepId; i++) {
         const prevStep = this.plan.steps.find(s => s.stepId === i);
         const prevResult = completedSteps.get(i);
-        
+
         if (prevStep && prevResult && prevResult.success && prevStep.action === 'write') {
           previouslyCreatedFiles.push(prevStep.path);
         }
       }
-      
-      if (previouslyCreatedFiles.length > 0) {
+
+      if (previouslyCreatedFiles.length > 0 || readStepContents.length > 0) {
         // ✅ CRITICAL: Use STORED CONTRACTS from previous steps (actual APIs)
         // NOT calculated/guessed paths
         const fileContracts: string[] = [];
@@ -2780,7 +3337,21 @@ Do NOT create your own import paths - use EXACTLY what's shown above.
 `;
         }
 
-        multiStepContext = `${importSection}## CONTEXT: Related Files Already Created
+        // Include content from prior READ steps so the LLM sees the actual API of existing files
+        const readContextSection = readStepContents.length > 0
+          ? `## EXISTING CODEBASE (files read in prior steps — use their EXACT APIs)
+
+${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 1500)}\n\`\`\``).join('\n\n')}
+
+CRITICAL: When importing from any file shown above, use the EXACT export names and path
+shown in that file. For example, if a store uses \`export default useAuthStore\`, import it
+as \`import useAuthStore from '...' \` (default import), NOT \`{ useAuthStore }\`.
+
+`
+          : '';
+
+        const createdFilesSection = fileContracts.length > 0
+          ? `## CONTEXT: Related Files Already Created
 The following files were created in previous steps. Use their exported APIs as shown below.
 
 ${fileContracts.join('\n\n')}
@@ -2792,8 +3363,11 @@ CRITICAL INTEGRATION RULES:
 4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
 
-`;
-        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s)`);
+`
+          : '';
+
+        multiStepContext = `${readContextSection}${importSection}${createdFilesSection}`;
+        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s), ${readStepContents.length} read file(s)`);
       }
     }
 
@@ -2863,6 +3437,20 @@ IMPORT vs RE-DEFINE:
 - NEVER write a comment like "// Assuming Input exists in scope" and then define it locally — either import it or use a plain HTML <input> element
 - If the REQUIREMENT does not mention creating a new Input component, do NOT create one
 
+STRICTLY FORBIDDEN (these will be rejected):
+- NEVER import from a fabricated API module: no \`import { api } from 'src/api'\`, no \`import { api } from '../api'\`, no \`import axios from 'axios'\` unless the REQUIREMENT explicitly names it
+- NEVER add isSubmitting / setIsSubmitting / isLoading / setIsLoading state unless the REQUIREMENT explicitly asks for a loading indicator
+- NEVER call setTimeout, setInterval, or any async delay inside a form handler
+- NEVER call api.post, api.get, fetch(), or axios() unless the REQUIREMENT explicitly specifies an API call
+- The submit handler MUST only read formData and call the onSubmit/onLogin prop — do NOT fabricate network logic
+- NEVER import from react-hook-form: no \`useForm\`, \`register\`, \`Controller\`, \`FormProvider\`, \`FieldValues\`, \`zodResolver\`, \`@hookform/resolvers\`
+  React Hook Form is a completely different library — it is NOT related to Zustand.
+  If the REQUIREMENT says "use Zustand", state comes from: const { field, setField } = useXxxStore();
+  If the REQUIREMENT says "use local state", state comes from: const [value, setValue] = useState('');
+- NEVER call useXxxStore.getState() inside a React component — it bypasses React's render cycle
+  WRONG: useAuthStore.getState().setEmail(value)
+  RIGHT:  const { email, password, setEmail, setPassword, login } = useAuthStore();  ← destructure everything at the top
+
 `;
     }
 
@@ -2897,6 +3485,31 @@ IMPORT vs RE-DEFINE:
         `- NEVER use an internal alias: do NOT write \`const ${componentName}Inner = ...\` then \`export const ${componentName} = ${componentName}Inner\` or \`export const ${componentName} = ${componentName}\`. Export forwardRef directly.\n\n`
       : '';
 
+    // Non-interactive component guard: injected for .tsx files that are NOT interactive controls.
+    // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
+    const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
+    const isNonVisualWrapperTsx = isNonInteractiveTsx
+      && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+    const noForwardRefSection = isNonInteractiveTsx
+      ? `\nCOMPONENT RULES (mandatory):\n` +
+        `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
+        `- Do NOT add .displayName — it is only needed on forwardRef components.\n` +
+        `- Props type: ONLY define a props interface if the component actually accepts external props.\n` +
+        `  If the component takes NO props (e.g. reads everything from a Zustand store), omit props entirely:\n` +
+        `  export const ${componentName} = () => { ... };  ← no interface, no { ...props }\n` +
+        `  If props ARE needed: interface ${componentName}Props { onSubmit?: () => void; className?: string; }\n` +
+        `  NEVER create an empty interface \`interface ${componentName}Props {}\` — that is dead code.\n` +
+        `  NEVER use React.ComponentProps<typeof ${componentName}> — compile error (circular self-reference).\n` +
+        `- Use a plain arrow function. NEVER spread \`...props\` unless there are actual props to forward.\n` +
+        (isNonVisualWrapperTsx
+          ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n` +
+            `- MUST accept and render \`children\`: ({ children }: { children: React.ReactNode }) or React.PropsWithChildren<{}>\n` +
+            `  When authenticated: return <>{children}</>  When unauthenticated: return <Navigate to="/login" /> or equivalent\n` +
+            `  A wrapper that ignores children is broken — it can never render the protected content.\n`
+          : '') +
+        `\n`
+      : '';
+
     // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
     const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
     const hookConstraintSection = isHookTarget
@@ -2907,7 +3520,39 @@ IMPORT vs RE-DEFINE:
         `- RETURN CONTRACT: The return object MUST expose ALL managed state values AND their manipulation functions.\n` +
         `  WRONG: return { increment, decrement, reset }  — hides the count value from the consumer\n` +
         `  RIGHT:  return { count, increment, decrement, reset }  — count is the primary value, always expose it\n` +
-        `  Rule: every piece of state created with useState MUST appear in the return object.\n\n`
+        `  Rule: every piece of state created with useState MUST appear in the return object.\n` +
+        `- MOCK DETERMINISM: NEVER use Math.random(), Date.now(), or any non-deterministic value for auth/permission state\n` +
+        `  A mock auth hook must return predictable results — use a simple boolean constant or read from a Zustand store\n` +
+        `  WRONG: const isAuthenticated = Math.random() > 0.3  — random on every render, causes flickering\n` +
+        `  RIGHT:  const isAuthenticated = true  // or: const { isLoggedIn } = useAuthStore();\n` +
+        `- TIMER LOOPS: NEVER use setInterval or setTimeout to update auth state — auth does not change on a timer\n\n`
+      : '';
+
+    // Zustand store constraint block: injected when the target file is in store/ or stores/
+    const isStoreTarget = /[\\/]store[s]?[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+    const storeConstraintSection = isStoreTarget
+      ? `\nZUSTAND STORE RULES (mandatory — stores are plain state objects, NOT React components):\n` +
+        `- ONLY import: { create } from 'zustand' and TypeScript type definitions\n` +
+        `- NEVER import React, useState, useCallback, useEffect, FormEvent, or any React type — stores have no JSX\n` +
+        `- Use FLAT state: expose each state field and setter directly on the store object\n` +
+        `  WRONG: { state: { email: '', password: '' }, setFormData: (data) => set({ state: data }) }\n` +
+        `  RIGHT:  { email: '', password: '', setEmail: (v) => set({ email: v }), setPassword: (v) => set({ password: v }) }\n` +
+        `- Actions use set() from Zustand, NOT setState() from React\n` +
+        `- NEVER put event handlers (handleSubmit, handleChange, onClick) in the store — they belong in the component\n` +
+        `- Store actions are ONLY state mutations: setEmail, setPassword, reset, etc.\n` +
+        `- Export the hook as: export const useFooStore = create<FooStore>((set) => ({ ... }));\n` +
+        `- NEVER use export default — use named exports only\n\n`
+      : '';
+
+    // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
+    // doesn't import from packages that don't exist in this project.
+    // Only injected for TS/TSX files; no-op when package.json wasn't found.
+    const isTypescriptFile = (step.path.endsWith('.ts') || step.path.endsWith('.tsx'));
+    const availablePackagesSection = (isTypescriptFile && this.availablePackages.length > 0)
+      ? `\nINSTALLED PACKAGES (ONLY import from these — do NOT import from packages not on this list):\n` +
+        `${this.availablePackages.join(', ')}\n` +
+        `- If a package you want isn't listed, use a different approach (e.g. window.location for navigation, built-in React for state)\n` +
+        `- react, react-dom, typescript are always available even if not listed\n\n`
       : '';
 
     // Add instruction to output ONLY code, no explanations
@@ -2918,7 +3563,7 @@ IMPORT vs RE-DEFINE:
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${interactiveComponentSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -2941,13 +3586,20 @@ TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into inte
 - RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
 - Intermediate const variables for single class strings are dead indirection — inline them directly in cn().
 
-Example format (raw code, nothing else):
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+CN() USAGE RULE (mandatory): cn() takes a single base string plus optional conditional arguments — NEVER pass an empty string as an argument.
+- WRONG: className={cn('px-4 py-2', '')}  — the trailing '' is dead noise and fails the bare-string check
+- WRONG: className={cn('', 'px-4 py-2')}  — same problem, empty string as first arg
+- RIGHT: className={cn('px-4 py-2')}  — single string is fine
+- RIGHT: className={cn('px-4 py-2', isActive && 'bg-blue-600', className)}  — conditional booleans are fine
+- IMPORT PATH: always import cn as: import { cn } from '@/utils/cn' (not 'src/utils/cn' — bare paths don't resolve)
 
-const schema = z.object({...});
-export function MyComponent() {...}
+Example format (raw code, nothing else):
+import React from 'react';
+import { cn } from '@/utils/cn';
+
+export const MyComponent = ({ className }: { className?: string }) => {
+  return <div className={cn('p-4', className)}>...</div>;
+};
 
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
@@ -3035,7 +3687,18 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
         if (criticalErrors.length === 0) {
           // ✅ No critical errors - validation passed!
-          // (Soft suggestions are logged but not blocking)
+          // Apply smart cleanup for actionable suggestions (e.g. dead cn import in .tsx)
+          const actionableSuggestions = softSuggestions.filter(
+            s => s.includes('Dead import') && s.includes('cn')
+          );
+          if (actionableSuggestions.length > 0) {
+            const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
+              ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
+              : () => Promise.resolve(null);
+            content = await SmartAutoCorrection.fixCommonPatternsAsync(
+              content, actionableSuggestions, ragResolver, step.path
+            );
+          }
           this.config.onMessage?.(
             `✅ Validation passed for ${step.path}`,
             'info'
@@ -3047,7 +3710,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           let currentContent = content;
           let lastCriticalErrors = criticalErrors;
           let loopDetected = false;
-          const previousErrors: string[] = [];
+          // Loop detection: catch both consecutive-same (A→A) and oscillation (A→B→A) cycles.
+          let previousAttemptErrors: string[] = [];
+          let consecutiveSameErrors = 0;
+          // Sliding window of error fingerprints — detect repeated sets within 3 attempts
+          const recentErrorFingerprints: string[] = [];
 
           while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
             const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
@@ -3057,16 +3724,35 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               'error'
             );
 
-            // LOOP DETECTION: Check if same errors are repeating
-            if (previousErrors.length > 0 && JSON.stringify(lastCriticalErrors.sort()) === JSON.stringify(previousErrors.sort())) {
+            const currentFingerprint = JSON.stringify([...lastCriticalErrors].sort());
+
+            // LOOP DETECTION 1: same errors on consecutive attempts (A→A)
+            if (
+              previousAttemptErrors.length > 0 &&
+              currentFingerprint === JSON.stringify([...previousAttemptErrors].sort())
+            ) {
+              consecutiveSameErrors++;
+            } else {
+              consecutiveSameErrors = 0;
+            }
+            previousAttemptErrors = [...lastCriticalErrors];
+
+            // LOOP DETECTION 2: oscillation within a window of 3 (A→B→A)
+            recentErrorFingerprints.push(currentFingerprint);
+            if (recentErrorFingerprints.length > 3) recentErrorFingerprints.shift();
+            const isOscillating =
+              recentErrorFingerprints.length === 3 &&
+              recentErrorFingerprints[0] === recentErrorFingerprints[2] &&
+              recentErrorFingerprints[0] !== recentErrorFingerprints[1];
+
+            if (consecutiveSameErrors >= 2 || isOscillating) {
               this.config.onMessage?.(
-                `🔄 LOOP DETECTED: Same validation errors appearing again - stopping auto-correction to prevent infinite loop`,
+                `🔄 LOOP DETECTED: Validation errors oscillating — stopping auto-correction to prevent infinite loop`,
                 'error'
               );
               loopDetected = true;
               break;
             }
-            previousErrors.push(...lastCriticalErrors);
 
             // If last attempt, give up
             if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
@@ -3083,6 +3769,24 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
               'info'
             );
+
+            // Fast-path: forwardRef missing displayName is a pure append — no LLM needed.
+            // Pattern: last non-whitespace line is `});` or `});` and component name is known.
+            const displayNameError = lastCriticalErrors.find(e => e.includes('forwardRef missing displayName'));
+            if (displayNameError && lastCriticalErrors.length === 1) {
+              const compNameMatch = displayNameError.match(/Add `(\w+)\.displayName/);
+              if (compNameMatch) {
+                const compName = compNameMatch[1];
+                const patched = currentContent.trimEnd() + `\n${compName}.displayName = '${compName}';\n`;
+                const patchValidation = await this.validateGeneratedCode(step.path, patched, step, acceptanceCriteria);
+                const { critical: patchCritical } = this.filterCriticalErrors(patchValidation.errors, false);
+                if (patchCritical.length === 0) {
+                  currentContent = patched;
+                  lastCriticalErrors = [];
+                  break;
+                }
+              }
+            }
 
             // ✅ FIX: Only pass CRITICAL errors to auto-correction, not soft suggestions
             const canAutoFix = SmartAutoCorrection.isAutoFixable(lastCriticalErrors);
@@ -3101,40 +3805,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 currentContent, lastCriticalErrors, ragResolver, step.path
               );
 
-              // 🔴 CRITICAL: Try Zustand mismatch fix if component imports from stores
-              let zustandFixed = smartFixed;
-              if (smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/) && lastCriticalErrors.some(e => e.includes('Zustand'))) {
-                this.config.onMessage?.(
-                  `🛠️ Attempting Zustand-specific fix (matching component to store exports)...`,
-                  'info'
-                );
-                
-                // Try to find and read the store file
-                const storeImportMatch = smartFixed.match(/from\s+['"]([^'\"]*stores[^'\"]*)['\"]/);
-                if (storeImportMatch) {
-                  const storeImportPath = storeImportMatch[1];
-                  const storeFilePath = vscode.Uri.joinPath(workspaceUri, storeImportPath.replace(/^\.\//, 'src/').replace(/^\.\.\//, ''));
-                  
-                  try {
-                    const storeData = await vscode.workspace.fs.readFile(storeFilePath);
-                    const storeCode = new TextDecoder().decode(storeData);
-                    zustandFixed = SmartAutoCorrection.fixZustandComponentFromStore(smartFixed, storeCode);
-                    
-                    if (zustandFixed !== smartFixed) {
-                      this.config.onMessage?.(
-                        `✅ Applied Zustand mismatch fix`,
-                        'info'
-                      );
-                    }
-                  } catch (storeReadErr) {
-                    // Store file not found yet - will be created in later step
-                    console.warn('[Executor] Store file not yet available for Zustand mismatch fix');
-                  }
-                }
-              }
-
               // Validate the fixed code - only check CRITICAL errors
-              const smartValidation = await this.validateGeneratedCode(step.path, zustandFixed, step, acceptanceCriteria);
+              const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step, acceptanceCriteria);
               const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
                 smartValidation.errors,
                 false // Don't spam logs during auto-correction
@@ -3153,7 +3825,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                     'info'
                   );
                 }
-                correctedContent = zustandFixed;
+                correctedContent = smartFixed;
               } else {
                 // ❌ Smart fix didn't fully work, fall back to LLM with ONLY CRITICAL ERRORS
                 this.config.onMessage?.(
@@ -3167,11 +3839,15 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   if (e.includes('Hook') && e.includes('imported but never called')) {
                     const hookMatch = e.match(/Hook '(\w+)'/);
                     const hookName = hookMatch ? hookMatch[1] : 'hook';
-                    return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR use the hook. If using the hook, call it like: const [state, setState] = ${hookName}(initialValue);`;
+                    // Zustand stores return objects (destructure), not [state, setter] tuples
+                    const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
+                      ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
+                      : `const value = ${hookName}();`;
+                    return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
                   }
                   return `${i + 1}. ${e}`;
                 }).join('\n');
-                
+
                 const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
@@ -3198,7 +3874,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 if (e.includes('Hook') && e.includes('imported but never called')) {
                   const hookMatch = e.match(/Hook '(\w+)'/);
                   const hookName = hookMatch ? hookMatch[1] : 'hook';
-                  return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR use the hook. If using the hook, call it like: const [state, setState] = ${hookName}(initialValue);`;
+                  // Zustand stores return objects (destructure), not [state, setter] tuples
+                  const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
+                    ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
+                    : `const value = ${hookName}();`;
+                  return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
                 }
                 return `${i + 1}. ${e}`;
               }).join('\n');

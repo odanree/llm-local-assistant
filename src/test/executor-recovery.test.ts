@@ -615,12 +615,13 @@ export const Button = () => {
         // Ignore other errors
       }
 
-      // Verify LLM was called with formatted error including ACTION
-      expect(mockLLMClient.sendMessage).toHaveBeenCalled();
-      const llmCall = mockLLMClient.sendMessage.mock.calls[0]?.[0];
-      // Should include ACTION guidance for the hook error (or at least be called)
-      if (llmCall) {
-        expect(llmCall).toMatch(/ACTION|Remove|use the hook|hook|error/i);
+      // Verify LLM was called at least twice: once for generation, once for correction
+      expect(mockLLMClient.sendMessage).toHaveBeenCalledTimes(2);
+      // calls[0] = initial generation prompt, calls[1] = correction prompt with error guidance
+      const correctionPrompt = mockLLMClient.sendMessage.mock.calls[1]?.[0];
+      // The correction prompt should include ACTION guidance for the hook error
+      if (correctionPrompt) {
+        expect(correctionPrompt).toMatch(/ACTION|Remove|use the hook|hook|error/i);
       }
     });
 

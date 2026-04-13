@@ -692,7 +692,25 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   // Find all namespace.method() patterns — (?<!\.) excludes chained access like foo.bar.baz()
                   const namespaceUsages = new Set<string>();
                   generatedContent.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match: string, namespace: string) => {
-                    const globalKeywords = ['console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date', 'window', 'document', 'this', 'super', 'event', 'e', 'err', 'error', 'ev'];
+                    const globalKeywords = [
+                      // JS built-ins
+                      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'Boolean',
+                      'JSON', 'Date', 'Promise', 'Symbol', 'Map', 'Set', 'WeakMap', 'WeakSet',
+                      'Error', 'TypeError', 'RegExp', 'Function',
+                      // Browser Web APIs
+                      'window', 'document', 'navigator', 'location', 'history', 'screen',
+                      'localStorage', 'sessionStorage', 'indexedDB', 'crypto',
+                      'fetch', 'XMLHttpRequest', 'WebSocket',
+                      'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+                      'requestAnimationFrame', 'cancelAnimationFrame',
+                      'URL', 'URLSearchParams', 'FormData', 'Blob', 'CustomEvent', 'Event',
+                      // Node.js globals
+                      'process', 'Buffer', 'global',
+                      // OOP keywords
+                      'this', 'super',
+                      // Common parameter names
+                      'event', 'e', 'err', 'error', 'ev',
+                    ];
                     if (!globalKeywords.includes(namespace) && !localNames.has(namespace)) {
                       namespaceUsages.add(namespace);
                     }
@@ -1215,91 +1233,6 @@ Keep the response focused and practical.`;
                 chatPanel?.webview.postMessage({
                   command: 'addMessage',
                   error: `Error reading file: ${relPath}\nReason: ${errorDetail}`,
-                  success: false,
-                });
-              }
-              return;
-            }
-
-            // Check for /suggestwrite command
-            const suggestwriteMatch = text.match(/\/suggestwrite\s+(\S+)(?:\s+(.+))?$/);
-
-            // AGENT MODE: /suggestwrite <path> [prompt]
-            if (suggestwriteMatch) {
-              const relPath = suggestwriteMatch[1];
-              const prompt: string = (suggestwriteMatch[2] || 'Generate appropriate content for this file based on its name.').trim();
-              
-              chatPanel?.webview.postMessage({
-                command: 'status',
-                text: `Generating content for ${relPath}...`,
-                type: 'info',
-              });
-
-              try {
-                const endpoint: string = llmClient["config"].endpoint;
-                const isOllamaNonDefaultPort = endpoint.includes("127.0.0.1:9000") || endpoint.includes("localhost:9000");
-                let generatedContent = '';
-
-                if (isOllamaNonDefaultPort) {
-                  // Use non-streaming response
-                  const response = await llmClient.sendMessage(prompt);
-                  if (response.success) {
-                    generatedContent = response.message || '';
-                  } else {
-                    throw new Error(response.error);
-                  }
-                } else {
-                  // Use streaming response - collect all tokens
-                  const response = await llmClient.sendMessageStream(
-                    prompt,
-                    async (token: string, complete: boolean) => {
-                      if (!complete && token) {
-                        generatedContent += token;
-                      }
-                    }
-                  );
-                  if (!response.success) {
-                    throw new Error(response.error);
-                  }
-                }
-
-                const confirm = await vscode.window.showInformationMessage(
-                  `LLM suggests writing to ${relPath}. Preview:\n\n${generatedContent.substring(0, 200)}${generatedContent.length > 200 ? '...' : ''}\n\nProceed?`,
-                  { modal: true },
-                  'Yes',
-                  'No'
-                );
-
-                if (confirm === 'Yes') {
-                  const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-                  if (!wsFolder) {throw new Error('No workspace folder open.');}
-                  const fileUri = vscode.Uri.joinPath(wsFolder, relPath);
-
-                  // Create parent directories if they don't exist
-                  const dirUri = vscode.Uri.joinPath(fileUri, '..');
-                  try {
-                    await vscode.workspace.fs.createDirectory(dirUri);
-                  } catch (e) {
-                    // Directory might already exist, that's ok
-                  }
-
-                  await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(generatedContent));
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    text: `✨ Successfully wrote file: ${relPath}`,
-                    success: true,
-                  });
-                } else {
-                  chatPanel?.webview.postMessage({
-                    command: 'addMessage',
-                    error: `User cancelled writing to file: ${relPath}`,
-                    success: false,
-                  });
-                }
-              } catch (err) {
-                chatPanel?.webview.postMessage({
-                  command: 'addMessage',
-                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }

@@ -401,6 +401,105 @@ describe('Executor - Private Methods (TIER 1)', () => {
         expect(Array.isArray(result)).toBe(true);
       }
     );
+
+    it('should flag bare-path cn import (src/utils/cn)', () => {
+      const content = `import { cn } from 'src/utils/cn';\nexport function Comp() { return <div className={cn('p-4')} />; }`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/Comp.tsx');
+      expect(result.some(e => e.includes('src/utils/cn') && e.includes('Import path'))).toBe(true);
+    });
+
+    it('should accept valid cn import paths (@/utils/cn and relative)', () => {
+      const aliasContent = `import { cn } from '@/utils/cn';\nexport function Comp() { return <div className={cn('p-4')} />; }`;
+      const relContent = `import { cn } from '../utils/cn';\nexport function Comp() { return <div className={cn('p-4')} />; }`;
+      const aliasResult = executor['validateCommonPatterns'](aliasContent, 'src/components/Comp.tsx');
+      const relResult = executor['validateCommonPatterns'](relContent, 'src/components/Comp.tsx');
+      expect(aliasResult.some(e => e.includes('Import path') && e.includes('cn'))).toBe(false);
+      expect(relResult.some(e => e.includes('Import path') && e.includes('cn'))).toBe(false);
+    });
+
+    it('should flag self-referential forwardRef: export const X = forwardRef(X)', () => {
+      const content = `
+import React, { forwardRef } from 'react';
+import { cn } from '@/utils/cn';
+const LoginForm: React.FC = () => { return <form />; };
+export const LoginForm = forwardRef<HTMLFormElement, {}>(LoginForm);
+LoginForm.displayName = 'LoginForm';
+      `.trim();
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Self-referential forwardRef'))).toBe(true);
+    });
+
+    it('should flag hook called inside JSX prop (Rules of Hooks violation)', () => {
+      const content = `
+import { cn } from '@/utils/cn';
+import { useFormStore } from '../store/useFormStore';
+export function LoginForm() {
+  return <input value={useFormStore((s) => s.email)} onChange={() => {}} />;
+}
+      `.trim();
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Rules of Hooks violation'))).toBe(true);
+    });
+
+    it('should flag invalid import with generic syntax in braces', () => {
+      const content = `import React, { FormEvent, FormEvent<HTMLFormElement> } from 'react';\nexport function C() { return <div />; }`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/C.tsx');
+      expect(result.some(e => e.includes('Invalid import syntax'))).toBe(true);
+    });
+
+    it('should flag fabricated package.json import in .ts file', () => {
+      const content = `import { package.json } from '../../package.json';\nimport { create } from 'zustand';\nexport const useStore = create(() => ({}));`;
+      const result = executor['validateCommonPatterns'](content, 'src/store/useStore.ts');
+      expect(result.some(e => e.includes('Fabricated JSON import'))).toBe(true);
+    });
+
+    it('should flag fabricated package.json import in .tsx file', () => {
+      const content = `import { package.json } from '../../package.json';\nimport React from 'react';\nexport const Comp = () => <div />;`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/Comp.tsx');
+      expect(result.some(e => e.includes('Fabricated JSON import'))).toBe(true);
+    });
+
+    it('should flag self-referential ComponentProps<typeof X> inside X definition', () => {
+      const content = `import React from 'react';
+export const LoginForm = (props: React.ComponentProps<typeof LoginForm>) => {
+  return <form>{props.children}</form>;
+};`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Self-referential ComponentProps'))).toBe(true);
+    });
+
+    it('should NOT flag ComponentProps<typeof OtherComponent> in a different component', () => {
+      const content = `import React from 'react';
+import { Button } from './Button';
+export const Wrapper = (props: React.ComponentProps<typeof Button>) => {
+  return <Button {...props} />;
+};`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/Wrapper.tsx');
+      expect(result.some(e => e.includes('Self-referential ComponentProps'))).toBe(false);
+    });
+
+    it('should flag malformed JSX attribute with 9 consecutive double-quotes', () => {
+      // T3R-v12/v13: LLM generates placeholder=""""""""" (9 quotes) — JavaScript parse error
+      const content = `import React from 'react';
+export const LoginForm = () => (
+  <form>
+    <input type="email" placeholder=""""""""" />
+  </form>
+);`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Malformed JSX attribute value'))).toBe(true);
+    });
+
+    it('should NOT flag a normal JSX attribute with a single double-quoted value', () => {
+      const content = `import React from 'react';
+export const LoginForm = () => (
+  <form>
+    <input type="email" placeholder="Enter your email" />
+  </form>
+);`;
+      const result = executor['validateCommonPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('Malformed JSX attribute value'))).toBe(false);
+    });
   });
 
   // ============================================================
@@ -482,6 +581,16 @@ describe('Executor - Private Methods (TIER 1)', () => {
         expect(Array.isArray(result)).toBe(true);
       }
     );
+
+    it('should flag handler annotated as FormEvent (event type, not function type)', () => {
+      const content = `import React, { FormEvent } from 'react';
+export const LoginForm = () => {
+  const handleSubmit: FormEvent<HTMLFormElement> = async (e) => { e.preventDefault(); };
+  return <form onSubmit={handleSubmit}></form>;
+};`;
+      const result = executor['validateFormComponentPatterns'](content, 'src/components/LoginForm.tsx');
+      expect(result.some(e => e.includes('FormEvent<') && e.includes('compile error'))).toBe(true);
+    });
   });
 
   // ============================================================

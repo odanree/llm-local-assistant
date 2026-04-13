@@ -136,6 +136,36 @@ describe('Phase 10D: ArchitectureValidator Deep Branch Coverage', () => {
 
       expect(result.violations.filter(v => v.type === 'missing-export').length).toBeGreaterThan(0);
     });
+
+    it('should skip JSON files — no violations for relative traversal to package.json', async () => {
+      // Regression: Zustand store docs that traverse ../../package.json were firing
+      // "Symbol 'package.json' not found in '/package.json'" — a false positive.
+      const storeCode = `
+        // See ../../package.json for zustand dependency
+        import { create } from 'zustand';
+        interface LoginFormState { email: string; password: string; }
+        export const useLoginFormStore = create<LoginFormState>()((set) => ({
+          email: '',
+          password: '',
+          setEmail: (email: string) => set({ email }),
+          setPassword: (password: string) => set({ password }),
+        }));
+      `;
+
+      const result = await validator.validateCrossFileContract(
+        storeCode,
+        'src/store/useLoginFormStore.ts',
+        { fsPath: '/project' } as any,
+        new Map()
+      );
+
+      // create from 'zustand' is an npm package → skipped
+      // No JSON-path violations should appear
+      const jsonViolations = result.violations.filter(v =>
+        v.message.includes('package.json') || v.suggestion?.includes('package.json')
+      );
+      expect(jsonViolations).toHaveLength(0);
+    });
   });
 
   // =========================================================================
@@ -947,6 +977,130 @@ describe('Phase 10D: ArchitectureValidator Deep Branch Coverage', () => {
 
       // Should extract properties from store
       expect(violations.length).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should NOT fire "missing import" for a hook that is defined/exported by the same file', async () => {
+      // A Zustand store file exports useFormStore — the customHookCallRegex should not
+      // treat that exported name as a "called but not imported" hook.
+      const storeCode = `
+        import { create } from 'zustand';
+
+        interface LoginFormState {
+          email: string;
+          password: string;
+          setEmail: (email: string) => void;
+          setPassword: (password: string) => void;
+        }
+
+        export const useFormStore = create<LoginFormState>((set) => ({
+          email: '',
+          password: '',
+          setEmail: (email) => set({ email }),
+          setPassword: (password) => set({ password }),
+        }));
+      `;
+
+      const violations = await validator.validateHookUsage(storeCode, 'src/store/useFormStore.ts');
+
+      // Must not fire "Missing import: useFormStore is used but not imported"
+      const falsePositive = violations.find(v =>
+        v.message.includes('useFormStore') && v.message.includes('not imported')
+      );
+      expect(falsePositive).toBeUndefined();
+    });
+
+    it('should flag unused useState when Zustand store hook is active', async () => {
+      // After Zustand refactor, useState import left behind is a dead import
+      const componentCode = `
+        import React, { useState } from 'react';
+        import { useFormStore } from '../store/useFormStore';
+
+        export function LoginForm() {
+          const { email, password, setEmail, setPassword } = useFormStore();
+          const handleSubmit = (e: React.FormEvent) => {
+            e.preventDefault();
+            if (!email.includes('@')) return;
+          };
+          return <form onSubmit={handleSubmit}><input value={email} /></form>;
+        }
+      `;
+
+      const violations = await validator.validateHookUsage(
+        componentCode,
+        'src/components/LoginForm.tsx',
+        new Map([['src/store/useFormStore.ts', `
+          export const useFormStore = create<any>((set) => ({
+            email: '', password: '',
+            setEmail: (email: string) => set({ email }),
+            setPassword: (password: string) => set({ password }),
+          }));
+        `]])
+      );
+
+      // Should flag the dead useState import
+      const deadImport = violations.find(v => v.message.includes('useState') && v.message.includes('Unused'));
+      expect(deadImport).toBeDefined();
+    });
+
+    it('should NOT false-positive on resetForm when store uses split interfaces (State + Actions)', async () => {
+      // Root cause: old arrowFunctionRegex used [^}]+ which stopped at the first } inside
+      // `setEmail: (email) => set({ email })`, so resetForm was never captured in storeProps.
+      // Fix: Strategy 0 extracts props from TypeScript interfaces; Strategy 1 uses brace-balanced extraction.
+      const componentCode = `
+        import { useFormStore } from '../store/useFormStore';
+        import { cn } from '@/utils/cn';
+        import React, { FormEvent } from 'react';
+
+        export const LoginForm = () => {
+          const { email, password, setEmail, setPassword, resetForm } = useFormStore();
+          const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+            e.preventDefault();
+            resetForm();
+          };
+          return (
+            <form onSubmit={handleSubmit}>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input value={password} onChange={(e) => setPassword(e.target.value)} />
+              <button type="submit" className={cn('btn')}>Login</button>
+            </form>
+          );
+        };
+      `;
+
+      const storeCode = `
+        import { create } from 'zustand';
+
+        interface LoginFormState {
+          email: string;
+          password: string;
+        }
+
+        interface LoginFormActions {
+          setEmail: (email: string) => void;
+          setPassword: (password: string) => void;
+          resetForm: () => void;
+        }
+
+        export const useFormStore = create<LoginFormState & LoginFormActions>((set) => ({
+          email: '',
+          password: '',
+          setEmail: (email) => set({ email }),
+          setPassword: (password) => set({ password }),
+          resetForm: () => set({ email: '', password: '' }),
+        }));
+      `;
+
+      const violations = await validator.validateHookUsage(
+        componentCode,
+        'src/components/LoginForm.tsx',
+        new Map([['src/store/useFormStore.ts', storeCode]])
+      );
+
+      // Must NOT fire "resetForm destructured but NOT in store" — it IS in the store
+      const falsePositive = violations.find(v =>
+        v.message.includes('resetForm') && v.message.includes('NOT in store')
+      );
+      expect(falsePositive).toBeUndefined();
     });
   });
 

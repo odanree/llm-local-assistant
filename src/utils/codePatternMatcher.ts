@@ -362,9 +362,16 @@ export function findImportAndSyntaxIssuesPure(
   const localVariables = new Set<string>();
 
   // Helper: extract param names from "email: string, password: string"
+  // Handles: plain params, typed params, rest spread (...props), destructured ({ onSubmit, ...rest })
   const addParamsCPM = (params: string) => {
     params.split(',').forEach((p: string) => {
-      const name = p.trim().split(/[:\s=<(]/)[0].trim();
+      const trimmed = p.trim();
+      // Rest/spread param: ...props → extract "props"
+      const restMatch = trimmed.match(/^\.\.\.(\w+)/);
+      if (restMatch) { localVariables.add(restMatch[1]); return; }
+      // Strip leading { from object destructuring: "{ onSubmit" → "onSubmit"
+      const stripped = trimmed.startsWith('{') ? trimmed.slice(1).trim() : trimmed;
+      const name = stripped.split(/[:\s=<(]/)[0].trim();
       if (name && /^[a-zA-Z_$]/.test(name)) { localVariables.add(name); }
     });
   };
@@ -403,8 +410,24 @@ export function findImportAndSyntaxIssuesPure(
   const namespaceUsages = new Set<string>();
   code.replace(/(?<!\.|\w)(\w+)\.\w+\s*[\(\{]/g, (match, namespace) => {
     const globalKeywords = [
-      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'JSON', 'Date',
-      'window', 'document', 'this', 'super',
+      // JS built-ins
+      'console', 'Math', 'Object', 'Array', 'String', 'Number', 'Boolean',
+      'JSON', 'Date', 'Promise', 'Symbol', 'Map', 'Set', 'WeakMap', 'WeakSet',
+      'Error', 'TypeError', 'RangeError', 'SyntaxError', 'RegExp', 'Function',
+      'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+      // Browser Web APIs (NOT importable — they are globals on window)
+      'window', 'document', 'navigator', 'location', 'history', 'screen',
+      'localStorage', 'sessionStorage', 'indexedDB', 'crypto',
+      'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource',
+      'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+      'requestAnimationFrame', 'cancelAnimationFrame',
+      'MutationObserver', 'IntersectionObserver', 'ResizeObserver',
+      'URL', 'URLSearchParams', 'FormData', 'Blob', 'File', 'FileReader',
+      'CustomEvent', 'Event',
+      // Node.js globals
+      'process', 'Buffer', 'global', '__dirname', '__filename',
+      // OOP keywords
+      'this', 'super',
       // Common event/error parameter names
       'event', 'e', 'err', 'error', 'ev',
     ];

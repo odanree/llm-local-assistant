@@ -128,13 +128,44 @@ export const Dashboard = () => {
       filePath: 'src/components/Dashboard.tsx',
       content: `import React from 'react';
 import { useUserStore } from '../stores/useUserStore';
-const Dashboard = () => {
+export const Dashboard = () => {
   const { name, email } = useUserStore();
   return <div>{name} {email}</div>;
-};
-export default Dashboard;`,
+};`,
       expected: { valid: true, errorCount: 0 },
       desc: 'Should accept proper Zustand destructuring pattern',
+    },
+
+    // ========== CN() USAGE CHECKS ==========
+    {
+      name: 'cn(): flag bare string className when cn() is imported',
+      filePath: 'src/components/Card.tsx',
+      content: `import React from 'react';
+import { cn } from '@/utils/cn';
+export const Card = ({ children }: { children: React.ReactNode }) => {
+  return (
+    <div className={cn('rounded-lg border p-4')}>
+      <button className="bg-blue-600 text-white px-4 py-2 rounded">{children}</button>
+    </div>
+  );
+};`,
+      expected: { valid: false, errorCount: 1 },
+      desc: 'Should flag bare string className on button when cn() is imported',
+    },
+    {
+      name: 'cn(): accept all classNames through cn()',
+      filePath: 'src/components/Card.tsx',
+      content: `import React from 'react';
+import { cn } from '@/utils/cn';
+export const Card = ({ children }: { children: React.ReactNode }) => {
+  return (
+    <div className={cn('rounded-lg border p-4')}>
+      <button className={cn('bg-blue-600 text-white px-4 py-2 rounded')}>{children}</button>
+    </div>
+  );
+};`,
+      expected: { valid: true, errorCount: 0 },
+      desc: 'Should accept all classNames routed through cn()',
     },
 
     // ========== CROSS-FILE CONTRACT VIOLATIONS ==========
@@ -158,6 +189,31 @@ export const useUserStore = create<UserState>((set) => ({
 }));`,
       expected: { valid: true, errorCount: 0 },
       desc: 'Should accept store with proper interface and implementation',
+    },
+
+    // ========== ZUSTAND FORM — PATTERN 1 SKIP ==========
+    {
+      name: 'Pattern 1 skip: Zustand form has no local state interface',
+      filePath: 'src/components/LoginForm.tsx',
+      content: `import React, { FormEventHandler } from 'react';
+import { cn } from '@/utils/cn';
+import { useLoginFormStore } from '@/store/useLoginFormStore';
+export function LoginForm() {
+  const { email, password, setEmail, setPassword } = useLoginFormStore();
+  const handleSubmit: FormEventHandler<HTMLFormElement> = (e) => {
+    e.preventDefault();
+    if (!email.includes('@')) return;
+  };
+  return (
+    <form onSubmit={handleSubmit}>
+      <input name="email" value={email} onChange={(e) => setEmail(e.target.value)} className={cn('input')} />
+      <input name="password" value={password} onChange={(e) => setPassword(e.target.value)} className={cn('input')} />
+      <button type="submit" className={cn('btn-primary')}>Login</button>
+    </form>
+  );
+}`,
+      expected: { valid: true, errorCount: 0 },
+      desc: 'Should skip Pattern 1 (missing state interface) when form imports from a Zustand store',
     },
   ];
 

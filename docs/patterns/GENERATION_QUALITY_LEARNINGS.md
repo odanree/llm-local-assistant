@@ -269,3 +269,45 @@ These benchmarks are used to assess generation quality consistently:
 - v20: First 10/10 on Test #2 (useCounter + Counter multi-file)
 - v28: First 10/10 plan (1 step) + first-pass clean execution for Test #1
 - v30: First 10/10 execution for Test #2 on run 2 after hook return contract fix
+
+---
+
+## 16. Fabricated Import Prefixes Bypass Incomplete Validators
+
+**Symptom (T3R, run 1):** LLM generated `import { api } from 'src/api'`. The integration validator reported `✅` and no `❌` was emitted. `src/api.ts` does not exist.
+
+**Root cause:** The import regex only matched two prefix styles: `@/` (alias) and `./`/`../` (relative). `src/api` begins with neither, so it was never captured. The disk check never ran.
+
+**Fix:** Extended the regex to a third alternative: `src\/[^'"]+`. Added a resolver branch that strips the `src/` prefix (`rawPath.slice(4)`) and runs the same disk check as `@/` aliases. Regression test uses a plain `.ts` file (not `.tsx`) — per-step JSX validators don't run on `.ts` files, so the integration validator result is unambiguous.
+
+**Rule:** A validator that covers "some import prefixes" is not a path validator — it's a filter with a bypass. After each new fabrication pattern, add the new prefix to the regex and write a regression test. The set of valid import prefixes in TypeScript is small and known; the validator should cover all of them.
+
+**File:** `src/executor.ts` — integration validator import regex; `src/executor-integration-consolidated.test.ts` — `src/api` regression test
+
+**See:** [F8 in LEARNINGS.md](../LEARNINGS.md#f8-fabricated-bare-import-bypassed-integration-validator)
+
+---
+
+## 17. READ Step Context Must Flow to Downstream WRITE Steps
+
+**Symptom (T3R, run 1):** Plan: READ `authStore.ts` → WRITE `LoginFormRefactor.tsx`. The generated component imported from `@/store/authStore` (singular path, wrong) and called `authStore.getUser()` (fabricated method). Real export: `export default useAuthStore` (Zustand hook, state destructured).
+
+**Root cause:** `executeRead` stored `"Read stores/authStore.ts (847 bytes)"` in `StepResult.output`. `buildGenerationPrompt` built multi-step context from `prevResult.output` — the summary contained no file content. The generation prompt for the WRITE step had no information about the store's actual exports. The LLM guessed.
+
+**Fix (two layers):**
+1. `executeRead` stores raw file content in `output`; byte-count summary routed to `onMessage` for UI display only
+2. `buildGenerationPrompt` collects READ step outputs (filtered by `isSummary` guard for backward compat), injects them as an `EXISTING CODEBASE` section immediately before import rules, capped at 1500 chars per file
+
+**Prompt injection format:**
+```
+EXISTING CODEBASE (files you must integrate with — match their export style exactly):
+--- examples/src/stores/authStore.ts ---
+<actual file content>
+---
+```
+
+**Rule:** If a plan step READs a file, that content must reach the next generation prompt. A byte-count summary in `output` is not context — it's noise. The `output` field for READ steps exists to carry file content to downstream prompts; anything else in that field defeats the purpose of the READ step entirely.
+
+**File:** `src/executor.ts` — `executeRead` (output = content), `buildGenerationPrompt` (readStepContents injection)
+
+**See:** [F10 in LEARNINGS.md](../LEARNINGS.md#f10-read-step-content-not-propagated-to-write-step), [ADR-006](../adr/ADR-006-read-step-context-injection.md)

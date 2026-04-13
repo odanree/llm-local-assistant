@@ -16,7 +16,7 @@
  *
  * CRITICAL: Planner is constrained to Executor's action types.
  * - Valid actions: read, write, run, delete
- * - Invalid actions: analyze, review, suggestwrite (do these in planning, not execution)
+ * - Invalid actions: analyze, review (do these in planning, not execution)
  * - Schema enforcement: Prevents Interface Drift between modules
  */
 
@@ -417,7 +417,9 @@ BENEFIT OF DECOUPLING:
    - WRONG: Step 4: read, Path: "manual verification", Command: "Test button in browser"
    - RIGHT: Add to plan summary: "Manual verification: Test button in browser after execution"
 
-3. **READ IS FOR EXISTING ONLY**: Only use READ if you are refactoring a file that already exists in the provided context.
+3. **READ IS FOR EXISTING FILES**: Use READ when (a) refactoring a file that already exists, OR (b) a WRITE step needs to import from an EXISTING file whose API must be known first.
+   - DEPENDENCY READ: if the request says "using the existing X" or "integrating with X" and X is an existing file (store, hook, module), add READ X immediately BEFORE the WRITE step that imports it
+   - Example: "using the existing authStore" → Step 1: READ src/stores/authStore.ts, Step 2: WRITE the new component
    - READ = File must exist before this step
    - WRITE = File is being created or modified
    - If unsure whether file exists, default to WRITE (executor will handle it)
@@ -453,12 +455,48 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
+- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils)
+  WRONG: src/Routes.ts (contains JSX) → RIGHT: src/Routes.tsx
+  WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
+  Routing files, app entry, layouts, pages, and wrappers almost always need .tsx
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
 - If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
 - If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
 - Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
+
+DELIVERABLE COMPLETENESS RULE (CRITICAL — check this first):
+The user's request names what they want created. That EXACT artifact MUST appear as a WRITE step.
+A step description that mentions a file is NOT the same as a WRITE step for that file.
+- "create a ProtectedRoute wrapper that checks a mockAuth service"
+  → MUST have: WRITE src/components/ProtectedRoute.tsx  (primary deliverable)
+  → MUST have: WRITE src/services/mockAuth.ts  (prerequisite)
+  → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
+  → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
+- "create a Button component with variants" → MUST have: WRITE src/components/Button.tsx
+- Rule: if the deliverable is mentioned in a description but has no WRITE step — the plan is incomplete
+
+STEP DESCRIPTION VOCABULARY (MANDATORY):
+- In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
+  These are react-hook-form library terms — do NOT use them to describe Zustand state management
+- If the task involves a form that reads state from a Zustand store, write:
+  "reads email, password from useAuthStore; calls login() on submit" — NOT "useForm (Zustand)"
+- "useForm" is a react-hook-form hook. Zustand stores use "useXxxStore" (e.g. useAuthStore, useUserStore)
+
+PROTECTED ROUTE PATTERN (applies when request mentions "protected route", "route guard", "auth check", "redirect to /login"):
+A protected route checks whether the user IS ALREADY AUTHENTICATED — it does NOT re-validate credentials.
+- The auth service/hook must check session state: isAuthenticated() → boolean, or getToken() → string | null
+  WRONG: authenticateUser(username, password) — that's a LOGIN function, not a session check
+  RIGHT: isAuthenticated(): boolean — reads a stored flag (e.g. localStorage, cookie, or Zustand isLoggedIn)
+  RIGHT: getToken(): string | null — returns current session token from storage
+- NEVER design the service to accept username/password arguments — there are no credentials at route-check time
+- The component checks auth status, shows loading while checking, then either renders children or navigates to /login
+- If an existing authStore is in scope (e.g. EXISTING CODEBASE has authStore.ts), read isLoggedIn from it directly
+- MOCK DEFAULT VALUE: The mock auth service MUST return false by default (unauthenticated state).
+  WRONG: return true  ← redirect never fires; ProtectedRoute is invisible and untestable
+  RIGHT:  return false ← redirect fires on load; demonstrates the guard works
+  Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 📌 ALL components must:
@@ -480,7 +518,9 @@ ${contextSection}
    - WRONG: Step 4: read, Path: "manual verification", Command: "Test button in browser"
    - RIGHT: Add to plan summary: "Manual verification: Test button in browser after execution"
 
-3. **READ IS FOR EXISTING ONLY**: Only use READ if you are refactoring a file that already exists in the provided context.
+3. **READ IS FOR EXISTING FILES**: Use READ when (a) refactoring a file that already exists, OR (b) a WRITE step needs to import from an EXISTING file whose API must be known first.
+   - DEPENDENCY READ: if the request says "using the existing X" or "integrating with X" and X is an existing file (store, hook, module), add READ X immediately BEFORE the WRITE step that imports it
+   - Example: "using the existing authStore" → Step 1: READ src/stores/authStore.ts, Step 2: WRITE the new component
    - READ = File must exist before this step
    - WRITE = File is being created or modified
    - If unsure whether file exists, default to WRITE (executor will handle it)
@@ -516,12 +556,62 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
+- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils)
+  WRONG: src/Routes.ts (contains JSX) → RIGHT: src/Routes.tsx
+  WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
+  Routing files, app entry, layouts, pages, and wrappers almost always need .tsx
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
 - If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
 - If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
 - Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
+
+DELIVERABLE COMPLETENESS RULE (CRITICAL — check this first):
+The user's request names what they want created. That EXACT artifact MUST appear as a WRITE step.
+A step description that mentions a file is NOT the same as a WRITE step for that file.
+
+- "create a ProtectedRoute wrapper that checks a mockAuth service"
+  → MUST have: WRITE src/components/ProtectedRoute.tsx  (primary deliverable)
+  → MUST have: WRITE src/services/mockAuth.ts  (prerequisite)
+  → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
+  → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
+
+- "create a Button component with variants"
+  → MUST have: WRITE src/components/Button.tsx  (primary deliverable)
+
+- "refactor LoginForm to use Zustand"
+  → MUST have: WRITE (or READ+WRITE) for the LoginForm file
+
+Rule: if the deliverable is described as a dependency ("which X will use", "that Y imports") but not as its own WRITE step — the plan is incomplete. Add the WRITE step.
+
+PREREQUISITE FILE RULE (CRITICAL):
+If a WRITE step will import from a NEW file that does NOT exist in the EXISTING CODEBASE above, that new file MUST have its own WRITE step EARLIER in this plan.
+- WRONG: Step 1: WRITE LoginForm.tsx (imports useFormStore) — useFormStore doesn't exist yet
+- RIGHT: Step 1: WRITE src/store/useFormStore.ts, Step 2: WRITE src/components/LoginForm.tsx
+This applies to any new module: state stores, custom hooks, utility files, etc.
+Never write a file that imports a module you haven't written yet in this same plan.
+
+STEP DESCRIPTION VOCABULARY (MANDATORY):
+- In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
+  These are react-hook-form library terms — do NOT use them to describe Zustand state management
+- If the task involves a form that reads state from a Zustand store, write:
+  "reads email, password from useAuthStore; calls login() on submit" — NOT "useForm (Zustand)"
+- "useForm" is a react-hook-form hook. Zustand stores use "useXxxStore" (e.g. useAuthStore, useUserStore)
+
+PROTECTED ROUTE PATTERN (applies when request mentions "protected route", "route guard", "auth check", "redirect to /login"):
+A protected route checks whether the user IS ALREADY AUTHENTICATED — it does NOT re-validate credentials.
+- The auth service/hook must check session state: isAuthenticated() → boolean, or getToken() → string | null
+  WRONG: authenticateUser(username, password) — that's a LOGIN function, not a session check
+  RIGHT: isAuthenticated(): boolean — reads a stored flag (e.g. localStorage, cookie, or Zustand isLoggedIn)
+  RIGHT: getToken(): string | null — returns current session token from storage
+- NEVER design the service to accept username/password arguments — there are no credentials at route-check time
+- The component checks auth status, shows loading while checking, then either renders children or navigates to /login
+- If an existing authStore is in scope (e.g. EXISTING CODEBASE has authStore.ts), read isLoggedIn from it directly
+- MOCK DEFAULT VALUE: The mock auth service MUST return false by default (unauthenticated state).
+  WRONG: return true  ← redirect never fires; ProtectedRoute is invisible and untestable
+  RIGHT:  return false ← redirect fires on load; demonstrates the guard works
+  Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 📌 ALL components must:
