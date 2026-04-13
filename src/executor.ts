@@ -514,7 +514,8 @@ export class Executor {
     }
 
     // Check each file against all others for integration issues
-    const integrationErrors: string[] = [];
+    const integrationErrors: string[] = []; // hard failures: unresolvable paths, wrong export names
+    const pkgWarnings: string[] = [];       // soft warnings: npm packages not in package.json
     
     // Build a set of all "known" file paths for import resolution checks.
     // Includes files created this run + canonical base paths without extensions.
@@ -673,7 +674,7 @@ export class Executor {
           ) {
             continue; // ✅ package is available
           }
-          integrationErrors.push(
+          pkgWarnings.push(
             `❌ ${filePath}: Imports from '${pkgName}' but this package is NOT in package.json. ` +
             `Either install it (\`npm install ${rootPkg}\`) or use a different approach that doesn't require it.`
           );
@@ -706,18 +707,28 @@ export class Executor {
       }
     }
 
-    if (integrationErrors.length > 0) {
-      console.warn('[Executor] ⚠ Integration warnings (non-blocking):');
-      for (const error of integrationErrors) {
-        console.warn(`  ${error}`);
-        this.config.onMessage?.(
-          `⚠ Integration warning: ${error}`,
-          'info'
-        );
+    // Soft warnings: npm packages not in package.json (non-blocking — user may install separately)
+    if (pkgWarnings.length > 0) {
+      for (const warning of pkgWarnings) {
+        console.warn(`[Executor] ⚠ Package warning: ${warning}`);
+        this.config.onMessage?.(`⚠ Integration warning: ${warning}`, 'info');
       }
-      // Integration errors are warnings only — the generated files may still be useful.
-      // A plan that writes every file it imports is correct; unresolved imports may be
-      // pre-existing workspace files or installed packages not scanned here.
+    }
+
+    // Hard failures: unresolvable file paths, wrong export names, store hook misuse
+    if (integrationErrors.length > 0) {
+      console.error('[Executor] ❌ Integration validation failed:');
+      for (const error of integrationErrors) {
+        console.error(`  ${error}`);
+        this.config.onMessage?.(error, 'error');
+      }
+      return {
+        success: false,
+        completedSteps: succeededSteps,
+        results: plan.results,
+        error: `Integration validation failed: ${integrationErrors[0]}`,
+        totalDuration: Date.now() - startTime,
+      };
     }
 
     this.config.onMessage?.(
