@@ -866,16 +866,32 @@ export class Executor {
           );
         }
 
-        // Detect mock auth service returning true — makes redirect untestable
-        // Only fires for files in services/ that contain "auth" in the name
+        // Detect mock auth service that always evaluates truthy — makes redirect untestable.
+        // Checks for a falsy code path rather than a specific literal, so it catches:
+        //   return true            → ❌ literal true
+        //   return !!token         → ❌ non-empty string always truthy
+        //   return Boolean(token)  → ❌ same
+        //   return token !== null  → ❌ non-null string always truthy
+        // But passes:
+        //   return false           → ✅ explicit false
+        //   return null            → ✅ falsy
+        //   return storedFlag      → ✅ (could be false at runtime; we trust it)
         const isMockAuthFile = /[\\/]services[\\/][^/]*auth[^/]*\.ts$/i.test(filePath)
           && !filePath.endsWith('.tsx');
-        if (isMockAuthFile && /\breturn\s+true\s*;/.test(content)) {
-          errors.push(
-            `❌ Mock Auth Bug: auth service returns \`true\` by default. ` +
-            `A hardcoded \`return true\` makes the ProtectedRoute always pass — the redirect to /login NEVER fires. ` +
-            `Change to \`return false\` so the redirect path is observable and testable.`
-          );
+        if (isMockAuthFile) {
+          const hasExplicitFalsy =
+            /\breturn\s+false\b/.test(content) ||
+            /\breturn\s+(null|undefined|0)\b/.test(content) ||
+            /\breturn\s+''/.test(content) ||
+            /\breturn\s+""/.test(content);
+          if (!hasExplicitFalsy) {
+            errors.push(
+              `❌ Mock Auth Bug: no code path in this auth service returns a falsy value. ` +
+              `The redirect to /login will NEVER fire — ProtectedRoute always passes. ` +
+              `Add \`return false\` as the default so the redirect path is observable and testable. ` +
+              `WRONG: return !!token  WRONG: return true  RIGHT: return false`
+            );
+          }
         }
       } catch (error) {
         console.error(`[Executor] ❌ CRITICAL: Cross-file validation threw exception:`, error);
@@ -1424,6 +1440,20 @@ export class Executor {
         );
       }
 
+      // Detect non-visual wrapper components that don't accept or render children.
+      // A Route/Guard/Wrapper/Provider component that ignores children is a broken wrapper —
+      // it can never render the protected content it's supposed to wrap.
+      const componentBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+      const isWrapperComponent = filePath.endsWith('.tsx')
+        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentBaseName);
+      if (isWrapperComponent && !/\bchildren\b/.test(content)) {
+        errors.push(
+          `❌ Missing children prop: ${componentBaseName} is a wrapper component but never references \`children\`. ` +
+          `A wrapper must accept and render children: \`({ children }: { children: React.ReactNode })\` ` +
+          `and return \`<>{children}</>\` when the user is authenticated.`
+        );
+      }
+
       // Detect conflicting Tailwind transition utilities.
       // twMerge silently drops all but the last one — the component loses the intended animation.
       // e.g. transition-colors + transition-transform → only transition-transform survives.
@@ -1664,7 +1694,7 @@ export class Executor {
       const hookLine = isPureLogicFile
         ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
         : isNonVisualWrapper
-        ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
+        ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). ALWAYS include one criterion that checks: "Accepts and renders children prop" — a wrapper that ignores children is broken. Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
         : '';
       const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
@@ -2626,6 +2656,7 @@ JSON array only. No explanation.`;
     }
   }
 
+  /**
    * Determines if workspace has any files (greenfield check)
    */
   private async checkWorkspaceExists(workspaceUri: vscode.Uri): Promise<boolean> {
@@ -3460,7 +3491,10 @@ STRICTLY FORBIDDEN (these will be rejected):
         `  NEVER use React.ComponentProps<typeof ${componentName}> — compile error (circular self-reference).\n` +
         `- Use a plain arrow function. NEVER spread \`...props\` unless there are actual props to forward.\n` +
         (isNonVisualWrapperTsx
-          ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n`
+          ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n` +
+            `- MUST accept and render \`children\`: ({ children }: { children: React.ReactNode }) or React.PropsWithChildren<{}>\n` +
+            `  When authenticated: return <>{children}</>  When unauthenticated: return <Navigate to="/login" /> or equivalent\n` +
+            `  A wrapper that ignores children is broken — it can never render the protected content.\n`
           : '') +
         `\n`
       : '';

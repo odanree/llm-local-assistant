@@ -1863,11 +1863,10 @@ export class SmartAutoCorrection {
         continue;
       }
 
-      // Mock Auth Bug: service returns `true` — swap to `false`
+      // Mock Auth Bug: no falsy return path — cannot be fixed with a simple regex swap
+      // (the truthy value may be !!token, Boolean(x), etc. — LLM correction handles it)
       if (error.includes('Mock Auth Bug')) {
-        fixed = fixed.replace(/\breturn\s+true\s*;/g, 'return false;');
-        console.log(`[SmartAutoCorrection] Changed return true → return false in mock auth service`);
-        continue;
+        continue; // let the error propagate to LLM correction with the full error message
       }
 
       // Missing import — try RAG first, then dict fallback
@@ -1915,7 +1914,6 @@ export class SmartAutoCorrection {
       'imported but never called',  // Added: More specific pattern
       'Wrong import',  // Added: cn/UI import in a non-component .ts file
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
-      'Mock Auth Bug', // Added: mock auth service returns true (swap to false)
     ];
 
     const unfixablePatterns = [
