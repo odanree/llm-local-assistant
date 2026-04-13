@@ -545,11 +545,22 @@ export class Executor {
         // verify the file actually exists on disk before reporting a missing import.
         let existsOnDisk = false;
         if (!inThisPlan && !isWellKnownDir) {
+          // Build store/ ↔ stores/ normalization variants: authStore might be in
+          // either `store/` or `stores/` depending on the project convention.
+          const storeNormVariants: string[] = [];
+          if (resolvedNoExt.startsWith('store/')) {
+            storeNormVariants.push(`src/stores/${resolvedNoExt.slice(6)}.ts`);
+            storeNormVariants.push(`src/stores/${resolvedNoExt.slice(6)}.tsx`);
+          } else if (resolvedNoExt.startsWith('stores/')) {
+            storeNormVariants.push(`src/store/${resolvedNoExt.slice(7)}.ts`);
+            storeNormVariants.push(`src/store/${resolvedNoExt.slice(7)}.tsx`);
+          }
           const diskVariants = [
             `src/${resolvedNoExt}.ts`,
             `src/${resolvedNoExt}.tsx`,
             `${resolvedNoExt}.ts`,
             `${resolvedNoExt}.tsx`,
+            ...storeNormVariants,
           ];
           for (const dv of diskVariants) {
             try {
@@ -2669,10 +2680,12 @@ JSON array only. No explanation.`;
       for (let i = 0; i < content.length; i++) {
         text += String.fromCharCode(content[i]);
       }
+      this.config.onMessage?.(`Read ${step.path} (${text.length} bytes)`, 'info');
       return {
         stepId: step.stepId,
         success: true,
-        output: `Read ${step.path} (${text.length} bytes)`,
+        // Store actual file content in output so subsequent WRITE steps can use it as context
+        output: text,
         duration: Date.now() - startTime,
       };
     } catch (error) {
@@ -2962,18 +2975,33 @@ JSON array only. No explanation.`;
     if (this.plan && step.stepId > 1) {
       const previouslyCreatedFiles: string[] = [];
       const completedSteps = new Map(this.plan.results || new Map());
-      
+
+      // Collect prior READ step content so the LLM knows the exact API of existing files.
+      // This prevents guessing import paths (e.g. store/ vs stores/) and export names.
+      const readStepContents: { path: string; content: string }[] = [];
+      for (let i = 1; i < step.stepId; i++) {
+        const prevStep = this.plan.steps.find(s => s.stepId === i);
+        const prevResult = completedSteps.get(i);
+        if (prevStep && prevResult?.success && prevStep.action === 'read' && prevResult.output) {
+          // output now stores actual file content (not just the summary message)
+          const isSummary = prevResult.output.startsWith('Read ') && prevResult.output.includes(' bytes)');
+          if (!isSummary && prevResult.output.length > 0) {
+            readStepContents.push({ path: prevStep.path, content: prevResult.output });
+          }
+        }
+      }
+
       // Collect files created in previous steps
       for (let i = 1; i < step.stepId; i++) {
         const prevStep = this.plan.steps.find(s => s.stepId === i);
         const prevResult = completedSteps.get(i);
-        
+
         if (prevStep && prevResult && prevResult.success && prevStep.action === 'write') {
           previouslyCreatedFiles.push(prevStep.path);
         }
       }
       
-      if (previouslyCreatedFiles.length > 0) {
+      if (previouslyCreatedFiles.length > 0 || readStepContents.length > 0) {
         // ✅ CRITICAL: Use STORED CONTRACTS from previous steps (actual APIs)
         // NOT calculated/guessed paths
         const fileContracts: string[] = [];
@@ -3046,7 +3074,21 @@ Do NOT create your own import paths - use EXACTLY what's shown above.
 `;
         }
 
-        multiStepContext = `${importSection}## CONTEXT: Related Files Already Created
+        // Include content from prior READ steps so the LLM sees the actual API of existing files
+        const readContextSection = readStepContents.length > 0
+          ? `## EXISTING CODEBASE (files read in prior steps — use their EXACT APIs)
+
+${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 1500)}\n\`\`\``).join('\n\n')}
+
+CRITICAL: When importing from any file shown above, use the EXACT export names and path
+shown in that file. For example, if a store uses \`export default useAuthStore\`, import it
+as \`import useAuthStore from '...' \` (default import), NOT \`{ useAuthStore }\`.
+
+`
+          : '';
+
+        const createdFilesSection = fileContracts.length > 0
+          ? `## CONTEXT: Related Files Already Created
 The following files were created in previous steps. Use their exported APIs as shown below.
 
 ${fileContracts.join('\n\n')}
@@ -3058,8 +3100,11 @@ CRITICAL INTEGRATION RULES:
 4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
 
-`;
-        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s)`);
+`
+          : '';
+
+        multiStepContext = `${readContextSection}${importSection}${createdFilesSection}`;
+        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s), ${readStepContents.length} read file(s)`);
       }
     }
 
