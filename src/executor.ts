@@ -1588,9 +1588,13 @@ export class Executor {
       // Detect non-visual wrapper components that don't accept or render children.
       // A Route/Guard/Provider or Layout component that ignores children is broken —
       // it can never render the content it's supposed to wrap.
-      const needsChildren = Executor.isNonVisualWrapper(filePath) || Executor.isStructuralLayout(filePath);
+      // EXCEPTION: Layout components that render <Routes> internally own their own routing
+      // and do NOT need to accept children from outside — they are self-contained.
+      const isLayoutFile = Executor.isStructuralLayout(filePath);
+      const layoutOwnsRouting = isLayoutFile && /<Routes[\s>]/.test(content);
+      const needsChildren = (Executor.isNonVisualWrapper(filePath) || isLayoutFile) && !layoutOwnsRouting;
       if (needsChildren && !/\bchildren\b/.test(content)) {
-        const isLayout = Executor.isStructuralLayout(filePath);
+        const isLayout = isLayoutFile;
         const baseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
         errors.push(
           `❌ Missing children prop: ${baseName} is a ${isLayout ? 'layout' : 'wrapper'} component but never references \`children\`. ` +
@@ -1869,6 +1873,20 @@ export class Executor {
           'Manages theme (\'light\'|\'dark\') and isSidebarOpen (boolean) with local useState',
           'Renders <Layout> with props: isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar',
           'Uses inline style={{}} objects for any styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+
+      // Short-circuit: Routes.ts config file criteria.
+      // The LLM hallucinates lowercase `routes`, `meta` property, and wrong field names.
+      // Correct: ROUTES (uppercase const), RouteConfig interface with requiresAuth/roles, getAccessibleRoutes().
+      const isRoutesCriteria = /(?:^|\/)Routes\.ts$/.test(step.path);
+      if (isRoutesCriteria) {
+        return [
+          'Exports a const named ROUTES (uppercase) — NOT routes, routeList, or any other name',
+          'RouteConfig interface has path, label, component, requiresAuth (boolean), roles (string[]) — NO meta property',
+          'Exports getAccessibleRoutes(isLoggedIn: boolean): RouteConfig[] that filters by requiresAuth',
+          'Contains at least one route with requiresAuth: false (public route) and one with requiresAuth: true',
+          'No JSX, no styled elements, no cn() — pure TypeScript config file',
         ];
       }
 
