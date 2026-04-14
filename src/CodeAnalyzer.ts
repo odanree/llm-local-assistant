@@ -1866,6 +1866,45 @@ export class SmartAutoCorrection {
         fixed = fixed.replace(/\bas\s+any\b/g, 'as unknown');
       }
 
+      // Fix: cn() imported but bare string className detected.
+      // Replace all className="foo" / className='foo' / className={"foo"} / className={'foo'}
+      // with className={cn('foo')} so the validator stops firing.
+      if (error.includes('bare string literal')) {
+        const importsCn = /import\s+.*\bcn\b.*from/.test(fixed);
+        if (importsCn) {
+          // className="foo bar" → className={cn('foo bar')}
+          fixed = fixed.replace(/className="([^"]+)"/g, `className={cn('$1')}`);
+          // className='foo bar' → className={cn('foo bar')}
+          fixed = fixed.replace(/className='([^']+)'/g, `className={cn('$1')}`);
+          // className={"foo bar"} → className={cn('foo bar')}
+          fixed = fixed.replace(/className=\{"([^"]+)"\}/g, `className={cn('$1')}`);
+          // className={'foo bar'} → className={cn('foo bar')}
+          fixed = fixed.replace(/className=\{'([^']+)'\}/g, `className={cn('$1')}`);
+          console.log(`[SmartAutoCorrection] Wrapped bare className strings in cn()`);
+        }
+      }
+
+      // Fix: cn() imported but template-literal className used for concatenation.
+      // className={`foo ${bar}`} → className={cn('foo', bar)}
+      // Handles simple one-variable cases; complex template literals are left for LLM.
+      if (error.includes('manual string concatenation')) {
+        const importsCn = /import\s+.*\bcn\b.*from/.test(fixed);
+        if (importsCn) {
+          // Match: className={`staticPart ${varName}`}  (exactly one static part + one variable)
+          fixed = fixed.replace(
+            /className=\{`([^`${}]+)\$\{([^}]+)\}`\}/g,
+            (_match, staticPart, varExpr) => {
+              const base = staticPart.trim();
+              const varName = varExpr.trim();
+              return base
+                ? `className={cn('${base}', ${varName})}`
+                : `className={cn(${varName})}`;
+            }
+          );
+          console.log(`[SmartAutoCorrection] Converted template-literal className to cn()`);
+        }
+      }
+
       // Fix: Unclosed braces — deterministic tail append
       // Common cause: LLM truncated the output; missing closing braces are at the end.
       // Extract the count from the error "Syntax error: N unclosed brace(s)" and append N '}'.
@@ -1986,6 +2025,8 @@ export class SmartAutoCorrection {
       'Wrong import',  // Added: cn/UI import in a non-component .ts file
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
       'unclosed brace',  // Deterministic tail-append fix for truncated output
+      'bare string literal',        // Deterministic: className="foo" → className={cn('foo')}
+      'manual string concatenation', // Deterministic: className={`foo ${bar}`} → className={cn('foo', bar)}
     ];
 
     const unfixablePatterns = [

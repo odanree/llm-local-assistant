@@ -1788,10 +1788,16 @@ export class Executor {
       const mockAuthNote = isMockAuthService
         ? ' MOCK AUTH SERVICE: one criterion MUST check that the auth function returns false by default (not true). A mock that returns true makes the redirect unreachable and untestable.'
         : '';
+      const isStructuralLayoutCriteria = Executor.isStructuralLayout(step.path);
+      const isDecomposedNavigationCriteria = Executor.isDecomposedNavigation(step.path);
       const hookLine = isPureLogicFile
         ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
         : isNonVisualWrapper
         ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). ALWAYS include one criterion that checks: "Accepts and renders children prop" — a wrapper that ignores children is broken. Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
+        : isStructuralLayoutCriteria
+        ? ' STRUCTURAL LAYOUT: This component is extracted from a source that may use inline styles (style={{}}), not Tailwind. Do NOT require cn() — require only: (1) Accepts children prop, (2) Correct props interface with isLoggedIn/theme/onLogout/isSidebarOpen/onToggleSidebar, (3) Renders Navigation conditionally based on isSidebarOpen, (4) Has header + sidebar + main + footer structure, (5) Renders children in the main area.'
+        : isDecomposedNavigationCriteria
+        ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
         : '';
       const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
