@@ -370,11 +370,20 @@ export class Executor {
         this.preFlightCheck(step, workspaceExists);
 
         // ✅ NEW: Dependency Validation (DAG Support)
-        // Track completed step IDs and validate dependencies
+        // Track completed step IDs and validate dependencies.
+        // CRITICAL: Build a stepId→step lookup so completed step IDs are resolved
+        // correctly even when reorderStepsByDependencies has shuffled plan.steps.
+        // Using array index (stepId - 1) is wrong after reorder because positions
+        // no longer match original step numbers.
         const completedStepIds = new Set<string>();
+        const stepIdToStep = new Map<number, PlanStep>();
+        for (const s of plan.steps) {
+          if (typeof s.stepId === 'number') { stepIdToStep.set(s.stepId, s); }
+        }
         for (const completed of plan.results?.values() ?? []) {
-          if (completed.success && plan.steps[completed.stepId - 1]?.id) {
-            completedStepIds.add(plan.steps[completed.stepId - 1].id);
+          if (completed.success) {
+            const s = stepIdToStep.get(completed.stepId);
+            if (s?.id) { completedStepIds.add(s.id); }
           }
         }
         // Build the set of step IDs that are actually in this plan (after filtering)
@@ -2648,12 +2657,14 @@ JSON array only. No explanation.`;
       }
     });
 
-    // Pass 2: Text analysis fallback — only for steps that declared no dependsOn.
-    // This catches plans from older/smaller models that omit dependsOn fields.
-    // Kept minimal: just filename appearance in description (basename match), no verb patterns.
+    // Pass 2: Text analysis fallback — runs for steps that declared no dependsOn, OR
+    // for steps whose dependsOn refs all pointed to non-WRITE steps (READ/RUN) and therefore
+    // produced zero write-step edges in Pass 1. Without this, steps like Layout.tsx that
+    // declare `dependsOn: ["step_1_READ"]` get zero edges and sort before Routes.ts.
     writeSteps.forEach((step, currentIdx) => {
-      if (step.dependsOn && step.dependsOn.length > 0) {
-        return; // planner already declared dependencies — skip text analysis for this step
+      const hasWriteEdges = (dependencies.get(currentIdx)?.size ?? 0) > 0;
+      if (step.dependsOn && step.dependsOn.length > 0 && hasWriteEdges) {
+        return; // planner declared write-step dependencies — trust them, skip text analysis
       }
 
       const pathLower = (step.path || '').toLowerCase();
