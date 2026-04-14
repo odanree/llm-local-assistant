@@ -71,6 +71,8 @@ export class Executor {
   private config: ExecutorConfig;
   private plan: TaskPlan | null = null;
   private paused: boolean = false;
+  /** Files written in the current plan execution that still have unresolved tsc errors. */
+  private filesWithPersistentTscErrors = new Set<string>();
   private cancelled: boolean = false;
   private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
   /** Packages available in the workspace (populated from package.json at execution start) */
@@ -318,6 +320,8 @@ export class Executor {
 
     const startTime = Date.now();
     let succeededSteps = 0;
+    // Reset per-plan tsc error tracking (instance var shared with executeWrite)
+    this.filesWithPersistentTscErrors.clear();
 
     // Read package.json once before the step loop so every code generation step
     // knows which packages are actually installed. Non-fatal: missing package.json
@@ -804,6 +808,23 @@ export class Executor {
         completedSteps: succeededSteps,
         results: plan.results,
         error: `Integration validation failed: ${integrationErrors[0]}`,
+        totalDuration: Date.now() - startTime,
+      };
+    }
+
+    // Fail if any written file still had unresolved tsc errors — the import/export
+    // checks above may have passed (syntax is a separate concern), but a compile-broken
+    // file means the plan output is not usable. Report this as an integration failure
+    // instead of emitting a false-positive ✅.
+    if (this.filesWithPersistentTscErrors.size > 0) {
+      const errorList = [...this.filesWithPersistentTscErrors].join(', ');
+      const msg = `❌ Integration check: ${this.filesWithPersistentTscErrors.size} file(s) written with unresolved TypeScript errors: ${errorList}`;
+      this.config.onMessage?.(msg, 'error');
+      return {
+        success: false,
+        completedSteps: succeededSteps,
+        results: plan.results,
+        error: msg,
         totalDuration: Date.now() - startTime,
       };
     }
@@ -2684,6 +2705,36 @@ JSON array only. No explanation.`;
           otherPathLower.includes('store') && !pathLower.includes('store') &&
           (pathLower.includes('component') || pathLower.includes('form'))
         ) {
+          dependencies.get(currentIdx)?.add(otherIdx);
+        }
+      });
+    });
+
+    // Pass 3: Path-based structural ordering — description-independent.
+    // Vague step descriptions (e.g. "Extract Layout component") don't mention their
+    // dependency on Routes.ts, so Pass 2 text analysis misses the edge. This pass
+    // enforces well-known decomposition conventions based purely on file path patterns:
+    //   routes/       → priority 0 (config, no local imports)
+    //   navigation/navbar/nav/sidebar → priority 1 (imports routes)
+    //   layout        → priority 2 (imports Navigation + routes)
+    //   other components/pages → priority 3
+    //   App.tsx       → priority 4 (root, imports everything)
+    // Any step with a lower priority number must come BEFORE steps with higher numbers.
+    const getStructuralPriority = (path: string): number => {
+      const p = (path || '').toLowerCase();
+      if (/[\\/]routes?[\\/]|[\\/]routes?\.[tj]s$|routes?\.ts$/i.test(p)) { return 0; }
+      if (/[\\/](navigation|navbar|nav|sidebar)\.[tj]sx?$/i.test(p)) { return 1; }
+      if (/[\\/]layout\.[tj]sx?$/i.test(p)) { return 2; }
+      if (/(?:^|[\\/])app\.[tj]sx?$/i.test(p)) { return 4; }
+      return 3;
+    };
+    writeSteps.forEach((step, currentIdx) => {
+      const myPriority = getStructuralPriority(step.path || '');
+      writeSteps.forEach((otherStep, otherIdx) => {
+        if (currentIdx === otherIdx) { return; }
+        const otherPriority = getStructuralPriority(otherStep.path || '');
+        if (otherPriority < myPriority) {
+          // otherStep has a lower priority number → it must come before this step
           dependencies.get(currentIdx)?.add(otherIdx);
         }
       });
@@ -4646,6 +4697,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           }
 
           if (tscErrors.length > 0) {
+            if (step.path) { this.filesWithPersistentTscErrors.add(step.path); }
             this.config.onMessage?.(
               `⚠️ ${tscErrors.length} TypeScript error(s) persist after correction. ` +
               `File written — the final tsc RUN step will surface any remaining issues.`,
