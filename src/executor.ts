@@ -342,16 +342,25 @@ export class Executor {
       // Pattern: description contains "manual" and path is missing or contains non-code keywords.
       // This prevents CONTRACT_VIOLATION crashes from recurring planner hallucinations.
       const descLower = (step.description ?? '').toLowerCase();
+      const stepCommand = typeof (step as any).command === 'string' ? (step as any).command as string : '';
       const isManualVerification =
         descLower.includes('manual verification') ||
+        descLower.includes('manually test') ||
+        descLower.includes('manually verify') ||
+        // Planner put "Manual verification: ..." as the command value
+        /^manual\s*(verification|verify|test)/i.test(stepCommand) ||
         (descLower.includes('browser') && step.action === 'read' && !step.path) ||
         (step.action === 'read' && step.path && /manual|browser/i.test(step.path));
       if (isManualVerification) {
-        this.config.onStepOutput?.(
-          step.stepId,
-          `📝 Skipped (human verification): ${step.description}`,
-          false
-        );
+        const skipMsg = `📝 Skipped (human verification): ${step.description}`;
+        this.config.onStepOutput?.(step.stepId, skipMsg, false);
+        // Record as succeeded so downstream dependsOn checks don't throw DEPENDENCY_VIOLATION
+        plan.results.set(step.stepId, {
+          stepId: step.stepId,
+          success: true,
+          output: skipMsg,
+          duration: 0,
+        });
         continue;
       }
 
@@ -1357,6 +1366,25 @@ export class Executor {
       }
     }
 
+    // Component-to-component circular import check.
+    // Navigation.tsx must never import Layout.tsx (Layout already imports Navigation → circular).
+    // General rule: a component in components/ must not import another sibling component that is
+    // known to import it back.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const isNavigationFile = Executor.isDecomposedNavigation(filePath);
+      if (isNavigationFile) {
+        // Navigation must never import Layout — Layout imports Navigation, so this would be circular.
+        const importsLayout = /from\s+['"][^'"]*[Ll]ayout['"]/i.test(content);
+        if (importsLayout) {
+          errors.push(
+            `❌ Circular dependency: Navigation imports Layout, but Layout already imports Navigation. ` +
+            `This creates a circular module dependency (Navigation → Layout → Navigation) that crashes the module loader. ` +
+            `Remove the Layout import from Navigation. Navigation should only import from: react-router-dom, routes/Routes, and react.`
+          );
+        }
+      }
+    }
+
     // TSX component-specific checks
     if (filePath.endsWith('.tsx')) {
       // Detect React.ReactNode / React.ReactElement used as a runtime value (not a type)
@@ -1814,10 +1842,10 @@ export class Executor {
       // more reliable AND faster.
       if (isStructuralLayoutCriteria) {
         return [
-          'Accepts children prop (React.ReactNode)',
           'Props interface includes isLoggedIn (boolean), theme (\'light\'|\'dark\'), onLogout, isSidebarOpen (boolean), onToggleSidebar',
           'Renders Navigation component conditionally based on isSidebarOpen prop',
           'Has header, sidebar (with Navigation), main content area, and footer structure',
+          'Renders routes internally from ROUTES config — children prop is NOT required (Layout owns routing)',
           'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
         ];
       }
@@ -1828,6 +1856,19 @@ export class Executor {
           'Shows routes filtered by isLoggedIn (not from a store — from props only)',
           'Logout button is shown only when isLoggedIn is true',
           'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+
+      // Short-circuit: App.tsx (refactored root) criteria.
+      // The LLM hallucinates cn() and AuthState fields (theme, isSidebarOpen) that do not exist.
+      const isAppRootCriteria = /(?:^|\/)App\.tsx$/.test(step.path);
+      if (isAppRootCriteria) {
+        return [
+          'Wraps everything in <BrowserRouter> — NEVER calls useNavigate() directly in App',
+          'Gets ONLY isLoggedIn and logout from useAuthStore — does NOT read theme/isSidebarOpen from any store',
+          'Manages theme (\'light\'|\'dark\') and isSidebarOpen (boolean) with local useState',
+          'Renders <Layout> with props: isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar',
+          'Uses inline style={{}} objects for any styling — NO cn(), clsx, className with Tailwind strings',
         ];
       }
 
@@ -2566,47 +2607,52 @@ JSON array only. No explanation.`;
 
     // Build dependency map: for each write step, what other write steps does it depend on?
     const dependencies = new Map<number, Set<number>>();
-    const stepDescriptions = new Map<number, { path?: string; description?: string }>();
 
     writeSteps.forEach((step, idx) => {
       dependencies.set(idx, new Set());
-      stepDescriptions.set(idx, { path: step.path, description: step.description });
     });
 
-    // Analyze imports in descriptions to detect dependencies
+    // Build an id→index lookup for dependsOn resolution
+    const stepIdToWriteIdx = new Map<string, number>();
+    writeSteps.forEach((step, idx) => {
+      if (step.id) { stepIdToWriteIdx.set(step.id, idx); }
+    });
+
+    // Pass 1: Use planner-declared dependsOn (structural, not linguistic — always preferred)
     writeSteps.forEach((step, currentIdx) => {
+      if (step.dependsOn && step.dependsOn.length > 0) {
+        for (const depId of step.dependsOn) {
+          const depWriteIdx = stepIdToWriteIdx.get(depId);
+          if (depWriteIdx !== undefined && depWriteIdx !== currentIdx) {
+            dependencies.get(currentIdx)?.add(depWriteIdx);
+          }
+        }
+      }
+    });
+
+    // Pass 2: Text analysis fallback — only for steps that declared no dependsOn.
+    // This catches plans from older/smaller models that omit dependsOn fields.
+    // Kept minimal: just filename appearance in description (basename match), no verb patterns.
+    writeSteps.forEach((step, currentIdx) => {
+      if (step.dependsOn && step.dependsOn.length > 0) {
+        return; // planner already declared dependencies — skip text analysis for this step
+      }
+
       const pathLower = (step.path || '').toLowerCase();
       const descLower = (step.description || '').toLowerCase();
       const fullText = `${pathLower} ${descLower}`;
 
       writeSteps.forEach((otherStep, otherIdx) => {
-        if (currentIdx === otherIdx) {return;}
-
-        const otherPath = (otherStep.path || '').toLowerCase();
-        const otherDesc = (otherStep.description || '').toLowerCase();
-
-        // Check if current step imports from other step
-        // Look for patterns like "import from stores/useAuthStore" or "renders the Layout component"
-        const basename = this.getFileBaseName(otherPath);
-        const importPatterns = [
-          `imports?.*from.*${basename}`,
-          `imports?.*${basename}`,   // e.g. "imports and renders the new Layout component"
-          `renders?.*${basename}`,   // e.g. "imports and renders the new Layout component"
-          `uses?.*${basename}`,
-          `consumes?.*${basename}`,  // e.g. "consume the new Layout component"
-          `from.*['"]([^'"]*${basename}[^'"]*)['"]`,
-        ];
-
-        for (const pattern of importPatterns) {
-          if (new RegExp(pattern, 'i').test(fullText)) {
-            dependencies.get(currentIdx)?.add(otherIdx);
-            break;
-          }
+        if (currentIdx === otherIdx) { return; }
+        const basename = this.getFileBaseName((otherStep.path || '').toLowerCase());
+        // Filename appears anywhere in the description → likely a dependency
+        if (basename && new RegExp(`\\b${basename}\\b`, 'i').test(fullText)) {
+          dependencies.get(currentIdx)?.add(otherIdx);
         }
-
-        // Also check: if other step creates "useLoginStore" and current is "LoginForm", likely dependency
+        // Store → component heuristic (layout-independent of vocabulary)
+        const otherPathLower = (otherStep.path || '').toLowerCase();
         if (
-          otherPath.includes('store') && !pathLower.includes('store') &&
+          otherPathLower.includes('store') && !pathLower.includes('store') &&
           (pathLower.includes('component') || pathLower.includes('form'))
         ) {
           dependencies.get(currentIdx)?.add(otherIdx);
@@ -2896,13 +2942,12 @@ JSON array only. No explanation.`;
       }
     }
 
-    // Check for "manual" hallucination in command
+    // Check for "manual" hallucination in command — clear the command so the step falls through
+    // to the isManualVerification skip in executeStep rather than throwing a fatal error.
     if ((step as any).command && typeof (step as any).command === 'string') {
-      if ((step as any).command.toLowerCase().includes('manual')) {
-        throw new Error(
-          `CONTRACT_VIOLATION: Step "${step.description}" has command="${(step as any).command}". ` +
-          `Manual verification is not a valid executor action.`
-        );
+      if (/^manual\s*(verification|verify|test)/i.test(((step as any).command as string).trim())) {
+        // Nullify the command so executeStep's isEmptyRunStep check will catch it as human verification
+        (step as any).command = '';
       }
     }
 
@@ -3684,14 +3729,18 @@ STRICTLY FORBIDDEN (these will be rejected):
             `- DO NOT produce a thin wrapper like \`<div>{children}</div>\`. That is WRONG.\n` +
             `- The source file shows the exact structure: header / sidebar (Navigation) / main content / footer.\n` +
             `  Copy ALL of those sections into this Layout component. Minimum ~80 lines.\n` +
-            `- Props: accept isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar from the parent — pass them through.\n` +
-            `  interface LayoutProps { children: React.ReactNode; isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: ()=>void; isSidebarOpen: boolean; onToggleSidebar: ()=>void; }\n` +
+            `- Props: accept isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar from the parent.\n` +
+            `  interface LayoutProps { isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: ()=>void; isSidebarOpen: boolean; onToggleSidebar: ()=>void; }\n` +
+            `  DO NOT add a children prop — Layout renders its own routes internally.\n` +
             `- Render Navigation conditionally: {isSidebarOpen && <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />}\n` +
-            `- Render children inside the <main> area (NOT the Routes — the parent App handles routing).\n` +
+            `- Render routes inside <main> using ROUTES from '../routes/Routes' — Layout owns routing, App does not.\n` +
             `- STYLING: Use inline \`style={{...}}\` objects for all styling — the source file uses inline styles, NOT Tailwind classes.\n` +
             `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
             `  WRONG: <div className={cn('flex', 'bg-white')}>  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
-            `- DO NOT import hooks, form state, services, or business logic.\n`
+            `- DO NOT import hooks, form state, services, or business logic.\n` +
+            `- EXPORT: use a named export — NEVER export default.\n` +
+            `  CORRECT: export const Layout = ({ children, ... }: LayoutProps) => { ... };\n` +
+            `  WRONG:   const Layout = ...; export default Layout;\n`
           : '') +
         `\n`
       : '';
@@ -3759,9 +3808,22 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER call useNavigate() directly inside App — App renders <BrowserRouter>, so it is OUTSIDE the router context\n` +
         `  useNavigate() throws "useNavigate() may be used only in the context of a <Router>" if called in App itself.\n` +
         `  If you need navigation logic, put it in a child component that is rendered INSIDE <BrowserRouter>.\n` +
-        `- CORRECT pattern: App renders <BrowserRouter><Routes>...</Routes></BrowserRouter> with no useNavigate in App\n` +
-        `- If navigation on logout is needed: call window.location.href = '/login' from the onLogout callback, OR\n` +
-        `  pass a navigate function down from a child component that lives inside the router.\n\n`
+        `- CORRECT pattern: App renders <BrowserRouter><Layout ...>...</Layout></BrowserRouter> with no useNavigate in App\n` +
+        `- If navigation on logout is needed: call window.location.href = '/login' from the onLogout callback.\n\n` +
+        `STATE ORIGIN RULES (critical — do NOT invent store fields):\n` +
+        `- useAuthStore exposes EXACTLY TWO values: isLoggedIn (boolean) and logout (() => void)\n` +
+        `  CORRECT: const { isLoggedIn, logout } = useAuthStore();\n` +
+        `  WRONG:   const { isLoggedIn, logout, theme, isSidebarOpen, toggleSidebar } = useAuthStore();  ← those fields don't exist\n` +
+        `- theme and isSidebarOpen are LOCAL state managed with useState — NOT from any store:\n` +
+        `  const [theme, setTheme] = useState<'light' | 'dark'>('light');\n` +
+        `  const [isSidebarOpen, setIsSidebarOpen] = useState(true);\n\n` +
+        `ROUTING DELEGATION RULES (critical — App.tsx must NOT own routing):\n` +
+        `- App.tsx renders ONLY: <BrowserRouter><Layout isLoggedIn={...} theme={...} onLogout={...} isSidebarOpen={...} onToggleSidebar={...}>{children}</Layout></BrowserRouter>\n` +
+        `- Layout handles all <Routes> and <Route> rendering — App.tsx must NOT contain <Routes> or <Route> tags\n` +
+        `- DO NOT import page components (HomePage, DashboardPage, SettingsPage, ProfilePage, AnalyticsPage, NotFoundPage) in App.tsx\n` +
+        `  Those imports belong in Layout (or Routes.ts). If App.tsx imports page components it has duplicated routing logic.\n\n` +
+        `- STYLING: Use inline style={{...}} objects — the source file uses inline styles, NOT Tailwind classes.\n` +
+        `  DO NOT import cn, clsx, or any CSS-class utility.\n\n`
       : '';
 
     // Navigation/Sidebar/Header constraint: injected for pure presentation components that
@@ -3776,8 +3838,13 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- DO NOT use useNavigate or any router hook inside this component — render <Link> elements instead\n` +
         `  useNavigate is only legal inside a component that is already rendered INSIDE a <BrowserRouter>.\n` +
         `  Navigation receives its router context from the parent's <BrowserRouter> — use <Link to="..."> for nav.\n` +
+        `- NEVER import Layout (or any component that already imports Navigation) — that creates a circular dependency:\n` +
+        `  Navigation → Layout → Navigation = module loader crash. Navigation must NOT import Layout.\n` +
         `- STYLING: Use inline \`style={{...}}\` objects — the source file uses inline styles, NOT Tailwind classes.\n` +
-        `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n\n`
+        `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
+        `- EXPORT: use a named export — NEVER export default.\n` +
+        `  CORRECT: export const Navigation = ({ isLoggedIn, theme, onLogout }: NavigationProps) => { ... };\n` +
+        `  WRONG:   const Navigation = ...; export default Navigation;\n\n`
       : '';
 
     // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
@@ -4300,7 +4367,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             'warning'
           );
 
-          // Attempt up to 2 LLM correction passes
+          // Pass 0: deterministic fixes (TS1005 semicolons, split imports, etc.) before LLM
+          const deterministicFixed = SmartAutoCorrection.fixCommonPatterns(finalContent, tscErrors, step.path);
+          if (deterministicFixed !== finalContent) {
+            this.config.onMessage?.(`🔧 Applying deterministic TypeScript fixes...`, 'info');
+            finalContent = deterministicFixed;
+            const detBytes = Buffer.from(finalContent, 'utf8');
+            await vscode.workspace.fs.writeFile(filePath, detBytes);
+            tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+          }
+
+          // Attempt up to 2 LLM correction passes if errors remain
           for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
             this.config.onMessage?.(
               `🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info'
@@ -4324,10 +4401,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             finalContent = corrected;
 
             // Overwrite file with correction
-            const fixedBytes = new Uint8Array(finalContent.length);
-            for (let i = 0; i < finalContent.length; i++) {
-              fixedBytes[i] = finalContent.charCodeAt(i);
-            }
+            const fixedBytes = Buffer.from(finalContent, 'utf8');
             await vscode.workspace.fs.writeFile(filePath, fixedBytes);
 
             // Re-check — break early if clean

@@ -528,7 +528,7 @@ A protected route checks whether the user IS ALREADY AUTHENTICATED — it does N
   Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
-📌 ALL components must:
+📌 ALL NEW components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
@@ -536,6 +536,7 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
   - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
+📌 EXCEPTION — DECOMPOSITION TASKS: When the task is "decompose/extract/split" an EXISTING file, do NOT impose cn() on extracted components. Match the styling approach of the source file. If the source uses inline style={{}}, the extracted components must also use inline style={{}}. Never write "uses cn()" in a step description for a component being extracted from an inline-style source.
 
 ${contextSection}
 
@@ -666,7 +667,7 @@ A protected route checks whether the user IS ALREADY AUTHENTICATED — it does N
   Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
-📌 ALL components must:
+📌 ALL NEW components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
@@ -674,6 +675,7 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
   - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
+📌 EXCEPTION — DECOMPOSITION TASKS: When the task is "decompose/extract/split" an EXISTING file, do NOT impose cn() on extracted components. Match the styling approach of the source file. If the source uses inline style={{}}, the extracted components must also use inline style={{}}. Never write "uses cn()" in a step description for a component being extracted from an inline-style source.
 
 ${contextSection}
 USER REQUEST: ${userRequest}
@@ -684,6 +686,8 @@ USER REQUEST: ${userRequest}
 3. If any named artifact has no WRITE step: ADD IT before outputting
 4. Check dependency order: if file A imports from file B, WRITE B must come before WRITE A
    Example: Navigation.tsx imports ROUTES from Routes.ts → WRITE Routes.ts first, WRITE Navigation.tsx second
+   Example: Layout.tsx imports Navigation.tsx → WRITE Navigation.tsx BEFORE WRITE Layout.tsx
+   DECOMPOSITION ORDER (mandatory): Routes.ts → Navigation.tsx → Layout.tsx → App.tsx (each imports the previous)
 5. Check that the source file is updated: if decomposing a file, the final WRITE must slim it down
 
 🔴 CRITICAL: Output ONLY a valid JSON array of steps.

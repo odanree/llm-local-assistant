@@ -1800,6 +1800,55 @@ export class SmartAutoCorrection {
       fixed = this.fixCircularImports(fixed, filePath);
     }
 
+    // THIRD: Deterministic import repair for "Symbol X not found in Y" cross-file contract errors.
+    // Rather than handing the whole file to the LLM (which rewrites too much and breaks template literals),
+    // do a targeted import-line fix: remove the wrong symbol, reroute to the correct source.
+    const REACT_ROUTER_SYMBOLS = new Set([
+      'BrowserRouter', 'Routes', 'Route', 'Navigate', 'Link', 'Outlet',
+      'NavLink', 'useNavigate', 'useLocation', 'useParams', 'useSearchParams',
+      'useMatch', 'RouterProvider',
+    ]);
+    for (const error of validationErrors) {
+      const symbolMatch = error.match(/Symbol '(\w+)' not found in '([^']+)'\. Available exports: (.+)/);
+      if (!symbolMatch) { continue; }
+      const [, missingSymbol, sourceFilePath] = symbolMatch;
+      const sourceBasename = sourceFilePath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+
+      // 1. Remove missingSymbol from the wrong import (the source it doesn't belong to)
+      const importRemoveRe = new RegExp(
+        `^(import\\s*\\{)([^}]+)(\\}\\s*from\\s*['"][^'"]*${sourceBasename}['"])`,
+        'm'
+      );
+      const wrongImportMatch = fixed.match(importRemoveRe);
+      if (wrongImportMatch) {
+        const symbols = wrongImportMatch[2]
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s && s !== missingSymbol);
+        const replacement = symbols.length > 0
+          ? `${wrongImportMatch[1]} ${symbols.join(', ')} ${wrongImportMatch[3]}`
+          : ''; // Remove entire import line if it's now empty
+        fixed = fixed.replace(wrongImportMatch[0], replacement);
+      }
+
+      // 2. Re-route react-router-dom symbols to their correct package
+      if (REACT_ROUTER_SYMBOLS.has(missingSymbol)) {
+        const routerImportRe = /import\s*\{([^}]+)\}\s*from\s*['"]react-router-dom['"]/;
+        const routerMatch = fixed.match(routerImportRe);
+        if (routerMatch) {
+          if (!routerMatch[1].includes(missingSymbol)) {
+            const updated = routerMatch[0].replace(
+              routerMatch[1],
+              `${routerMatch[1].trim()}, ${missingSymbol}`
+            );
+            fixed = fixed.replace(routerMatch[0], updated);
+          }
+        } else {
+          fixed = `import { ${missingSymbol} } from 'react-router-dom';\n` + fixed;
+        }
+      }
+    }
+
     validationErrors.forEach(error => {
       // Fix: React hook is used but not imported (e.g., "React hook 'useCallback' is used but not imported from React")
       // Also matches: "useState is used but not imported from React"
@@ -2069,6 +2118,7 @@ export class SmartAutoCorrection {
       "',' expected",                // Deterministic: semicolons used as commas in TS object literals (CSSProperties)
       'TS1005',                      // Same — TypeScript ',' expected error code
       'Wrong file extension',        // LLM corrector removes JSX from .ts file content (no rename needed)
+      'Cross-file Contract',         // Deterministic: wrong symbol removed from import, rerouted to correct package
     ];
 
     // NOTE: 'Wrong file extension' is NOT here — the corrector CAN fix this by removing JSX
