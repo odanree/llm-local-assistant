@@ -3920,6 +3920,9 @@ STRICTLY FORBIDDEN (these will be rejected):
             `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
             `  WRONG: <div className="flex bg-white">  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
             `- DO NOT import hooks, form state, services, or business logic.\n` +
+            `- DO NOT import ReactNode, ReactElement, or PropsWithChildren — no children prop exists.\n` +
+            `- DO NOT call getAccessibleRoutes() in Layout — Navigation handles its own route filtering internally.\n` +
+            `  Layout only needs ROUTES to render <Route> elements; it does NOT filter them by auth here (each Route does auth check inline).\n` +
             `- EXPORT: use a named export — NEVER export default.\n` +
             `  CORRECT: export const Layout = ({ isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar }: LayoutProps) => { ... };\n` +
             `  WRONG:   const Layout = ...; export default Layout;\n` +

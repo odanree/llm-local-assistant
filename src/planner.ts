@@ -877,6 +877,19 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
         continue;
       }
 
+      // Drop redundant RUN/tsc steps — TypeScript compilation runs inline (Check 6)
+      // after every WRITE step. A trailing tsc step adds noise and always gets skipped.
+      const isRedundantTscStep =
+        action === 'run' &&
+        (descLower.includes('typescript') || descLower.includes('type check') ||
+         descLower.includes('type-check') || descLower.includes(' tsc') ||
+         descLower.startsWith('tsc') || descLower.includes('compilation')) &&
+        !step.command; // Only drop if no actual shell command — real test runners still pass through
+      if (isRedundantTscStep) {
+        console.warn(`[PARSER] Dropping redundant tsc step (Check 6 handles this inline): "${step.description}"`);
+        continue;
+      }
+
       // Only add if step has a description
       if (step.description) {
         steps.push(step);
