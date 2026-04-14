@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
+import * as fs from 'fs';
 import { IFileSystem } from './providers/IFileSystem';
 import { ICommandRunner } from './providers/ICommandRunner';
 import { FileSystemProvider } from './providers/FileSystemProvider';
@@ -4159,6 +4160,70 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       await vscode.workspace.fs.writeFile(filePath, bytes);
 
+      // Check 6: TypeScript compiler (ground truth — runs post-write so tsc sees the file)
+      // Only for .ts/.tsx files where a tsconfig.json exists in the workspace root.
+      // Cascading errors in OTHER files (e.g. App.tsx importing a renamed export) are
+      // intentionally ignored here — the plan's final RUN/tsc step is the hard gate.
+      const isTsFile = step.path.endsWith('.ts') || step.path.endsWith('.tsx');
+      if (isTsFile && workspaceUri) {
+        this.config.onMessage?.(`🔎 Check 6: TypeScript compiler...`, 'info');
+        let tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+
+        if (tscErrors.length > 0) {
+          this.config.onMessage?.(
+            `⚠️ ${tscErrors.length} TypeScript error(s) in ${step.path}:\n` +
+            tscErrors.map(e => `  ${e}`).join('\n'),
+            'warning'
+          );
+
+          // Attempt up to 2 LLM correction passes
+          for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
+            this.config.onMessage?.(
+              `🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info'
+            );
+
+            const fixPrompt =
+              `The following TypeScript file has compiler errors reported by tsc.\n\n` +
+              `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
+              `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
+              `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
+              `NEVER add 'any' type — use specific types or 'unknown'. ` +
+              `Provide ONLY the corrected code. No explanations, no markdown fences.`;
+
+            const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+            if (!fixResponse.success || !fixResponse.message?.trim()) { break; }
+
+            let corrected = fixResponse.message;
+            const fenceMatch = corrected.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+            if (fenceMatch) { corrected = fenceMatch[1]; }
+
+            finalContent = corrected;
+
+            // Overwrite file with correction
+            const fixedBytes = new Uint8Array(finalContent.length);
+            for (let i = 0; i < finalContent.length; i++) {
+              fixedBytes[i] = finalContent.charCodeAt(i);
+            }
+            await vscode.workspace.fs.writeFile(filePath, fixedBytes);
+
+            // Re-check — break early if clean
+            tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+          }
+
+          if (tscErrors.length > 0) {
+            this.config.onMessage?.(
+              `⚠️ ${tscErrors.length} TypeScript error(s) persist after correction. ` +
+              `File written — the final tsc RUN step will surface any remaining issues.`,
+              'warning'
+            );
+          } else {
+            this.config.onMessage?.(`✅ Check 6: TypeScript errors resolved.`, 'info');
+          }
+        } else {
+          this.config.onMessage?.(`✅ Check 6: TypeScript clean.`, 'info');
+        }
+      }
+
       // ✅ CRITICAL: Post-step contract extraction
       // After writing, immediately extract what was created (actual APIs, exports, etc)
       // This allows next steps to use the REAL contract, not calculated/guessed paths
@@ -4185,6 +4250,69 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         `Failed to write ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
     }
+  }
+
+  /**
+   * Check 6: TypeScript compiler validation (ground truth).
+   *
+   * Runs `tsc --noEmit --skipLibCheck` from the workspace root after the file
+   * is written to disk. Filters the output to errors in `relativeFilePath` only
+   * — cascading errors in OTHER files that import the new file are ignored here;
+   * the plan's final RUN/tsc step is the hard gate for those.
+   *
+   * Returns an array of formatted error strings, or [] when:
+   * - No tsconfig.json found in the workspace root
+   * - tsc binary not found
+   * - tsc exits cleanly (no errors in this file)
+   */
+  private async runTscCheck(
+    workspaceRoot: string,
+    relativeFilePath: string
+  ): Promise<string[]> {
+    // Require tsconfig.json — without it tsc doesn't know the project boundaries
+    if (!fs.existsSync(path.join(workspaceRoot, 'tsconfig.json'))) {
+      console.log('[Executor] Check 6: no tsconfig.json found, skipping tsc check');
+      return [];
+    }
+
+    // Prefer workspace-local tsc over global to match the project's TypeScript version
+    const isWin = process.platform === 'win32';
+    const localTsc = path.join(workspaceRoot, 'node_modules', '.bin', isWin ? 'tsc.cmd' : 'tsc');
+    const tscBin = fs.existsSync(localTsc) ? `"${localTsc}"` : 'tsc';
+
+    return new Promise<string[]>((resolve) => {
+      cp.exec(
+        `${tscBin} --noEmit --skipLibCheck`,
+        { cwd: workspaceRoot, timeout: 30000 },
+        (_err, stdout, stderr) => {
+          // tsc exits non-zero when errors exist — _err is expected, use output instead
+          const output = (stdout + stderr).replace(/\r\n/g, '\n');
+
+          // Normalise to forward slashes for cross-platform path matching
+          const normTarget = relativeFilePath.replace(/\\/g, '/');
+
+          const errors = output
+            .split('\n')
+            .filter(line => {
+              const normLine = line.replace(/\\/g, '/');
+              return normLine.includes(normTarget) && /error TS\d+/.test(line);
+            })
+            .map(line => {
+              // "src/Foo.tsx(42,5): error TS2304: Cannot find name 'cn'."
+              const m = line.match(/\((\d+),\d+\):\s*error\s*(TS\d+):\s*(.+)/);
+              if (m) {
+                return `❌ TypeScript(${m[2]}): ${m[3].trim()} (line ${m[1]})`;
+              }
+              return `❌ TypeScript: ${line.trim()}`;
+            });
+
+          console.log(
+            `[Executor] Check 6: ${errors.length} tsc error(s) in ${relativeFilePath}`
+          );
+          resolve(errors);
+        }
+      );
+    });
   }
 
   /**

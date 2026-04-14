@@ -38,12 +38,13 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 
 ### 🏛️ Architecture & Validation System
 
-**5-Check Sequential Validation** (stops at first critical failure)
+**6-Check Sequential Validation**
 - **Check 1: Syntax** - Brace balance, no markdown-in-code, no `any` types
 - **Check 2: Patterns** - Bare classNames, JSX in `.ts` files, missing padding on interactive elements
 - **Check 3: Hook Usage** - Called not just imported, destructured properties used, no mixed state management
 - **Check 4: Cross-File Contract** - Every named import symbol exists as a named export in the source file
 - **Check 5: LLM Reviewer** - Structured YES/NO against pre-generated acceptance criteria
+- **Check 6: TypeScript Compiler** - `tsc --noEmit` post-write; ground-truth type errors in the file, with LLM correction loop
 
 **Code Analysis**
 - ✅ **`/refactor <file>`** - LLM-powered refactoring suggestions
@@ -475,12 +476,14 @@ See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATT
      │            interactive components → forwardRef required
      │
      ▼
- [VALIDATOR]  ── 5 sequential checks (stops at first critical failure):
+ [VALIDATOR]  ── 6 sequential checks (1-5 pre-write, 6 post-write):
      │            1. Syntax — brace balance, markdown-in-code, any types
      │            2. Patterns — bare classNames, JSX in .ts, missing padding
      │            3. Hook usage — called? destructured? mixed state?
      │            4. Cross-file contract — imported symbols exist in source
      │            5. LLM reviewer — structured YES/NO vs acceptance criteria
+     │         ── file written to disk ──
+     │            6. tsc --noEmit — ground-truth compiler errors for this file
      │
      ▼
  [CORRECTOR]  ── Two layers before giving up:
