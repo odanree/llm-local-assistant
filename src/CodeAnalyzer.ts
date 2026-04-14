@@ -1866,6 +1866,14 @@ export class SmartAutoCorrection {
         fixed = fixed.replace(/\bas\s+any\b/g, 'as unknown');
       }
 
+      // Fix: Config/data .ts file imports from a store — remove the store import line entirely.
+      // Config files have no React lifecycle so store hooks are invalid here.
+      if (error.includes('Config File Store Import')) {
+        // Remove any import line that imports from a store file
+        fixed = fixed.replace(/^import\s+[^;]*from\s+['"][^'"]*\/stores\/[^'"]*['"];?\s*\n?/gm, '');
+        console.log(`[SmartAutoCorrection] Removed store import from config/data .ts file`);
+      }
+
       // Fix: cn() imported but bare string className detected.
       // Replace all className="foo" / className='foo' / className={"foo"} / className={'foo'}
       // with className={cn('foo')} so the validator stops firing.
@@ -1936,11 +1944,9 @@ export class SmartAutoCorrection {
     resolver: (name: string) => Promise<string | null>,
     filePath?: string
   ): Promise<string> {
-    let fixed = code;
-
-    if (filePath) {
-      fixed = this.fixCircularImports(fixed, filePath);
-    }
+    // First: apply ALL synchronous deterministic fixes (mergeSplitReactImports, cn bare-string,
+    // unclosed brace, any-type, etc.). fixCommonPatterns also handles fixCircularImports.
+    let fixed = this.fixCommonPatterns(code, validationErrors, filePath);
 
     for (const error of validationErrors) {
       // React hook not imported
@@ -2027,6 +2033,7 @@ export class SmartAutoCorrection {
       'unclosed brace',  // Deterministic tail-append fix for truncated output
       'bare string literal',        // Deterministic: className="foo" → className={cn('foo')}
       'manual string concatenation', // Deterministic: className={`foo ${bar}`} → className={cn('foo', bar)}
+      'Config File Store Import',    // Deterministic: remove store imports from plain .ts config files
     ];
 
     const unfixablePatterns = [

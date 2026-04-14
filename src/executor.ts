@@ -737,8 +737,11 @@ export class Executor {
         }
       }
 
-      // Check if this file imports from stores but doesn't use the hook correctly
-      const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
+      // Check if this file imports from stores but doesn't use the hook correctly.
+      // Only applies to .tsx component files — plain .ts files (config, routes, utils) should
+      // NEVER import stores; they get a "Config File Store Import" error from the static validator.
+      const isComponentFile = filePath.endsWith('.tsx');
+      const storeImportMatch = isComponentFile && content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
       if (storeImportMatch) {
         const storeHookMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}/g);
         for (const match of storeHookMatches) {
@@ -923,11 +926,23 @@ export class Executor {
 
         // If component imports from stores but Zustand pattern not detected, that's also an error
         // Exception: root App component legitimately uses both Zustand (auth) and local useState (UI state)
+        // Only applies to .tsx files (React components) — plain .ts files (routes, config, utils) should
+        // NEVER import from stores; they get a different error via the config-file check below.
         const isRootApp = /(?:^|\/)App\.tsx$/.test(filePath);
-        if (!isRootApp && content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
+        const isTsxFile = filePath.endsWith('.tsx');
+        if (isTsxFile && !isRootApp && content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
           errors.push(
             `❌ Zustand Pattern: Component imports from stores but doesn't use destructuring pattern. ` +
             `Expected: const { x, y } = useStoreHook();`
+          );
+        }
+
+        // Config/data .ts files must NEVER import from stores — they are plain data, not React components.
+        const isConfigOrDataTs = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
+        if (isConfigOrDataTs && content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) ) {
+          errors.push(
+            `❌ Config File Store Import: ${filePath.split(/[\\/]/).pop()} imports from a store — this is wrong. ` +
+            `Config/data .ts files are plain TypeScript with no hooks. Remove all store imports.`
           );
         }
 
@@ -3698,6 +3713,7 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- If you must reference a React component type (e.g. in a RouteConfig interface), use:\n` +
         `  import type { ComponentType } from 'react'  ← type-only, no runtime React needed\n` +
         `- NEVER import cn, clsx, classnames — no styling in data/config files\n` +
+        `- NEVER import from store files (useAuthStore, useXxxStore) — config files have no React lifecycle\n` +
         `- NEVER include renderRoutes(), render functions, or any function that returns JSX\n` +
         `- Export ONLY: TypeScript interfaces, type aliases, plain objects, and data arrays\n\n`
       : '';
