@@ -75,6 +75,18 @@ export class Executor {
   /** Packages available in the workspace (populated from package.json at execution start) */
   private availablePackages: string[] = [];
 
+  /**
+   * Returns true when a file path represents a non-visual wrapper component:
+   * Route, Guard, Wrapper, Provider, Layout, Context, HOC, or Outlet.
+   * These components redirect or render children — they have no styled elements.
+   * Single source of truth used by the validator, criteria generator, and generation prompt.
+   */
+  private static isNonVisualWrapper(filePath: string): boolean {
+    if (!filePath.endsWith('.tsx')) { return false; }
+    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+    return /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(name);
+  }
+
   // Phase 3A: Dependency Injection for side effects
   private fs: IFileSystem;
   private commandRunner: ICommandRunner;
@@ -1454,12 +1466,9 @@ export class Executor {
       // Detect non-visual wrapper components that don't accept or render children.
       // A Route/Guard/Wrapper/Provider component that ignores children is a broken wrapper —
       // it can never render the protected content it's supposed to wrap.
-      const componentBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-      const isWrapperComponent = filePath.endsWith('.tsx')
-        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentBaseName);
-      if (isWrapperComponent && !/\bchildren\b/.test(content)) {
+      if (Executor.isNonVisualWrapper(filePath) && !/\bchildren\b/.test(content)) {
         errors.push(
-          `❌ Missing children prop: ${componentBaseName} is a wrapper component but never references \`children\`. ` +
+          `❌ Missing children prop: ${filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '')} is a wrapper component but never references \`children\`. ` +
           `A wrapper must accept and render children: \`({ children }: { children: React.ReactNode })\` ` +
           `and return \`<>{children}</>\` when the user is authenticated.`
         );
@@ -1503,9 +1512,7 @@ export class Executor {
     const importsCn = /import\s+.*\bcn\b.*from/.test(content);
     if (importsCn) {
       const isPureTs = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
-      const fileBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-      const isNonVisualWrapperFile = filePath.endsWith('.tsx')
-        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(fileBaseName);
+      const isNonVisualWrapperFile = Executor.isNonVisualWrapper(filePath);
       if (isPureTs) {
         errors.push(
           `❌ Wrong import: \`cn\` is imported in a non-component .ts file. ` +
@@ -1514,7 +1521,7 @@ export class Executor {
       } else if (isNonVisualWrapperFile) {
         errors.push(
           `❌ Wrong import: \`cn\` is imported in a non-visual wrapper component. ` +
-          `${fileBaseName} is a logic wrapper (redirects/renders children) with NO styled elements. ` +
+          `${filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '')} is a logic wrapper (redirects/renders children) with NO styled elements. ` +
           `NEVER import cn here — remove the import entirely.`
         );
       } else if (!/\bcn\s*\(/.test(content)) {
@@ -1691,14 +1698,11 @@ export class Executor {
       const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
       const isServiceTarget = /[\\/](?:services|utils|lib|api|helpers)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
       const isPureLogicFile = isHookTarget || isServiceTarget;
-      // Non-visual wrapper components (Route, Guard, Provider, Layout, Context, HOC) render children
-      // or redirect — they have no styled elements, so cn/className criteria are nonsensical
-      const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '';
-      const isNonVisualWrapper = step.path.endsWith('.tsx')
-        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+      const isNonVisualWrapper = Executor.isNonVisualWrapper(step.path);
       // For mock auth services, add a rule about the default return value
+      const stepBaseName = step.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
       const isMockAuthService = isPureLogicFile
-        && /mockAuth|authService|authHelper/i.test(componentName);
+        && /mockAuth|authService|authHelper/i.test(stepBaseName);
       const mockAuthNote = isMockAuthService
         ? ' MOCK AUTH SERVICE: one criterion MUST check that the auth function returns false by default (not true). A mock that returns true makes the redirect unreachable and untestable.'
         : '';
@@ -3488,8 +3492,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     // Non-interactive component guard: injected for .tsx files that are NOT interactive controls.
     // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
     const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
-    const isNonVisualWrapperTsx = isNonInteractiveTsx
-      && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+    const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
         `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
