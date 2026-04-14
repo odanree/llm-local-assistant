@@ -1880,6 +1880,18 @@ export class SmartAutoCorrection {
       fixed = fixed.replace(/^export\s+default\s+(function\s+\w)/m, 'export $1');
     }
 
+    // FIFTH: Fix `element={X.component}` — TS2322 ComponentType not assignable to ReactNode.
+    // React Router's `element` prop expects ReactNode (a rendered element), not ComponentType
+    // (a constructor/function). The generator sometimes passes the type directly instead of
+    // calling it as JSX. Wrap in React.createElement() to produce a valid ReactElement.
+    // Only fires when tsc reports TS2322 with ComponentType→ReactNode mismatch.
+    const hasComponentTypeError = validationErrors.some(e =>
+      e.includes('TS2322') && e.includes('ComponentType') && e.includes('ReactNode')
+    );
+    if (hasComponentTypeError) {
+      fixed = fixed.replace(/\belement=\{(\w+\.component)\}/g, 'element={React.createElement($1)}');
+    }
+
     validationErrors.forEach(error => {
       // Fix: React hook is used but not imported (e.g., "React hook 'useCallback' is used but not imported from React")
       // Also matches: "useState is used but not imported from React"

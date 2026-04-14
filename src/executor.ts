@@ -1266,11 +1266,11 @@ export class Executor {
   private validateCommonPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
 
-    // Split React imports: multiple `from 'react'` lines is always wrong.
-    // Root cause: the old reactImportsSection showed each hook as a separate import example,
-    // which the LLM reproduced verbatim. The fix lives in the prompt (merged example) AND here
-    // (deterministic catch for when the prompt is ignored).
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+    // Split React imports: multiple `from 'react'` lines is always wrong in .tsx files.
+    // Pure .ts files may legitimately have separate `import type` lines (e.g. ComponentType,
+    // ReactElement) without a value import — those are not a problem. Only enforce in .tsx
+    // where JSX requires React in scope and merged imports are the canonical style.
+    if (filePath.endsWith('.tsx')) {
       const reactImportLines = (content.match(/^import\s+.+\s+from\s+['"]react['"]/gm) || []);
       if (reactImportLines.length > 1) {
         errors.push(
