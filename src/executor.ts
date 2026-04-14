@@ -2716,6 +2716,165 @@ JSON array only. No explanation.`;
     return result;
   }
 
+  // ---------------------------------------------------------------------------
+  // Surgical correction helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a per-line tsc correction prompt.
+   * Groups errors by line number, extracts context windows, requests a JSON patch.
+   * Returns '' if none of the errors carry line numbers (caller falls back to whole-file).
+   */
+  private buildSurgicalTscPrompt(content: string, tscErrors: string[], filePath: string): string {
+    const lines = content.split('\n');
+
+    // Parse "(line N)" from tsc error strings
+    const errorsByLine = new Map<number, string[]>();
+    for (const error of tscErrors) {
+      const m = error.match(/\(line (\d+)\)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!errorsByLine.has(n)) { errorsByLine.set(n, []); }
+        errorsByLine.get(n)!.push(error);
+      }
+    }
+    if (errorsByLine.size === 0) { return ''; }
+
+    const uniqueLines = [...errorsByLine.keys()].sort((a, b) => a - b);
+    const RADIUS = 4;
+
+    // Merge overlapping context windows
+    const windows: Array<{ start: number; end: number }> = [];
+    for (const ln of uniqueLines) {
+      const s = Math.max(0, ln - 1 - RADIUS);
+      const e = Math.min(lines.length - 1, ln - 1 + RADIUS);
+      if (windows.length > 0 && s <= windows[windows.length - 1].end + 1) {
+        windows[windows.length - 1].end = Math.max(windows[windows.length - 1].end, e);
+      } else {
+        windows.push({ start: s, end: e });
+      }
+    }
+
+    const contextSections = windows
+      .map(({ start, end }) =>
+        lines
+          .slice(start, end + 1)
+          .map((line, i) => `${start + i + 1}: ${line}`)
+          .join('\n')
+      )
+      .join('\n...\n');
+
+    const errorList = uniqueLines
+      .map(ln => `Line ${ln}:\n${errorsByLine.get(ln)!.map(e => `  - ${e}`).join('\n')}`)
+      .join('\n');
+
+    return (
+      `Fix ONLY the TypeScript compiler errors listed below in: ${filePath}\n\n` +
+      `ERRORS:\n${errorList}\n\n` +
+      `RELEVANT CODE (with line numbers):\n${contextSections}\n\n` +
+      `RESPONSE FORMAT — return ONLY a JSON array, nothing else:\n` +
+      `[{"line": N, "content": "replacement for that entire line (preserve indentation)"}]\n\n` +
+      `Rules:\n` +
+      `- Patch ONLY the lines mentioned in ERRORS — do NOT touch any other line\n` +
+      `- To delete a line: {"line": N, "content": ""}\n` +
+      `- To insert a new line before line N: {"line": N, "insertBefore": "new line content"}\n` +
+      `- NEVER rewrite logic, JSX, or template literals — only fix the listed error tokens\n` +
+      `- Output ONLY the JSON array. No markdown, no explanation.`
+    );
+  }
+
+  /**
+   * Apply a JSON patch array returned by the surgical tsc fixer.
+   * Returns null if the JSON cannot be parsed (caller falls back to whole-file).
+   */
+  private applySurgicalTscPatches(content: string, patchJson: string): string | null {
+    try {
+      const stripped = patchJson.replace(/```(?:json)?\n?([\s\S]*?)\n?```/, '$1').trim();
+      const patches: Array<{ line: number; content: string; insertBefore?: string }> =
+        JSON.parse(stripped);
+      if (!Array.isArray(patches)) { return null; }
+
+      const lines = content.split('\n');
+      // Process in reverse order so insertions don't shift subsequent indices
+      const sorted = [...patches].sort((a, b) => b.line - a.line);
+
+      for (const patch of sorted) {
+        const idx = patch.line - 1;
+        if (idx < 0 || idx > lines.length) { continue; }
+        if (patch.insertBefore !== undefined) {
+          lines.splice(idx, 0, patch.insertBefore);
+        } else if (patch.content === '') {
+          lines.splice(idx, 1);
+        } else {
+          if (idx < lines.length) { lines[idx] = patch.content; }
+        }
+      }
+      return lines.join('\n');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Build a SEARCH/REPLACE correction prompt for validator errors.
+   * The LLM returns one or more fenced blocks that describe minimal edits.
+   * This prevents it from rewriting the whole file.
+   */
+  private buildSurgicalValidatorPrompt(
+    content: string,
+    errors: string[],
+    filePath: string
+  ): string {
+    // For import-class errors, only show the import section (first 25 lines)
+    const isImportOnly = errors.every(e =>
+      e.includes('Cross-file Contract') ||
+      e.includes('Missing import') ||
+      e.includes('Unused import') ||
+      e.includes('Wrong import') ||
+      e.includes('Dead import') ||
+      e.includes('Export consistency')
+    );
+
+    const codeContext = isImportOnly
+      ? `IMPORT SECTION (lines 1-${Math.min(25, content.split('\n').length)}):\n` +
+        content.split('\n').slice(0, 25).map((l, i) => `${i + 1}: ${l}`).join('\n')
+      : `FULL FILE:\n${content}`;
+
+    return (
+      `Fix the following validation errors in: ${filePath}\n\n` +
+      `ERRORS:\n${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\n` +
+      `${codeContext}\n\n` +
+      `RESPONSE FORMAT — return ONLY search/replace blocks, one per change:\n` +
+      `<<<SEARCH\n[exact text to find in the file]\n=====\n[replacement text]\n>>>REPLACE\n\n` +
+      `Rules:\n` +
+      `- Each SEARCH string must be a verbatim substring of the file — it will be used for exact replacement\n` +
+      `- Make the SEARCH string as SHORT as possible (just the line(s) that need changing)\n` +
+      `- Do NOT change anything not covered by the listed errors\n` +
+      `- Output ONLY the <<<SEARCH...>>>REPLACE blocks. No explanation, no full file.`
+    );
+  }
+
+  /**
+   * Apply SEARCH/REPLACE blocks to content.
+   * Returns null if no valid blocks are found.
+   */
+  private applySurgicalValidatorPatches(content: string, patchText: string): string | null {
+    const blockRe = /<<<SEARCH\n([\s\S]*?)\n=====\n([\s\S]*?)\n>>>REPLACE/g;
+    let result = content;
+    let matched = false;
+
+    let m: RegExpExecArray | null;
+    while ((m = blockRe.exec(patchText)) !== null) {
+      const search = m[1];
+      const replace = m[2];
+      if (result.includes(search)) {
+        result = result.replace(search, replace);
+        matched = true;
+      }
+    }
+    return matched ? result : null;
+  }
+
   /** Helper: Get base filename without path or extension */
   private getFileBaseName(filePath: string): string {
     const withoutExt = filePath.replace(/\.[^.]+$/, '');
@@ -4153,21 +4312,34 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
                 const hasJsxInTsError1 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
                   lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
-                const structureInstruction1 = hasJsxInTsError1
-                  ? `CRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays.`
-                  : `Keep all existing JSX structure, imports, and logic intact.`;
-                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\n${structureInstruction1} IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). NEVER add 'any' type — use specific TypeScript types or 'unknown' instead. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
-                const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-                if (!fixResponse.success) {
-                  throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                let correctedContent1: string;
+                if (hasJsxInTsError1) {
+                  // JSX-in-.ts: must gut the file — whole-file rewrite is unavoidable
+                  const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
+                  const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+                  if (!fixResponse.success) {
+                    throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                  }
+                  correctedContent1 = fixResponse.message || '';
+                  const fence = correctedContent1.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                  if (fence) { correctedContent1 = fence[1]; }
+                } else {
+                  // Surgical: SEARCH/REPLACE blocks — LLM edits only what the error requires
+                  const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path);
+                  const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+                  if (!surgicalResponse.success) {
+                    throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
+                  }
+                  const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
+                  correctedContent1 = patched ?? (surgicalResponse.message || '');
+                  if (!patched) {
+                    // Patch parsing failed — strip fences and treat as whole-file fallback
+                    const fence = correctedContent1.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                    if (fence) { correctedContent1 = fence[1]; }
+                  }
                 }
-
-                correctedContent = fixResponse.message || '';
-                const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                if (codeBlockMatch) {
-                  correctedContent = codeBlockMatch[1];
-                }
+                correctedContent = correctedContent1;
               }
             } else {
               // Complex errors that need LLM
@@ -4193,21 +4365,33 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
               const hasJsxInTsError2 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
                 lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
-              const structureInstruction2 = hasJsxInTsError2
-                ? `CRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays.`
-                : `Keep all existing JSX structure, imports, and logic intact.`;
-              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\n${structureInstruction2} IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). NEVER add 'any' type — use specific TypeScript types or 'unknown' instead. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
-              const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-              if (!fixResponse.success) {
-                throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+              let correctedContent2: string;
+              if (hasJsxInTsError2) {
+                // JSX-in-.ts: whole-file rewrite required
+                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
+                const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+                if (!fixResponse.success) {
+                  throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                }
+                correctedContent2 = fixResponse.message || '';
+                const fence = correctedContent2.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                if (fence) { correctedContent2 = fence[1]; }
+              } else {
+                // Surgical: SEARCH/REPLACE blocks
+                const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path);
+                const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+                if (!surgicalResponse.success) {
+                  throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
+                }
+                const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
+                correctedContent2 = patched ?? (surgicalResponse.message || '');
+                if (!patched) {
+                  const fence = correctedContent2.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                  if (fence) { correctedContent2 = fence[1]; }
+                }
               }
-
-              correctedContent = fixResponse.message || '';
-              const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-              if (codeBlockMatch) {
-                correctedContent = codeBlockMatch[1];
-              }
+              correctedContent = correctedContent2;
             }
 
             // Re-validate the corrected code - only check CRITICAL errors
@@ -4383,20 +4567,35 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               `🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info'
             );
 
-            const fixPrompt =
-              `The following TypeScript file has compiler errors reported by tsc.\n\n` +
-              `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
-              `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
-              `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
-              `NEVER add 'any' type — use specific types or 'unknown'. ` +
-              `Provide ONLY the corrected code. No explanations, no markdown fences.`;
+            // Surgical first: build a per-line JSON-patch prompt if errors have line numbers.
+            // This avoids handing the whole file to the LLM (which tends to rewrite everything
+            // and introduce new errors in unrelated parts like template literals).
+            const surgicalPrompt = this.buildSurgicalTscPrompt(finalContent, tscErrors, step.path);
+            let corrected: string | null = null;
 
-            const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-            if (!fixResponse.success || !fixResponse.message?.trim()) { break; }
+            if (surgicalPrompt) {
+              const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+              if (surgicalResponse.success && surgicalResponse.message?.trim()) {
+                corrected = this.applySurgicalTscPatches(finalContent, surgicalResponse.message);
+              }
+            }
 
-            let corrected = fixResponse.message;
-            const fenceMatch = corrected.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-            if (fenceMatch) { corrected = fenceMatch[1]; }
+            if (corrected === null) {
+              // Fallback: whole-file correction when no line numbers or patch parsing failed
+              const fixPrompt =
+                `The following TypeScript file has compiler errors reported by tsc.\n\n` +
+                `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
+                `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
+                `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
+                `NEVER add 'any' type — use specific types or 'unknown'. ` +
+                `Provide ONLY the corrected code. No explanations, no markdown fences.`;
+              const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+              if (!fixResponse.success || !fixResponse.message?.trim()) { break; }
+              let raw = fixResponse.message;
+              const fenceMatch = raw.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+              if (fenceMatch) { raw = fenceMatch[1]; }
+              corrected = raw;
+            }
 
             finalContent = corrected;
 

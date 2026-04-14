@@ -1849,6 +1849,37 @@ export class SmartAutoCorrection {
       }
     }
 
+    // FOURTH: Deterministic export default → named export conversion.
+    // The validator flags "Export consistency: Component uses only a default export — named exports are required."
+    // This is a structural transform, not a semantic one — always safe to do deterministically.
+    const hasDefaultExportError = validationErrors.some(e =>
+      e.includes('Export consistency') && e.includes('default export')
+    );
+    if (hasDefaultExportError) {
+      // Pattern 1: `const Foo = ...; export default Foo;`
+      // → add `export` to the const declaration, remove the `export default Foo;` line
+      const defaultExportLineRe = /^export\s+default\s+(\w+)\s*;?\s*$/m;
+      const defaultMatch = fixed.match(defaultExportLineRe);
+      if (defaultMatch) {
+        const componentName = defaultMatch[1];
+        // Add export keyword to the const/function declaration if not already exported
+        const declarationRe = new RegExp(
+          `^(const|function|class)\\s+(${componentName}\\b)`,
+          'm'
+        );
+        if (declarationRe.test(fixed) && !new RegExp(`^export\\s+(const|function|class)\\s+${componentName}\\b`, 'm').test(fixed)) {
+          fixed = fixed.replace(declarationRe, `export $1 $2`);
+        }
+        // Remove the `export default ComponentName;` line
+        fixed = fixed.replace(defaultExportLineRe, '');
+        // Clean up any trailing blank lines left by the removal
+        fixed = fixed.replace(/\n{3,}/g, '\n\n');
+      }
+
+      // Pattern 2: `export default function Foo(...)` → `export function Foo(...)`
+      fixed = fixed.replace(/^export\s+default\s+(function\s+\w)/m, 'export $1');
+    }
+
     validationErrors.forEach(error => {
       // Fix: React hook is used but not imported (e.g., "React hook 'useCallback' is used but not imported from React")
       // Also matches: "useState is used but not imported from React"
@@ -2119,6 +2150,7 @@ export class SmartAutoCorrection {
       'TS1005',                      // Same — TypeScript ',' expected error code
       'Wrong file extension',        // LLM corrector removes JSX from .ts file content (no rename needed)
       'Cross-file Contract',         // Deterministic: wrong symbol removed from import, rerouted to correct package
+      'Export consistency',          // Deterministic: export default → named export transformation
     ];
 
     // NOTE: 'Wrong file extension' is NOT here — the corrector CAN fix this by removing JSX
