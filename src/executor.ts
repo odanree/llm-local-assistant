@@ -3995,6 +3995,10 @@ STRICTLY FORBIDDEN (these will be rejected):
             `- STYLING: Use inline style={{...}} objects for all styling — the source file uses inline styles, NOT Tailwind classes.\n` +
             `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
             `  WRONG: <div className="flex bg-white">  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
+            `  CRITICAL — NO template literals in style objects: backtick strings with ternaries inside \$\{...\} cause parse errors.\n` +
+            `    WRONG: style={{ borderBottom: \`1px solid \${theme === 'dark' ? '#444' : '#ddd'}\` }}\n` +
+            `    RIGHT: style={{ borderBottom: theme === 'dark' ? '1px solid #444' : '1px solid #ddd' }}\n` +
+            `  Use a plain ternary for every theme-dependent style value — never concatenate or template-literal them.\n` +
             `- DO NOT import hooks, form state, services, or business logic.\n` +
             `- DO NOT import ReactNode, ReactElement, or PropsWithChildren — no children prop exists.\n` +
             `- DO NOT call getAccessibleRoutes() in Layout — Navigation handles its own route filtering internally.\n` +

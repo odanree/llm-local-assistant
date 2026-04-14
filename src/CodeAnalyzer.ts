@@ -1880,7 +1880,35 @@ export class SmartAutoCorrection {
       fixed = fixed.replace(/^export\s+default\s+(function\s+\w)/m, 'export $1');
     }
 
-    // FIFTH: Fix `element={X.component}` — TS2322 ComponentType not assignable to ReactNode.
+    // FIFTH: Convert template literals in JSX style objects to plain ternary expressions.
+    // Template literals with ternary operators inside ${...} in style props (e.g.
+    // `borderBottom: \`1px solid ${theme === 'dark' ? '#444' : '#ddd'}\``) consistently cause
+    // TS1002 "Unterminated string literal" parse errors when the LLM mismatches backtick quotes.
+    // The transform: `prefix${A ? B : C}suffix` → A ? 'prefixBsuffix' : 'prefixCsuffix'
+    // Only applies for the common single-ternary-interpolation case used in theme style objects.
+    // Fires when tsc reports TS1002 (unterminated string literal).
+    const hasUnterminatedStringLiteral = validationErrors.some(e => e.includes('TS1002'));
+    if (hasUnterminatedStringLiteral) {
+      // Pattern: propertyName: `staticPrefix${condition ? trueLiteral : falseLiteral}staticSuffix`
+      // e.g. borderBottom: `1px solid ${theme === 'dark' ? '#444' : '#ddd'}`
+      fixed = fixed.replace(
+        /:\s*`([^`$]*)\$\{([^}]+)\s*\?\s*(['"][^'"]*['"])\s*:\s*(['"][^'"]*['"])\}([^`]*)`/g,
+        (_match, prefix, _cond, trueVal, falseVal, suffix) => {
+          const condition = _cond.trim();
+          const trueLiteral = trueVal.replace(/^['"]|['"]$/g, '');
+          const falseLiteral = falseVal.replace(/^['"]|['"]$/g, '');
+          const trueStr = prefix || suffix
+            ? `'${prefix}${trueLiteral}${suffix}'`
+            : trueVal;
+          const falseStr = prefix || suffix
+            ? `'${prefix}${falseLiteral}${suffix}'`
+            : falseVal;
+          return `: ${condition} ? ${trueStr} : ${falseStr}`;
+        }
+      );
+    }
+
+    // SEVENTH: Fix `element={X.component}` — TS2322 ComponentType not assignable to ReactNode.
     // React Router's `element` prop expects ReactNode (a rendered element), not ComponentType
     // (a constructor/function). The generator sometimes passes the type directly instead of
     // calling it as JSX. Wrap in React.createElement() to produce a valid ReactElement.
