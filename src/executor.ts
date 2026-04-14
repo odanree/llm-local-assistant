@@ -1651,6 +1651,8 @@ export class Executor {
       const hasJsx = /<\/[A-Za-z]/.test(content)        // closing tag e.g. </div> </Component>
         || /<>|<\/>/.test(content)                       // React fragment <> </>
         || /<[A-Z][a-zA-Z]*[\s/]/.test(content)         // self-closing or spaced JSX <Foo /> <Foo >
+        || /<[a-z][a-zA-Z]*[\s/]/.test(content)         // lowercase HTML JSX <div /> <span > (NOT generic <T> which has no space/slash)
+        || /\(\)\s*=>\s*</.test(content)                 // arrow fn returning JSX: () => <Component>
         || /React\.FC|JSX\.Element/.test(content);       // JSX-specific type annotations
       if (hasJsx) {
         errors.push(
@@ -1805,6 +1807,30 @@ export class Executor {
         : '';
       const isStructuralLayoutCriteria = Executor.isStructuralLayout(step.path);
       const isDecomposedNavigationCriteria = Executor.isDecomposedNavigation(step.path);
+
+      // Short-circuit: pre-define criteria for well-known decomposition targets.
+      // The LLM reliably produces "Uses cn()" for these even when told not to,
+      // because it pattern-matches from Tailwind projects. Hardcoded criteria are
+      // more reliable AND faster.
+      if (isStructuralLayoutCriteria) {
+        return [
+          'Accepts children prop (React.ReactNode)',
+          'Props interface includes isLoggedIn (boolean), theme (\'light\'|\'dark\'), onLogout, isSidebarOpen (boolean), onToggleSidebar',
+          'Renders Navigation component conditionally based on isSidebarOpen prop',
+          'Has header, sidebar (with Navigation), main content area, and footer structure',
+          'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+      if (isDecomposedNavigationCriteria) {
+        return [
+          'Props interface includes isLoggedIn (boolean), theme (\'light\'|\'dark\'), onLogout',
+          'Uses <Link> component for all navigation links (NOT useNavigate, NOT <a href>)',
+          'Shows routes filtered by isLoggedIn (not from a store — from props only)',
+          'Logout button is shown only when isLoggedIn is true',
+          'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+
       const hookLine = isPureLogicFile
         ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
         : isNonVisualWrapper
@@ -3662,7 +3688,9 @@ STRICTLY FORBIDDEN (these will be rejected):
             `  interface LayoutProps { children: React.ReactNode; isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: ()=>void; isSidebarOpen: boolean; onToggleSidebar: ()=>void; }\n` +
             `- Render Navigation conditionally: {isSidebarOpen && <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />}\n` +
             `- Render children inside the <main> area (NOT the Routes — the parent App handles routing).\n` +
-            `- cn() IS appropriate here for class merging on structural elements.\n` +
+            `- STYLING: Use inline \`style={{...}}\` objects for all styling — the source file uses inline styles, NOT Tailwind classes.\n` +
+            `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
+            `  WRONG: <div className={cn('flex', 'bg-white')}>  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
             `- DO NOT import hooks, form state, services, or business logic.\n`
           : '') +
         `\n`
@@ -3715,7 +3743,13 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER import cn, clsx, classnames — no styling in data/config files\n` +
         `- NEVER import from store files (useAuthStore, useXxxStore) — config files have no React lifecycle\n` +
         `- NEVER include renderRoutes(), render functions, or any function that returns JSX\n` +
-        `- Export ONLY: TypeScript interfaces, type aliases, plain objects, and data arrays\n\n`
+        `- Export ONLY: TypeScript interfaces, type aliases, plain objects, and data arrays\n` +
+        `\nCORRECT Routes.ts format (follow this exactly):\n` +
+        `  import type { ComponentType } from 'react';\n` +
+        `  export interface RouteConfig { path: string; label: string; component: ComponentType; requiresAuth: boolean; roles: string[]; }\n` +
+        `  export const ROUTES: RouteConfig[] = [{ path: '/', label: 'Home', component: HomePage, requiresAuth: false, roles: ['user', 'admin'] }];\n` +
+        `  export function getAccessibleRoutes(isLoggedIn: boolean): RouteConfig[] { return ROUTES.filter(r => !r.requiresAuth || isLoggedIn); }\n` +
+        `WRONG (never do this): function renderRoute() { return <Route ... />; }  ← JSX in a .ts file is illegal\n\n`
       : '';
 
     // App root constraint: injected for App.tsx to prevent useNavigate in the BrowserRouter wrapper.
@@ -3741,7 +3775,9 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- The parent (Layout or App) owns the state and passes it down — this component just renders it\n` +
         `- DO NOT use useNavigate or any router hook inside this component — render <Link> elements instead\n` +
         `  useNavigate is only legal inside a component that is already rendered INSIDE a <BrowserRouter>.\n` +
-        `  Navigation receives its router context from the parent's <BrowserRouter> — use <Link to="..."> for nav.\n\n`
+        `  Navigation receives its router context from the parent's <BrowserRouter> — use <Link to="..."> for nav.\n` +
+        `- STYLING: Use inline \`style={{...}}\` objects — the source file uses inline styles, NOT Tailwind classes.\n` +
+        `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n\n`
       : '';
 
     // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it

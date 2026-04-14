@@ -1874,6 +1874,38 @@ export class SmartAutoCorrection {
         console.log(`[SmartAutoCorrection] Removed store import from config/data .ts file`);
       }
 
+      // Fix: Semicolons used as commas in TypeScript object literals (CSSProperties pattern).
+      // LLM sometimes outputs CSS syntax (semicolons) inside TS object literals:
+      //   const headerStyle: CSSProperties = { padding: '1rem'; display: 'flex'; }
+      // TypeScript reports TS1005: ',' expected at these lines.
+      // Strategy: use the line number from the error message to fix only the bad line.
+      if (error.includes("',' expected") || error.includes('TS1005')) {
+        const lineNumMatch = error.match(/\(line (\d+)\)/);
+        if (lineNumMatch) {
+          const lineNum = parseInt(lineNumMatch[1], 10);
+          const lines = fixed.split('\n');
+          if (lineNum > 0 && lineNum <= lines.length) {
+            const targetLine = lines[lineNum - 1];
+            const trimmed = targetLine.trim();
+            // Only fix lines that look like object property assignments ending with ;
+            // Skip comments, standalone statements, and interface declarations
+            const isObjectProperty = trimmed
+              && !trimmed.startsWith('//')
+              && !trimmed.startsWith('*')
+              && !trimmed.startsWith('interface')
+              && !trimmed.startsWith('type ')
+              && /^\w/.test(trimmed)
+              && trimmed.includes(':')
+              && /;\s*$/.test(targetLine);
+            if (isObjectProperty) {
+              lines[lineNum - 1] = targetLine.replace(/;\s*$/, ',');
+              fixed = lines.join('\n');
+              console.log(`[SmartAutoCorrection] Fixed semicolon→comma in object literal at line ${lineNum}`);
+            }
+          }
+        }
+      }
+
       // Fix: cn() imported but bare string className detected.
       // Replace all className="foo" / className='foo' / className={"foo"} / className={'foo'}
       // with className={cn('foo')} so the validator stops firing.
@@ -2034,13 +2066,18 @@ export class SmartAutoCorrection {
       'bare string literal',        // Deterministic: className="foo" → className={cn('foo')}
       'manual string concatenation', // Deterministic: className={`foo ${bar}`} → className={cn('foo', bar)}
       'Config File Store Import',    // Deterministic: remove store imports from plain .ts config files
+      "',' expected",                // Deterministic: semicolons used as commas in TS object literals (CSSProperties)
+      'TS1005',                      // Same — TypeScript ',' expected error code
+      'Wrong file extension',        // LLM corrector removes JSX from .ts file content (no rename needed)
     ];
 
+    // NOTE: 'Wrong file extension' is NOT here — the corrector CAN fix this by removing JSX
+    // from the content (it doesn't need to rename the file; the file extension is what the
+    // planner intended, but the LLM put JSX inside a .ts file by mistake).
     const unfixablePatterns = [
       'unmatched brace',
       'documentation instead of code',
       'multiple file',
-      'Wrong file extension',  // Can't rename a file in code — planner must generate correct extension
     ];
 
     let hasFixable = false;

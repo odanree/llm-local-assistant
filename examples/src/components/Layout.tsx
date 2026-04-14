@@ -1,82 +1,57 @@
-import React, { useState, useCallback, ReactNode } from 'react';
+import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Navigation from './Navigation';
-import { ROUTES, getAccessibleRoutes, RouteConfig } from '../config/Routes';
+import { ROUTES } from '../config/Routes';
 import NotFoundPage from '../pages/NotFoundPage';
 
-interface User {
-  id: string;
-  name: string;
-  role: 'admin' | 'user';
-}
-
 interface LayoutProps {
-  user: User | null;
-  onLogout: () => void;
+  isLoggedIn: boolean;
   theme: 'light' | 'dark';
+  onLogout: () => void;
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
-  children?: ReactNode;
 }
 
-/**
- * Layout Component
- * 
- * Extracted from App.tsx to handle:
- * - Main layout structure (header, sidebar, main content, footer)
- * - Route rendering with auth and role checks
- * - Responsive sidebar management
- * - Theme-aware styling
- */
-export const Layout: React.FC<LayoutProps> = ({
-  user,
-  onLogout,
+const Layout: React.FC<LayoutProps> = ({
+  isLoggedIn,
   theme,
+  onLogout,
   isSidebarOpen,
   onToggleSidebar,
-  children,
 }) => {
-  const renderRoutes = () => {
-    return ROUTES.map((route) => {
-      if (route.requiresAuth && !user) {
-        return (
-          <Route
-            key={route.path}
-            path={route.path}
-            element={<Navigate to="/" replace />}
-          />
-        );
-      }
-
-      if (user && !route.roles.includes(user.role)) {
-        return (
-          <Route
-            key={route.path}
-            path={route.path}
-            element={<Navigate to="/profile" replace />}
-          />
-        );
-      }
-
-      return (
-        <Route
-          key={route.path}
-          path={route.path}
-          element={<route.component />}
-        />
-      );
-    });
-  };
-
   return (
-    <div className={`app-container ${theme}`} style={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#ffffff' }}>
+    <div
+      className={`app-container ${theme}`}
+      style={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#ffffff' }}
+    >
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-        {children}
+        {/* Header */}
+        <header
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.75rem 1.5rem',
+            borderBottom: `1px solid ${theme === 'dark' ? '#444' : '#ddd'}`,
+            backgroundColor: theme === 'dark' ? '#2a2a2a' : '#f5f5f5',
+          }}
+        >
+          <button
+            onClick={onToggleSidebar}
+            aria-label="Toggle sidebar"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem' }}
+          >
+            ☰
+          </button>
+          <span style={{ fontWeight: 600, color: theme === 'dark' ? '#fff' : '#000' }}>
+            Dashboard
+          </span>
+        </header>
 
         <div style={{ display: 'flex', flex: 1 }}>
-          {/* Sidebar Navigation */}
+          {/* Sidebar */}
           {isSidebarOpen && (
-            <Navigation user={user} theme={theme} />
+            <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />
           )}
 
           {/* Main content */}
@@ -89,7 +64,24 @@ export const Layout: React.FC<LayoutProps> = ({
             }}
           >
             <Routes>
-              {renderRoutes()}
+              {ROUTES.map((route) => {
+                if (route.requiresAuth && !isLoggedIn) {
+                  return (
+                    <Route
+                      key={route.path}
+                      path={route.path}
+                      element={<Navigate to="/" replace />}
+                    />
+                  );
+                }
+                return (
+                  <Route
+                    key={route.path}
+                    path={route.path}
+                    element={<route.component />}
+                  />
+                );
+              })}
               <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </main>
