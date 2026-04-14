@@ -499,9 +499,15 @@ export class ArchitectureValidator {
         const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
         let resolvedPath = imp.source;
 
-        // Skip npm packages — they don't start with . or / and live in node_modules
-        if (!resolvedPath.startsWith('.') && !resolvedPath.startsWith('/')) {
+        // Skip npm packages — they don't start with . or / or @/ and live in node_modules
+        // BUT check @/ alias paths (they map to src/ and may not exist)
+        if (!resolvedPath.startsWith('.') && !resolvedPath.startsWith('/') && !resolvedPath.startsWith('@/')) {
           continue;
+        }
+
+        // Resolve @/ alias (maps to src/ in standard TypeScript projects)
+        if (resolvedPath.startsWith('@/')) {
+          resolvedPath = 'src/' + resolvedPath.slice(2); // e.g. '@/utils/cn' → 'src/utils/cn'
         }
 
         // Skip JSON/config files — they have no TypeScript exports to verify
@@ -1325,10 +1331,13 @@ export class ArchitectureValidator {
 
     // Step 5: Check for MIXED STATE MANAGEMENT
     // Using both useState and store hooks means you're not fully refactored
+    // Exception: root App component legitimately uses both Zustand (global auth state) and
+    // local useState (pure UI state like theme, sidebar toggle) — skip this check for App.tsx
     const stateHooks = importedHooks.filter(h => h.names.some(n => n.includes('Store') || n.includes('store')));
     const usesLocalState = /const\s+\[\w+,\s*\w+\]\s*=\s*useState/.test(generatedCode);
+    const isRootAppFile = /(?:^|\/)App\.tsx$/.test(filePath);
 
-    if (stateHooks.length > 0 && usesLocalState) {
+    if (stateHooks.length > 0 && usesLocalState && !isRootAppFile) {
       violations.push({
         type: 'semantic-error',
         import: stateHooks[0].names[0],
@@ -1430,6 +1439,56 @@ export class SmartAutoCorrection {
     });
     
     return circularImports;
+  }
+
+  /**
+   * Merge split React imports into one line — deterministic, no LLM needed.
+   * Routes.ts / config files often generate:
+   *   import React from 'react';
+   *   import type { ComponentType } from 'react';
+   * which must become:
+   *   import React, { ComponentType } from 'react';
+   */
+  static mergeSplitReactImports(code: string): string {
+    const reactImportRegex = /^import\s+.+\s+from\s+['"]react['"];?$/gm;
+    const reactImportLines = code.match(reactImportRegex);
+    if (!reactImportLines || reactImportLines.length <= 1) { return code; }
+
+    let defaultImport = '';
+    const namedImports: string[] = [];
+
+    for (const line of reactImportLines) {
+      // Extract default import: `import React from 'react'` or `import React, { ... } from 'react'`
+      const defaultMatch = line.match(/^import\s+([A-Z]\w*)\s*(?:,|from)/);
+      if (defaultMatch) { defaultImport = defaultMatch[1]; }
+      // Extract named imports: `{ X, Y }` or `import type { X }`
+      const namedMatch = line.match(/\{([^}]+)\}/);
+      if (namedMatch) {
+        namedMatch[1].split(',').forEach(n => {
+          const cleaned = n.trim().replace(/^type\s+/, ''); // strip 'type' keyword
+          if (cleaned) { namedImports.push(cleaned); }
+        });
+      }
+    }
+
+    const named = namedImports.length > 0 ? `{ ${namedImports.join(', ')} }` : '';
+    let merged: string;
+    if (defaultImport && named) {
+      merged = `import ${defaultImport}, ${named} from 'react';`;
+    } else if (defaultImport) {
+      merged = `import ${defaultImport} from 'react';`;
+    } else if (named) {
+      merged = `import ${named} from 'react';`;
+    } else {
+      return code;
+    }
+
+    // Replace first react import with merged, blank out the rest, then collapse blank lines
+    let firstFound = false;
+    return code.replace(reactImportRegex, (line) => {
+      if (!firstFound) { firstFound = true; return merged; }
+      return ''; // subsequent react imports removed
+    }).replace(/\n{3,}/g, '\n\n');
   }
 
   /**
@@ -1733,7 +1792,10 @@ export class SmartAutoCorrection {
   static fixCommonPatterns(code: string, validationErrors: string[], filePath?: string): string {
     let fixed = code;
 
-    // FIRST: Check for circular imports (highest priority - always wrong)
+    // FIRST: Merge split React imports (deterministic — no LLM needed)
+    fixed = this.mergeSplitReactImports(fixed);
+
+    // SECOND: Check for circular imports (always wrong)
     if (filePath) {
       fixed = this.fixCircularImports(fixed, filePath);
     }
@@ -1804,10 +1866,18 @@ export class SmartAutoCorrection {
         fixed = fixed.replace(/\bas\s+any\b/g, 'as unknown');
       }
 
-      // Fix: Unmatched braces → Check and report (can't auto-fix)
+      // Fix: Unclosed braces — deterministic tail append
+      // Common cause: LLM truncated the output; missing closing braces are at the end.
+      // Extract the count from the error "Syntax error: N unclosed brace(s)" and append N '}'.
       if (error.includes('unclosed brace')) {
-        // This needs manual fixing
-        console.log('[SmartAutoCorrection] Cannot auto-fix brace mismatch');
+        const countMatch = error.match(/(\d+)\s+unclosed brace/);
+        const missing = countMatch ? parseInt(countMatch[1], 10) : 1;
+        const openCount = (fixed.match(/{/g) || []).length;
+        const closeCount = (fixed.match(/}/g) || []).length;
+        const actualMissing = Math.max(0, openCount - closeCount);
+        const toAppend = actualMissing > 0 ? actualMissing : missing;
+        console.log(`[SmartAutoCorrection] Appending ${toAppend} closing brace(s) to fix truncation`);
+        fixed = fixed.trimEnd() + '\n' + '}'.repeat(toAppend);
       }
     });
 
@@ -1907,6 +1977,7 @@ export class SmartAutoCorrection {
     const fixablePatterns = [
       'Missing import',
       'Unused import',
+      'Split React imports',             // Deterministic merge — no LLM needed
       'is used but not imported from React',  // NEW: Specific hook import pattern
       'any type',
       'typo',
@@ -1914,10 +1985,10 @@ export class SmartAutoCorrection {
       'imported but never called',  // Added: More specific pattern
       'Wrong import',  // Added: cn/UI import in a non-component .ts file
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
+      'unclosed brace',  // Deterministic tail-append fix for truncated output
     ];
 
     const unfixablePatterns = [
-      'unclosed brace',
       'unmatched brace',
       'documentation instead of code',
       'multiple file',

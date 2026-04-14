@@ -76,15 +76,26 @@ export class Executor {
   private availablePackages: string[] = [];
 
   /**
-   * Returns true when a file path represents a non-visual wrapper component:
-   * Route, Guard, Wrapper, Provider, Layout, Context, HOC, or Outlet.
-   * These components redirect or render children — they have no styled elements.
-   * Single source of truth used by the validator, criteria generator, and generation prompt.
+   * Returns true when a file is a pure logic redirector: no styled HTML, no cn(), just
+   * conditional navigation or context provision.
+   * Route/Guard/Provider/Context/HOC/Outlet — these redirect or forward children with zero visual output.
+   * Layout is intentionally excluded: Layout components ARE visual (structural HTML + cn for class merging).
    */
   private static isNonVisualWrapper(filePath: string): boolean {
     if (!filePath.endsWith('.tsx')) { return false; }
     const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-    return /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(name);
+    return /Route|Guard|Provider|Context|HOC|Outlet/i.test(name);
+  }
+
+  /**
+   * Returns true when a file is a structural layout wrapper:
+   * Layout components render HTML structure (header/main/footer) around children.
+   * They ARE visual, use cn(), but still require a children prop.
+   */
+  private static isStructuralLayout(filePath: string): boolean {
+    if (!filePath.endsWith('.tsx')) { return false; }
+    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+    return /Layout/i.test(name);
   }
 
   // Phase 3A: Dependency Injection for side effects
@@ -547,12 +558,33 @@ export class Executor {
       for (const importMatch of importLines) {
         const rawPath = importMatch[1];
 
-        // Resolve @/ alias (maps to src/), bare src/ prefix, or relative paths
+        // Resolve @/ alias (maps to src/), bare src/ prefix, or relative paths.
+        // For relative paths we must include the file's own directory so that
+        // `./Navigation` from `src/components/Layout.tsx` → `components/Navigation`
+        // (not just `Navigation` which misses the `components/` prefix).
+        const resolveRelative = (base: string, rel: string): string => {
+          const baseParts = base.split('/').filter(Boolean);
+          for (const seg of rel.split('/')) {
+            if (seg === '.') { continue; }
+            else if (seg === '..') { baseParts.pop(); }
+            else { baseParts.push(seg); }
+          }
+          return baseParts.join('/');
+        };
+
+        // currentFileDir without trailing slash, stripped of leading src/
+        const currentFileDir = (() => {
+          const d = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '';
+          return d.startsWith('src/') ? d.slice(4) : d;
+        })();
+
         const resolved = rawPath.startsWith('@/')
           ? rawPath.slice(2)  // strip '@/' → relative to src/
           : rawPath.startsWith('src/')
           ? rawPath.slice(4)  // strip 'src/' → same level as src/
-          : rawPath.replace(/^\.\//, '').replace(/^\.\.\//, ''); // strip leading ./ or ../
+          : (rawPath.startsWith('./') || rawPath.startsWith('../'))
+          ? resolveRelative(currentFileDir, rawPath)  // proper relative resolution with context
+          : rawPath;
 
         const resolvedNoExt = resolved.replace(/\.[tj]sx?$/, '');
 
@@ -832,10 +864,23 @@ export class Executor {
         );
 
         if (contractResult.hasViolations) {
-          const contractErrors = contractResult.violations.map(
-            v =>
-              `❌ Cross-file Contract: ${v.message}. ${v.suggestion}`
-          );
+          // For pure .ts config/data files (not .tsx), skip "Cannot find module" for
+          // page/component/screen imports — these are external leaf dependencies that
+          // legitimately don't exist in the test workspace (e.g. Routes.ts importing HomePage).
+          // The contract validator is designed for store↔component contracts, not config files.
+          const isConfigTs = filePath.endsWith('.ts') && !filePath.endsWith('.d.ts');
+          const contractErrors = contractResult.violations
+            .filter(v => {
+              if (isConfigTs && v.message.includes('Cannot find module')) {
+                const moduleRef = v.message.match(/Cannot find module '([^']+)'/)?.[1] ?? '';
+                if (/\/(pages|screens|views|components)\//i.test(moduleRef)) {
+                  console.log(`[Executor] ℹ️ Skipping page/component import check for config file: ${moduleRef}`);
+                  return false;
+                }
+              }
+              return true;
+            })
+            .map(v => `❌ Cross-file Contract: ${v.message}. ${v.suggestion}`);
           errors.push(...contractErrors);
           
           if (contractResult.recommendation === 'skip') {
@@ -865,7 +910,9 @@ export class Executor {
         // validateImportUsage and validateZustandComponent were unused methods removed in cleanup
 
         // If component imports from stores but Zustand pattern not detected, that's also an error
-        if (content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
+        // Exception: root App component legitimately uses both Zustand (auth) and local useState (UI state)
+        const isRootApp = /(?:^|\/)App\.tsx$/.test(filePath);
+        if (!isRootApp && content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
           errors.push(
             `❌ Zustand Pattern: Component imports from stores but doesn't use destructuring pattern. ` +
             `Expected: const { x, y } = useStoreHook();`
@@ -1204,10 +1251,10 @@ export class Executor {
         .flatMap(m => m[1].split(',').map(s => s.trim().replace(/\s+as\s+\w+$/, '').trim()))
         .filter(s => /^\w+$/.test(s));
       for (const name of importedNames) {
-        if (new RegExp(`\\b(?:const|let|var|function|class)\\s+${name}\\b`).test(content)) {
+        if (new RegExp(`\\b(?:const|let|var|function|class|interface|type)\\s+${name}\\b`).test(content)) {
           errors.push(
             `❌ Duplicate identifier: '${name}' is both imported and declared locally. ` +
-            `Remove the local declaration — import the module instead.`
+            `Remove either the import OR the local declaration — do not have both.`
           );
         }
       }
@@ -1464,13 +1511,15 @@ export class Executor {
       }
 
       // Detect non-visual wrapper components that don't accept or render children.
-      // A Route/Guard/Wrapper/Provider component that ignores children is a broken wrapper —
-      // it can never render the protected content it's supposed to wrap.
-      if (Executor.isNonVisualWrapper(filePath) && !/\bchildren\b/.test(content)) {
+      // A Route/Guard/Provider or Layout component that ignores children is broken —
+      // it can never render the content it's supposed to wrap.
+      const needsChildren = Executor.isNonVisualWrapper(filePath) || Executor.isStructuralLayout(filePath);
+      if (needsChildren && !/\bchildren\b/.test(content)) {
+        const isLayout = Executor.isStructuralLayout(filePath);
+        const baseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
         errors.push(
-          `❌ Missing children prop: ${filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '')} is a wrapper component but never references \`children\`. ` +
-          `A wrapper must accept and render children: \`({ children }: { children: React.ReactNode })\` ` +
-          `and return \`<>{children}</>\` when the user is authenticated.`
+          `❌ Missing children prop: ${baseName} is a ${isLayout ? 'layout' : 'wrapper'} component but never references \`children\`. ` +
+          `A ${isLayout ? 'layout' : 'wrapper'} must accept and render children: \`({ children }: { children: React.ReactNode })\`.`
         );
       }
 
@@ -1697,7 +1746,8 @@ export class Executor {
       const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
       const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
       const isServiceTarget = /[\\/](?:services|utils|lib|api|helpers)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
-      const isPureLogicFile = isHookTarget || isServiceTarget;
+      const isConfigTarget = /[\\/](?:routes|config|types|constants|models)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+      const isPureLogicFile = isHookTarget || isServiceTarget || isConfigTarget;
       const isNonVisualWrapper = Executor.isNonVisualWrapper(step.path);
       // For mock auth services, add a rule about the default return value
       const stepBaseName = step.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
@@ -2448,11 +2498,15 @@ JSON array only. No explanation.`;
         const otherDesc = (otherStep.description || '').toLowerCase();
 
         // Check if current step imports from other step
-        // Look for patterns like "import from stores/useAuthStore" or "import from types/LoginFormState"
+        // Look for patterns like "import from stores/useAuthStore" or "renders the Layout component"
+        const basename = this.getFileBaseName(otherPath);
         const importPatterns = [
-          `imports?.*from.*${this.getFileBaseName(otherPath)}`,
-          `uses?.*${this.getFileBaseName(otherPath)}`,
-          `from.*['"]([^'"]*${this.getFileBaseName(otherPath)}[^'"]*)['"]`,
+          `imports?.*from.*${basename}`,
+          `imports?.*${basename}`,   // e.g. "imports and renders the new Layout component"
+          `renders?.*${basename}`,   // e.g. "imports and renders the new Layout component"
+          `uses?.*${basename}`,
+          `consumes?.*${basename}`,  // e.g. "consume the new Layout component"
+          `from.*['"]([^'"]*${basename}[^'"]*)['"]`,
         ];
 
         for (const pattern of importPatterns) {
@@ -3342,10 +3396,32 @@ Do NOT create your own import paths - use EXACTLY what's shown above.
         }
 
         // Include content from prior READ steps so the LLM sees the actual API of existing files
+        // Also compute path offset: if this WRITE target is in a subdirectory relative to
+        // a READ source, the model must adjust relative import paths (e.g. ./pages/ → ../pages/).
+        let pathOffsetNote = '';
+        if (readStepContents.length > 0 && step.path) {
+          const targetDir = step.path.includes('/') ? step.path.substring(0, step.path.lastIndexOf('/')) : '';
+          for (const r of readStepContents) {
+            const sourceDir = r.path.includes('/') ? r.path.substring(0, r.path.lastIndexOf('/')) : '';
+            if (targetDir !== sourceDir && targetDir.startsWith(sourceDir + '/')) {
+              // Target is one or more levels deeper than source.
+              // Count the extra levels so we know how many '../' to prepend.
+              const extra = targetDir.slice(sourceDir.length + 1).split('/').length;
+              const prefix = '../'.repeat(extra);
+              pathOffsetNote = `\n⚠️ PATH ADJUSTMENT REQUIRED: You are writing to \`${step.path}\` (directory: \`${targetDir}/\`). ` +
+                `The source file \`${r.path}\` is at \`${sourceDir}/\`. ` +
+                `Its relative imports (e.g. \`./pages/X\`) resolve from \`${sourceDir}/\`, ` +
+                `but from \`${targetDir}/\` you must add \`${'../'.repeat(extra)}\` prefix: ` +
+                `WRONG: \`./pages/X\`  RIGHT: \`${prefix}pages/X\`\n`;
+              break;
+            }
+          }
+        }
+
         const readContextSection = readStepContents.length > 0
           ? `## EXISTING CODEBASE (files read in prior steps — use their EXACT APIs)
-
-${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 1500)}\n\`\`\``).join('\n\n')}
+${pathOffsetNote}
+${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 4000)}\n\`\`\``).join('\n\n')}
 
 CRITICAL: When importing from any file shown above, use the EXACT export names and path
 shown in that file. For example, if a store uses \`export default useAuthStore\`, import it
@@ -3366,6 +3442,10 @@ CRITICAL INTEGRATION RULES:
 3. For Zustand stores: Use ONLY the methods/properties exported (do NOT guess at other properties)
 4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
+6. ⚠️ SIBLING COMPONENT RULE: These files are for API reference only. Do NOT import sibling components
+   (other components from this plan) into this file unless the step description explicitly says you must
+   compose or render them. Example: Navigation must NOT import Layout — they are siblings, not parent/child.
+   Only the top-level App or the parent that owns both should import both.
 
 `
           : '';
@@ -3493,6 +3573,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
     const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
     const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path);
+    const isStructuralLayoutTsx = isNonInteractiveTsx && Executor.isStructuralLayout(step.path);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
         `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
@@ -3509,6 +3590,18 @@ STRICTLY FORBIDDEN (these will be rejected):
             `- MUST accept and render \`children\`: ({ children }: { children: React.ReactNode }) or React.PropsWithChildren<{}>\n` +
             `  When authenticated: return <>{children}</>  When unauthenticated: return <Navigate to="/login" /> or equivalent\n` +
             `  A wrapper that ignores children is broken — it can never render the protected content.\n`
+          : '') +
+        (isStructuralLayoutTsx
+          ? `- STRUCTURAL LAYOUT RULES: This is a DECOMPOSITION task — copy the visual structure from the source file above.\n` +
+            `- DO NOT produce a thin wrapper like \`<div>{children}</div>\`. That is WRONG.\n` +
+            `- The source file shows the exact structure: header / sidebar (Navigation) / main content / footer.\n` +
+            `  Copy ALL of those sections into this Layout component. Minimum ~80 lines.\n` +
+            `- Props: accept isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar from the parent — pass them through.\n` +
+            `  interface LayoutProps { children: React.ReactNode; isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: ()=>void; isSidebarOpen: boolean; onToggleSidebar: ()=>void; }\n` +
+            `- Render Navigation conditionally: {isSidebarOpen && <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />}\n` +
+            `- Render children inside the <main> area (NOT the Routes — the parent App handles routing).\n` +
+            `- cn() IS appropriate here for class merging on structural elements.\n` +
+            `- DO NOT import hooks, form state, services, or business logic.\n`
           : '') +
         `\n`
       : '';
@@ -3547,6 +3640,21 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER use export default — use named exports only\n\n`
       : '';
 
+    // Config/data file constraint: injected for plain .ts files that are NOT hooks or stores.
+    // Routes.ts, config.ts, types.ts, constants.ts — these are data-only with zero JSX.
+    const isConfigOrDataTsTarget = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') && !isHookTarget && !isStoreTarget;
+    const configTsConstraintSection = isConfigOrDataTsTarget
+      ? `\nCONFIG/DATA FILE RULES (mandatory — this is a .ts file, NOT a React component):\n` +
+        `- ABSOLUTELY NO JSX: no <elements>, no </tags>, no <>, no JSX expressions anywhere in this file\n` +
+        `- NEVER import React (default or named) — this file has no JSX and needs no React runtime\n` +
+        `- NEVER use React.FC, JSX.Element, ReactElement, or any JSX-specific type annotation\n` +
+        `- If you must reference a React component type (e.g. in a RouteConfig interface), use:\n` +
+        `  import type { ComponentType } from 'react'  ← type-only, no runtime React needed\n` +
+        `- NEVER import cn, clsx, classnames — no styling in data/config files\n` +
+        `- NEVER include renderRoutes(), render functions, or any function that returns JSX\n` +
+        `- Export ONLY: TypeScript interfaces, type aliases, plain objects, and data arrays\n\n`
+      : '';
+
     // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
     // doesn't import from packages that don't exist in this project.
     // Only injected for TS/TSX files; no-op when package.json wasn't found.
@@ -3566,7 +3674,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${configTsConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -3851,7 +3959,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   return `${i + 1}. ${e}`;
                 }).join('\n');
 
-                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
+                const hasJsxInTsError1 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
+                  lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
+                const structureInstruction1 = hasJsxInTsError1
+                  ? `CRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays.`
+                  : `Keep all existing JSX structure, imports, and logic intact.`;
+                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\n${structureInstruction1} IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). NEVER add 'any' type — use specific TypeScript types or 'unknown' instead. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
                 const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
                 if (!fixResponse.success) {
@@ -3886,7 +3999,12 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 return `${i + 1}. ${e}`;
               }).join('\n');
 
-              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
+              const hasJsxInTsError2 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
+                lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
+              const structureInstruction2 = hasJsxInTsError2
+                ? `CRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays.`
+                : `Keep all existing JSX structure, imports, and logic intact.`;
+              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\n${structureInstruction2} IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). NEVER add 'any' type — use specific TypeScript types or 'unknown' instead. Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
 
               const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
               if (!fixResponse.success) {

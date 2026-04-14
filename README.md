@@ -466,14 +466,65 @@ See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATT
 ## 🏗️ Architecture & Design
 
 ```
-Your Code → [PLANNER] → Multi-step plan with validation
-               ↓
-          [EXECUTOR] → Step-by-step file generation
-               ↓
-          [VALIDATOR] → 6-layer semantic validation
-               ↓
-         Your Files  ← Retry on failure
+/plan <task>
+     │
+     ▼
+ [PLANNER]  ──── LLM call: natural language → PlanStep[]
+     │            Post-processed: inject missing deliverables,
+     │            topological sort by dependency
+     │
+     ▼
+ [ARCHITECT]  ── Per-file: generate 3-5 YES/NO acceptance criteria
+     │            Injected into generator AND used by reviewer
+     │            File-type guards prevent nonsensical criteria
+     │            (e.g. no "uses cn()" criterion for a .ts config file)
+     │
+     ▼
+ [GENERATOR]  ── Conditional constraint injection by file type:
+     │            hooks → no JSX / return contract rules
+     │            stores → flat state / no React imports
+     │            .ts data files → absolutely no JSX
+     │            structural layouts → copy all visual sections
+     │            interactive components → forwardRef required
+     │
+     ▼
+ [VALIDATOR]  ── 5 sequential checks (stops at first critical failure):
+     │            1. Syntax — brace balance, markdown-in-code, any types
+     │            2. Patterns — bare classNames, JSX in .ts, missing padding
+     │            3. Hook usage — called? destructured? mixed state?
+     │            4. Cross-file contract — imported symbols exist in source
+     │            5. LLM reviewer — structured YES/NO vs acceptance criteria
+     │
+     ▼
+ [CORRECTOR]  ── Two layers before giving up:
+     │            A. Deterministic (SmartAutoCorrection):
+     │               merge split React imports, append missing braces,
+     │               remove cn from .ts files, fix circular imports
+     │            B. LLM correction: targeted error list + file-specific
+     │               instructions (e.g. "REMOVE ALL JSX" for .ts files,
+     │               not the default "keep existing JSX structure")
+     │            Loop detector: aborts if same error repeats twice
+     │
+     ▼
+  Your Files
 ```
+
+### Design Principle: Push Decisions Left
+
+Every constraint that can be expressed as a regex belongs in the **validator**, not the generator. Every constraint that can be deterministically fixed belongs in **SmartAutoCorrection**, not the LLM corrector. The LLM corrector is a last resort — it consumes context, produces non-deterministic output, and can introduce new errors while fixing old ones.
+
+The failure modes this architecture is designed to prevent:
+
+| Failure | Where it's caught | How |
+|---|---|---|
+| LLM imports hallucinated packages | Generator | `availablePackagesSection` injects exact `package.json` deps |
+| JSX generated in a `.ts` config file | Generator + Validator | `configTsConstraintSection` + extension check |
+| Sibling component imports sibling | Generator | `createdFilesSection` sibling rule + example |
+| Wrong step order (Layout before Routes) | Planner post-processor | Topological sort on description patterns |
+| Ghost symbol imports (`@/types/config`) | Validator Check 4 | Cross-file contract reads actual exports from disk |
+| Corrector loops on unfixable error | Corrector | Loop detector + `unfixablePatterns` early exit |
+
+**A longer prompt is always cheaper than a failed correction attempt.** One hallucinated import triggers up to 9 correction calls (3 inner × 3 outer retries), each consuming context and producing a shorter, degraded file. Preventing the hallucination at generation time with an extra instruction line costs nothing.
 
 ## ✅ Quality & Testing
 
