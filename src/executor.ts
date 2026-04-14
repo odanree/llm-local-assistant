@@ -99,6 +99,17 @@ export class Executor {
     return /Layout/i.test(name);
   }
 
+  /**
+   * Returns true when a file is a pure presentation navigation component:
+   * Navigation, Navbar, Sidebar, Header — these receive ALL state as props,
+   * they do NOT import from stores directly.
+   */
+  private static isDecomposedNavigation(filePath: string): boolean {
+    if (!filePath.endsWith('.tsx')) { return false; }
+    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+    return /^(Navigation|Navbar|NavBar|Nav|Sidebar|Header)$/i.test(name);
+  }
+
   // Phase 3A: Dependency Injection for side effects
   private fs: IFileSystem;
   private commandRunner: ICommandRunner;
@@ -917,6 +928,26 @@ export class Executor {
           errors.push(
             `❌ Zustand Pattern: Component imports from stores but doesn't use destructuring pattern. ` +
             `Expected: const { x, y } = useStoreHook();`
+          );
+        }
+
+        // App.tsx must NEVER call useNavigate() — it renders <BrowserRouter> and is outside the router context.
+        if (isRootApp && content.match(/\buseNavigate\s*\(\)/)) {
+          errors.push(
+            `❌ Router Hook Violation: App.tsx calls useNavigate() but App renders <BrowserRouter>, ` +
+            `so it is OUTSIDE the router context. useNavigate() will throw at runtime. ` +
+            `Move navigation logic into a child component rendered INSIDE <BrowserRouter>, ` +
+            `or use window.location.href = '/login' in the onLogout callback instead.`
+          );
+        }
+
+        // Decomposed navigation components (Navigation, Navbar, Sidebar, Header) must be prop-driven.
+        // They should NEVER import from stores — state comes from parent props.
+        const isDecomposedNavFile = Executor.isDecomposedNavigation(filePath);
+        if (isDecomposedNavFile && content.match(/from\s+['"]([^'"]*\/stores?\/[^'"]*)['"]/) ) {
+          errors.push(
+            `❌ Architecture Violation: ${filePath.split(/[\\/]/).pop()} is a pure presentation component but imports from a store. ` +
+            `Remove all store imports — receive isLoggedIn, theme, onLogout as props from the parent instead.`
           );
         }
 
@@ -2283,20 +2314,29 @@ JSON array only. No explanation.`;
     //   2. no path + description mentions manual/visual verification
     const isEmptyRunStep = step.action === 'run' &&
       (!(step as any).command || ((step as any).command as string).trim().length === 0);
-    const isManualVerification = !step.path &&
-      /manual|verify|check|browser|visually/i.test(step.description);
 
-    if (isEmptyRunStep || isManualVerification) {
-      const skipOutput = `📝 Skipped (human verification): ${step.description}`;
-      this.config.onStepOutput?.(stepId, skipOutput, false);
-      return {
-        stepId: step.stepId,
-        success: true,
-        output: skipOutput,
-        duration: 0,
-        timestamp: Date.now(),
-        requiresManualVerification: true,
-      };
+    // Special case: if an empty run step describes TypeScript compilation, infer the tsc command
+    // so it actually executes instead of being skipped as "human verification".
+    if (isEmptyRunStep && /compil|tsc\b|typescript.*build|stack.*compil/i.test(step.description)) {
+      (step as any).command = 'tsc --noEmit --skipLibCheck';
+      console.log(`[Executor] Inferred tsc command for compile-verify step: "${step.description}"`);
+      // Fall through to normal execution with the inferred command
+    } else {
+      const isManualVerification = !step.path &&
+        /manual|verify|check|browser|visually/i.test(step.description);
+
+      if (isEmptyRunStep || isManualVerification) {
+        const skipOutput = `📝 Skipped (human verification): ${step.description}`;
+        this.config.onStepOutput?.(stepId, skipOutput, false);
+        return {
+          stepId: step.stepId,
+          success: true,
+          output: skipOutput,
+          duration: 0,
+          timestamp: Date.now(),
+          requiresManualVerification: true,
+        };
+      }
     }
 
     // VALIDATOR GATE 1: Check step schema (basic validation)
@@ -3656,6 +3696,32 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- Export ONLY: TypeScript interfaces, type aliases, plain objects, and data arrays\n\n`
       : '';
 
+    // App root constraint: injected for App.tsx to prevent useNavigate in the BrowserRouter wrapper.
+    const isAppRoot = /(?:^|\/)App\.tsx$/.test(step.path);
+    const appRootConstraintSection = isAppRoot
+      ? `\nAPP ROOT RULES (mandatory — App.tsx renders the router, it cannot use router hooks itself):\n` +
+        `- NEVER call useNavigate() directly inside App — App renders <BrowserRouter>, so it is OUTSIDE the router context\n` +
+        `  useNavigate() throws "useNavigate() may be used only in the context of a <Router>" if called in App itself.\n` +
+        `  If you need navigation logic, put it in a child component that is rendered INSIDE <BrowserRouter>.\n` +
+        `- CORRECT pattern: App renders <BrowserRouter><Routes>...</Routes></BrowserRouter> with no useNavigate in App\n` +
+        `- If navigation on logout is needed: call window.location.href = '/login' from the onLogout callback, OR\n` +
+        `  pass a navigate function down from a child component that lives inside the router.\n\n`
+      : '';
+
+    // Navigation/Sidebar/Header constraint: injected for pure presentation components that
+    // are extracted/decomposed from a parent. They receive ALL state as props — never from stores.
+    const isDecomposedNavigationTsx = isNonInteractiveTsx && Executor.isDecomposedNavigation(step.path);
+    const navigationConstraintSection = isDecomposedNavigationTsx
+      ? `\nNAVIGATION COMPONENT RULES (mandatory — this is a PURE PRESENTATION component):\n` +
+        `- DO NOT import from any store files (useAuthStore, useThemeStore, useXxxStore, etc.)\n` +
+        `- ALL state comes from PROPS — never reach into a store for data you should receive as a prop\n` +
+        `- Define a props interface: interface NavigationProps { isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: () => void; }\n` +
+        `- The parent (Layout or App) owns the state and passes it down — this component just renders it\n` +
+        `- DO NOT use useNavigate or any router hook inside this component — render <Link> elements instead\n` +
+        `  useNavigate is only legal inside a component that is already rendered INSIDE a <BrowserRouter>.\n` +
+        `  Navigation receives its router context from the parent's <BrowserRouter> — use <Link to="..."> for nav.\n\n`
+      : '';
+
     // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
     // doesn't import from packages that don't exist in this project.
     // Only injected for TS/TSX files; no-op when package.json wasn't found.
@@ -3675,7 +3741,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${configTsConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${configTsConstraintSection}${appRootConstraintSection}${navigationConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
