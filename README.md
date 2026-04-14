@@ -30,7 +30,7 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 - **v2.10.0** - Elite Tier: 74.68% coverage, 2453 tests, agent skills integration
 - **v2.9.0** - Performance: 45% test optimization, concurrent execution
 - **v2.8.x** - Foundation: 72% coverage, distribution optimization, root directory cleanup
-- **v2.7.0-v2.5.0** - Core features: Validation system, pattern detection, voice narration, Zustand support
+- **v2.7.0-v2.5.0** - Core features: Validation system, pattern detection, Zustand support
 
 ---
 
@@ -38,13 +38,12 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 
 ### 🏛️ Architecture & Validation System
 
-**6-Layer Multi-File Validation**
-- **Layer 1: Syntax Validation** - Valid TypeScript with proper structure
-- **Layer 2: Type Validation** - Correct type inference and safety
-- **Layer 3: Import Validation** - All imports resolve correctly
-- **Layer 4: Cross-File Validation** - Component-store alignment guaranteed
-- **Layer 5: Hook Usage Validation** - Proper React hook patterns
-- **Layer 6: Store Contract Validation** - Zustand property matching ✅
+**5-Check Sequential Validation** (stops at first critical failure)
+- **Check 1: Syntax** - Brace balance, no markdown-in-code, no `any` types
+- **Check 2: Patterns** - Bare classNames, JSX in `.ts` files, missing padding on interactive elements
+- **Check 3: Hook Usage** - Called not just imported, destructured properties used, no mixed state management
+- **Check 4: Cross-File Contract** - Every named import symbol exists as a named export in the source file
+- **Check 5: LLM Reviewer** - Structured YES/NO against pre-generated acceptance criteria
 
 **Code Analysis**
 - ✅ **`/refactor <file>`** - LLM-powered refactoring suggestions
@@ -63,7 +62,6 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 **File Operations with Confidence**
 - ✅ **`/read <path>`** - Read and display file contents
 - ✅ **`/write <path> <prompt>`** - Generate file content with validation
-- ✅ **`/suggestwrite <path> <prompt>`** - Preview before writing
 - ✅ **`/explain <path>`** - Get detailed code explanations
 - ✅ **Markdown rendering** - Beautifully formatted output with h1-h6 headers, bold, italic, code blocks, lists, blockquotes
 
@@ -157,8 +155,6 @@ Step 3: Add validation logic
 
 Ready to execute with: /execute
 ```
-
-![Plan Command Example](./assets/plan-command-example.png)
 
 **What it does:**
 - Creates multi-step plans for code generation
@@ -261,21 +257,12 @@ Generate and write file content.
 /write src/utils/validators.ts generate validation functions for email and password
 ```
 
-#### `/suggestwrite <path> <prompt>`
-Preview changes before writing.
-
-```
-/suggestwrite src/App.tsx add dark mode support using context and localStorage
-```
-
 #### `/explain <path>`
-Get detailed code explanation with optional voice narration.
+Get a detailed explanation of any file in your workspace.
 
 ```
 /explain src/services/userService.ts
 ```
-
-![Explain Command Example](./assets/explain-command-example.png)
 
 ### Git Integration
 
@@ -570,37 +557,22 @@ const { formData, errors, setFormData, setErrors, submitForm } = useLoginStore()
 3. **LLM context window:** By the time component is generated, LLM may have forgotten exact store interface
 4. **State evolution:** LLM might imagine properties the store doesn't actually export
 
-**How we detect it (v3.0):**
+**How it's detected:**
 
 - ✅ Store property extraction via regex parsing of TypeScript generics
 - ✅ Component destructuring pattern matching
 - ✅ Cross-file property validation (component properties must exist in store)
 - ✅ Detailed error messages showing actual vs expected
 
-**Workaround (Manual Verification Recommended):**
+**Workaround:**
 
 1. **Generate store first** - Use `/write` or `/plan` to create `useLoginStore.ts`
-2. **Verify store exports** - Open file, confirm properties match your design
-3. **Generate component second** - Reference the file when writing component
+2. **Verify store exports** - Open the file, confirm properties match your design
+3. **Generate component second** - The executor passes store content as context to downstream steps
 4. **Validate alignment** - Check component destructuring matches store exactly
 5. **Run tests** - TypeScript compiler catches mismatches immediately
 
-**Future Solutions (v3.1+):**
-
-- [ ] Persistent contract store during multi-step generation
-- [ ] Real-time contract validation across files
-- [ ] Automatic property sync for generated consumers
-- [ ] Semantic understanding of "store" pattern by LLM
-
-**For Production Use:**
-
-Until v3.1, **manual verification is recommended** for multi-file state migrations. The system will:
-
-- ✅ Catch contract drift during validation (report errors)
-- ✅ Prevent broken code from being written
-- ✅ Guide you to fix mismatches
-
-But it won't prevent the LLM from imagining properties that don't exist. Trust your eyes more than the AI for this pattern.
+The system will catch contract drift during validation and prevent broken code from being written — but it cannot prevent the LLM from imagining properties that don't exist. Trust your eyes more than the AI for this pattern.
 
 ## 🚀 Development
 
