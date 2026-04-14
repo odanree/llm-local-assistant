@@ -211,8 +211,8 @@ export function matchImportPatterns(
     return '';
   });
 
-  // Variable definitions
-  code.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
+  // Variable definitions — strip type annotations (const X: Type = ...) before matching
+  code.replace(/(?:const|let|var)\s+(\w+)/g, (_, varName) => {
     localVariables.add(varName.trim());
     return '';
   });
@@ -380,8 +380,8 @@ export function findImportAndSyntaxIssuesPure(
   // Named function declarations: function foo(email: string)
   code.replace(/function\s+\w*\s*\(([^)]*)\)/g, (_, params) => { addParamsCPM(params); return ''; });
 
-  // Variable definitions
-  code.replace(/(?:const|let|var)\s+(\w+)\s*[=;]/g, (_, varName) => {
+  // Variable definitions — strip type annotations (const X: Type = ...) before matching
+  code.replace(/(?:const|let|var)\s+(\w+)/g, (_, varName) => {
     localVariables.add(varName.trim());
     return '';
   });
@@ -443,10 +443,23 @@ export function findImportAndSyntaxIssuesPure(
   // Check if all used namespaces are imported
   Array.from(namespaceUsages).forEach((namespace) => {
     if (!importedNamespaces.has(namespace) && !importedItems.has(namespace)) {
+      // ALL_CAPS identifiers (e.g. ROUTES, CONFIG, ITEMS) are module-level constants.
+      // In a component extracted from a larger file, these constants cannot be imported
+      // because they either live in the source file being decomposed, or in a config file
+      // that hasn't been created yet. The correct fix is to accept them as props.
+      const isAllCapsConstant = /^[A-Z][A-Z0-9_]{2,}$/.test(namespace);
+      const message = isAllCapsConstant
+        ? `Missing import: '${namespace}' is used but never defined or imported. ` +
+          `'${namespace}' appears to be a module-level constant (ALL_CAPS) from the source file being decomposed.\n` +
+          `  FIX 1 (simplest — do this first): Define it locally in this file:\n` +
+          `    export const ${namespace} = [...]; // copied from source file\n` +
+          `  FIX 2: Accept it as a prop: ({ ${namespace.toLowerCase()} }: { ${namespace.toLowerCase()}: SomeType[] })\n` +
+          `  DO NOT: import { ${namespace} } from '...' — that file may not exist yet`
+        : `Missing import: '${namespace}' is used but never imported. Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`;
       issues.push({
         type: 'missing_import',
         severity: 'error',
-        message: `Missing import: '${namespace}' is used but never imported. Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`,
+        message,
       });
     }
   });

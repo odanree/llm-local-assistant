@@ -172,6 +172,13 @@ export class Planner {
       // even when the user only asked for one file. This is almost never correct behavior.
       sortedSteps = this.filterUnrequestedEntryWrites(sortedSteps, userRequest);
 
+      // POST-PROCESS: Inject missing deliverables for DECOMPOSE tasks.
+      // The LLM reliably drops one or more named artifacts from decompose/extract requests.
+      // This repair is deterministic — it doesn't re-invoke the LLM.
+      if (/\b(decompose|extract|split|break out|pull out)\b/i.test(userRequest)) {
+        sortedSteps = this.injectMissingDeliverables(sortedSteps, userRequest);
+      }
+
       // POST-PROCESS: Drop noise READ steps.
       // A READ step is noise when the plan already has WRITE steps but this READ
       // has no downstream WRITE to the same path — these are LLM epilogues:
@@ -455,10 +462,12 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
-- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils)
-  WRONG: src/Routes.ts (contains JSX) → RIGHT: src/Routes.tsx
+- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils, config)
   WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
-  Routing files, app entry, layouts, pages, and wrappers almost always need .tsx
+  WRONG: src/components/Button.ts (returns JSX) → RIGHT: src/components/Button.tsx
+  EXCEPTION — route config files export arrays of route data (no JSX):
+    RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
+    WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
@@ -475,7 +484,27 @@ A step description that mentions a file is NOT the same as a WRITE step for that
   → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
   → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
 - "create a Button component with variants" → MUST have: WRITE src/components/Button.tsx
+- "decompose/extract/split App.tsx into Layout, Navigation, Routes"
+  → MUST have: READ App.tsx, WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
+  → Count the deliverables in the request — every named artifact needs its own WRITE step
+  → The final WRITE App.tsx step is MANDATORY — without it the original bloated file stays unchanged
 - Rule: if the deliverable is mentioned in a description but has no WRITE step — the plan is incomplete
+
+DECOMPOSE / EXTRACT PATTERN (applies when request says "decompose", "extract", "split", "break out", "pull out"):
+The source file MUST be updated in the plan. Steps:
+  1. READ the source file first (get full content)
+  2. WRITE EVERY extracted file named in the request — if the request says "Layout, Navigation, Routes" that is THREE separate WRITE steps
+  3. WRITE the source file again as a slim version that imports the new files
+WRONG: Plan ends after writing the extracted files — source file still has all the old code
+WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
+RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
+
+FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
+- Route config files export arrays or objects of route definitions — they are DATA files, not components
+  RIGHT: src/routes/Routes.ts  (exports RouteConfig[], no JSX)
+  WRONG: src/routes/Routes.tsx  (.tsx implies JSX; a data config file has no JSX)
+- Use .tsx ONLY when the file renders JSX (returns <JSX />)
+- Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
 
 STEP DESCRIPTION VOCABULARY (MANDATORY):
 - In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
@@ -556,10 +585,12 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
-- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils)
-  WRONG: src/Routes.ts (contains JSX) → RIGHT: src/Routes.tsx
+- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils, config)
   WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
-  Routing files, app entry, layouts, pages, and wrappers almost always need .tsx
+  WRONG: src/components/Button.ts (returns JSX) → RIGHT: src/components/Button.tsx
+  EXCEPTION — route config files export arrays of route data (no JSX):
+    RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
+    WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
@@ -582,6 +613,27 @@ A step description that mentions a file is NOT the same as a WRITE step for that
 
 - "refactor LoginForm to use Zustand"
   → MUST have: WRITE (or READ+WRITE) for the LoginForm file
+
+- "decompose/extract/split App.tsx into Layout, Navigation, Routes"
+  → MUST have: READ App.tsx (get source), WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
+  → Count the deliverables in the request — every named artifact needs its own WRITE step
+  → The final WRITE App.tsx step is MANDATORY — without it the original bloated file stays unchanged
+
+DECOMPOSE / EXTRACT PATTERN (applies when request says "decompose", "extract", "split", "break out", "pull out"):
+The source file MUST be updated in the plan. Steps:
+  1. READ the source file first (get full content)
+  2. WRITE EVERY extracted file named in the request — if the request says "Layout, Navigation, Routes" that is THREE separate WRITE steps
+  3. WRITE the source file again as a slim version that imports the new files
+WRONG: Plan ends after writing the extracted files — source file still has all the old code
+WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
+RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
+
+FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
+- Route config files export arrays or objects of route definitions — they are DATA files, not components
+  RIGHT: src/routes/Routes.ts  (exports RouteConfig[], no JSX)
+  WRONG: src/routes/Routes.tsx  (.tsx implies JSX; a data config file has no JSX)
+- Use .tsx ONLY when the file renders JSX (returns <JSX />)
+- Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
 
 Rule: if the deliverable is described as a dependency ("which X will use", "that Y imports") but not as its own WRITE step — the plan is incomplete. Add the WRITE step.
 
@@ -626,8 +678,16 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 ${contextSection}
 USER REQUEST: ${userRequest}
 
-🔴 CRITICAL: Output ONLY a valid JSON array of steps. 
-DO NOT include bold text, bullet points, markdown, code blocks, or conversational filler. 
+🔴 SELF-VERIFY BEFORE OUTPUTTING (mandatory — do this mentally before writing the JSON):
+1. List every artifact the user named in the request (e.g. "Layout, Navigation, Routes.ts" = 3 artifacts)
+2. Count your WRITE steps for NEW files — they must equal or exceed the artifact count
+3. If any named artifact has no WRITE step: ADD IT before outputting
+4. Check dependency order: if file A imports from file B, WRITE B must come before WRITE A
+   Example: Navigation.tsx imports ROUTES from Routes.ts → WRITE Routes.ts first, WRITE Navigation.tsx second
+5. Check that the source file is updated: if decomposing a file, the final WRITE must slim it down
+
+🔴 CRITICAL: Output ONLY a valid JSON array of steps.
+DO NOT include bold text, bullet points, markdown, code blocks, or conversational filler.
 Your entire response must start with '[' and end with ']'.
 NOTHING ELSE. Not even triple backticks.
 
@@ -1044,6 +1104,88 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
    * 3. Prepend WRITE steps for missing utilities
    * 4. Ensure components can use what they need
    */
+  /**
+   * Repair a DECOMPOSE plan by injecting WRITE steps for any deliverables named in
+   * the user request that the LLM dropped.
+   *
+   * The LLM reliably drops one or more artifacts from decompose/extract requests despite
+   * explicit prompt rules. This deterministic repair catches the gap without re-invoking the LLM.
+   *
+   * Strategy:
+   *   1. Extract component names ([A-Z][a-zA-Z]+ component) and .ts/.tsx filenames from the request
+   *   2. For each named artifact, check if a WRITE step exists for that name
+   *   3. If missing, synthesize a WRITE step and insert it after the last READ step
+   */
+  private injectMissingDeliverables(steps: ExecutionStep[], userRequest: string): ExecutionStep[] {
+    // Extract explicit .ts / .tsx filenames from request (e.g. "Routes.ts", "AppLayout.tsx")
+    const explicitFiles = [...userRequest.matchAll(/\b([A-Za-z][A-Za-z0-9]*\.[tj]sx?)\b/g)].map(m => m[1]);
+
+    // Extract component names from "X component" patterns (e.g. "Layout component")
+    const componentNames = [...userRequest.matchAll(/\b([A-Z][a-zA-Z]+)\s+component\b/gi)].map(m => m[1]);
+
+    const toInject: Array<{ name: string; path: string; description: string }> = [];
+
+    // Check each explicit file
+    for (const file of explicitFiles) {
+      const isTs = file.endsWith('.ts') && !file.endsWith('.tsx');
+      const alreadyPlanned = steps.some(s =>
+        s.action === 'write' && s.path && s.path.endsWith('/' + file)
+      );
+      if (!alreadyPlanned) {
+        const dir = isTs ? 'src/routes' : 'src/components';
+        toInject.push({
+          name: file,
+          path: `${dir}/${file}`,
+          description: `Extract ${file.replace(/\.[tj]sx?$/, '')} configuration from the source file into a dedicated ${isTs ? 'data config' : 'component'} file`,
+        });
+      }
+    }
+
+    // Check each component name
+    for (const name of componentNames) {
+      const alreadyPlanned = steps.some(s =>
+        s.action === 'write' && s.path && new RegExp(`/${name}\\.tsx?$`, 'i').test(s.path)
+      );
+      // Also skip if it appeared as an explicit file above
+      const alreadyQueued = toInject.some(t => t.path.includes(`/${name}.`));
+      if (!alreadyPlanned && !alreadyQueued) {
+        toInject.push({
+          name,
+          path: `src/components/${name}.tsx`,
+          description: `Extract ${name} component from the source file`,
+        });
+      }
+    }
+
+    if (toInject.length === 0) { return steps; }
+
+    console.log(`[Planner] Injecting ${toInject.length} missing deliverable(s): ${toInject.map(t => t.name).join(', ')}`);
+
+    // Insert after the last READ step (or at position 1 if no READ)
+    const lastReadIdx = steps.reduce((acc, s, i) => s.action === 'read' ? i : acc, -1);
+    const insertAt = lastReadIdx + 1;
+
+    const injected: ExecutionStep[] = toInject.map((item, offset) => {
+      const newStepId = 1000 + offset; // High IDs avoid collision with existing steps
+      return {
+        stepNumber: newStepId,
+        stepId: newStepId,
+        id: `step_${newStepId}`,
+        action: 'write' as ActionTypeString,
+        description: item.description,
+        path: item.path,
+        targetFile: item.path,
+        expectedOutcome: `${item.name} created`,
+        dependencies: undefined,
+        dependsOn: [],
+      };
+    });
+
+    const result = [...steps];
+    result.splice(insertAt, 0, ...injected);
+    return result;
+  }
+
   /**
    * Drop noise READ steps from a plan that contains WRITE steps.
    *
