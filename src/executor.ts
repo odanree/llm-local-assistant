@@ -1412,6 +1412,20 @@ export class Executor {
             `Remove the Layout import from Navigation. Navigation should only import from: react-router-dom, routes/Routes, and react.`
           );
         }
+
+        // Navigation must call getAccessibleRoutes() as a plain function, not as a method on
+        // Routes (react-router component) or ROUTES (the array). Both are runtime errors.
+        const routesNamespaceCall = /\bRoutes\.getAccessibleRoutes\s*\(/.test(content)
+          || /\bROUTES\.getAccessibleRoutes\s*\(/.test(content);
+        if (routesNamespaceCall) {
+          errors.push(
+            `❌ Wrong function call: \`Routes.getAccessibleRoutes()\` or \`ROUTES.getAccessibleRoutes()\` is not valid. ` +
+            `\`Routes\` is a react-router-dom component; \`ROUTES\` is a plain array — neither has .getAccessibleRoutes(). ` +
+            `Import and call it as a standalone function: ` +
+            `import { ROUTES, getAccessibleRoutes } from '../routes/Routes'; ` +
+            `const accessible = getAccessibleRoutes(isLoggedIn);`
+          );
+        }
       }
     }
 
@@ -1887,7 +1901,7 @@ export class Executor {
         return [
           'Props interface includes isLoggedIn (boolean), theme (\'light\'|\'dark\'), onLogout',
           'Uses <Link> component for all navigation links (NOT useNavigate, NOT <a href>)',
-          'Shows routes filtered by isLoggedIn (not from a store — from props only)',
+          'Calls getAccessibleRoutes(isLoggedIn) directly — NOT Routes.getAccessibleRoutes() or ROUTES.getAccessibleRoutes()',
           'Logout button is shown only when isLoggedIn is true',
           'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
         ];
@@ -4086,6 +4100,12 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- DO NOT use useNavigate or any router hook inside this component — render <Link> elements instead\n` +
         `  useNavigate is only legal inside a component that is already rendered INSIDE a <BrowserRouter>.\n` +
         `  Navigation receives its router context from the parent's <BrowserRouter> — use <Link to="..."> for nav.\n` +
+        `- ROUTE FILTERING: import getAccessibleRoutes from '../routes/Routes' and call it as a FUNCTION:\n` +
+        `  CORRECT: import { ROUTES, getAccessibleRoutes } from '../routes/Routes';\n` +
+        `           const accessibleRoutes = getAccessibleRoutes(isLoggedIn);\n` +
+        `  WRONG:   Routes.getAccessibleRoutes(isLoggedIn)  ← Routes is a react-router-dom component, not a namespace\n` +
+        `  WRONG:   ROUTES.getAccessibleRoutes(isLoggedIn)  ← ROUTES is an array, arrays have no .getAccessibleRoutes\n` +
+        `  WRONG:   ROUTES.filter(...)                       ← use getAccessibleRoutes() instead of re-implementing the filter\n` +
         `- NEVER import Layout (or any component that already imports Navigation) — that creates a circular dependency:\n` +
         `  Navigation → Layout → Navigation = module loader crash. Navigation must NOT import Layout.\n` +
         `- STYLING: Use inline \`style={{...}}\` objects — the source file uses inline styles, NOT Tailwind classes.\n` +
