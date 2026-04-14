@@ -861,6 +861,22 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
         dependsOn: cleanDependsOn,
       };
 
+      // Drop manual/human verification steps — they cannot be executed autonomously.
+      // The planner prompt instructs the LLM to put these in the summary, not as steps,
+      // but the LLM occasionally emits them anyway. Filter here as a hard guard.
+      const descLower = step.description.toLowerCase();
+      const isManualStep =
+        descLower.includes('manual') ||
+        descLower.includes('test in browser') ||
+        descLower.includes('verify visually') ||
+        descLower.includes('check browser') ||
+        descLower.startsWith('verify ') ||
+        (action === 'read' && (step.path ?? '').toLowerCase().includes('manual'));
+      if (isManualStep) {
+        console.warn(`[PARSER] Dropping manual/human verification step: "${step.description}"`);
+        continue;
+      }
+
       // Only add if step has a description
       if (step.description) {
         steps.push(step);

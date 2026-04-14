@@ -3911,13 +3911,19 @@ STRICTLY FORBIDDEN (these will be rejected):
             `  DO NOT add a children prop — Layout renders its own routes internally.\n` +
             `- Render Navigation conditionally: {isSidebarOpen && <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />}\n` +
             `- Render routes inside <main> using ROUTES from '../routes/Routes' — Layout owns routing, App does not.\n` +
-            `- STYLING: Use inline \`style={{...}}\` objects for all styling — the source file uses inline styles, NOT Tailwind classes.\n` +
+            `  HOW to render route components dynamically:\n` +
+            `    WRONG: element={route.component}   ← passes a ComponentType, not a ReactElement\n` +
+            `    CORRECT: element={React.createElement(route.component)}  ← valid ReactElement\n` +
+            `    ALSO CORRECT: const C = route.component; ... element={<C />}\n` +
+            `  Include auth guard: if (route.requiresAuth && !isLoggedIn) return <Navigate to="/" replace />\n` +
+            `- STYLING: Use inline style={{...}} objects for all styling — the source file uses inline styles, NOT Tailwind classes.\n` +
             `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
-            `  WRONG: <div className={cn('flex', 'bg-white')}>  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
+            `  WRONG: <div className="flex bg-white">  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
             `- DO NOT import hooks, form state, services, or business logic.\n` +
             `- EXPORT: use a named export — NEVER export default.\n` +
-            `  CORRECT: export const Layout = ({ children, ... }: LayoutProps) => { ... };\n` +
-            `  WRONG:   const Layout = ...; export default Layout;\n`
+            `  CORRECT: export const Layout = ({ isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar }: LayoutProps) => { ... };\n` +
+            `  WRONG:   const Layout = ...; export default Layout;\n` +
+            `  WRONG:   export const Layout = ({ children, isLoggedIn, ... }) — DO NOT include children in props.\n`
           : '') +
         `\n`
       : '';
