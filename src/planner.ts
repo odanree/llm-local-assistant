@@ -941,7 +941,7 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
          descLower.includes('run test') || descLower.startsWith('vitest') ||
          descLower.startsWith('jest') || descLower.includes('unit test') ||
          descLower.includes('run vitest') || descLower.includes('run jest')) &&
-        !step.command;
+        (!step.command || testRunnerCommand);
       if (isRedundantTestStep) {
         console.warn(`[PARSER] Dropping redundant test-runner step (no tests in scope): "${step.description}"`);
         continue;

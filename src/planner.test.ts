@@ -81,14 +81,14 @@ describe('Planner (Consolidated - Table-Driven)', () => {
   {
     "step": 1,
     "action": "run",
-    "description": "Run tests",
-    "command": "npm test",
-    "expectedOutcome": "Tests pass"
+    "description": "Run linting",
+    "command": "npm run lint",
+    "expectedOutcome": "No lint errors"
   }
 ]`,
         assertions: (plan: any) => {
           expect(plan.steps[0].action).toBe('run');
-          expect(plan.steps[0].command).toBe('npm test');
+          expect(plan.steps[0].command).toBe('npm run lint');
         },
       },
       {
