@@ -104,6 +104,12 @@ This is a reminder, not a mandate — the criteria LLM decides whether children 
 
 ---
 
+## In My Own Words
+
+> *What's the difference between imperative and declarative criteria, and why does it matter which one the criteria generator produces? Use the cn() example. (2-3 sentences in your own words)*
+
+---
+
 ## Alternatives Considered
 
 ### Run the phantom-import probe before criteria injection

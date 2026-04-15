@@ -72,6 +72,12 @@ The correction loop only uses `criticalErrors`. `suggestions` are passed to `onM
 
 ---
 
+## In My Own Words
+
+> *Why does it matter whether a validation error is critical vs a suggestion? What changes in the system's behavior based on which tier something is in? (2-3 sentences in your own words)*
+
+---
+
 ## Classification Heuristic
 
 When adding a new validator check, use this decision tree:

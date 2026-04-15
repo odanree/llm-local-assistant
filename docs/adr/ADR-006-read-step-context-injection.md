@@ -119,6 +119,12 @@ The `EXISTING CODEBASE` section is injected immediately before `importSection`. 
 
 ---
 
+## In My Own Words
+
+> *What was the generator getting wrong before this fix, and why? What does injecting READ step content actually give the LLM that it didn't have before? (2-3 sentences in your own words)*
+
+---
+
 ## Alternatives Considered
 
 ### Pass file content directly to planner — annotate READ steps before execution
