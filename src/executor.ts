@@ -4673,6 +4673,14 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       let finalContent = content;
 
+      // Hoist matchingSource above the validation block so it's accessible in both
+      // the custom validation section and the post-write tsc correction section (line ~5182).
+      // const inside the validation if-block would go out of scope before tsc runs.
+      const targetFileName = step.path.split(/[\\/]/).pop() ?? '';
+      const matchingSource = sourceReadContents.find(r =>
+        (r.path.split(/[\\/]/).pop() ?? '') === targetFileName
+      );
+
       if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
         this.config.onMessage?.(
           `🔍 Validating ${step.path}...`,
@@ -4685,10 +4693,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         // in a prior step, ensure all useCallback handlers are preserved intact.
         // Uses collectCallbackErrors (also called in the correction loop below) so the
         // check runs on EVERY validation attempt, not just the first generation.
-        const targetFileName = step.path.split(/[\\/]/).pop() ?? '';
-        const matchingSource = sourceReadContents.find(r =>
-          (r.path.split(/[\\/]/).pop() ?? '') === targetFileName
-        );
         if (matchingSource) {
           const cbErrors = Executor.collectCallbackErrors(content, matchingSource.content);
           if (cbErrors.length > 0) {
