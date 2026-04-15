@@ -2245,7 +2245,13 @@ export class Executor {
         : isDecomposedNavigationCriteria
         ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
         : '';
-      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
+      // For .tsx component files that are not pure-logic, remind the criteria LLM that
+      // components rendering content need a children prop — prevents it being silently omitted.
+      const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisualWrapper;
+      const childrenReminder = isTsxComponent && !step.description.toLowerCase().includes('children')
+        ? ' If this component wraps or displays content (text, icons, slots), include a criterion for "Accepts children: React.ReactNode". Omit it only for self-contained display components like icons or spinners.'
+        : '';
+      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
       const controller = new AbortController();
@@ -2286,7 +2292,12 @@ export class Executor {
         return [];
       }
       if (!Array.isArray(criteria)) { return []; }
-      const filtered = criteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
+      const filtered = criteria
+        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+        // Strip criteria that prescribe the class-merging utility — these bypass phantom-import
+        // probes and lock the LLM into a specific import before validation can check if it exists.
+        // The validator's bare-string and manual-concat checks enforce cn() usage post-generation.
+        .filter(c => !/\bcn\s*\(|\bimports?\s+cn\b|\buse[s]?\s+cn\b/i.test(c));
 
       if (filtered.length > 0) {
         this.config.onMessage?.(
