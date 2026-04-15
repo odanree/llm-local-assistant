@@ -21,6 +21,7 @@ let codebaseIndex: CodebaseIndex;
 let embeddingClient: EmbeddingClient;
 let projectProfile: ProjectProfile;
 let chatPanel: vscode.WebviewPanel | undefined;
+let extensionSrcPath: string;  // extension's own src/ — set during activate()
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
 let messageHandlerAttached = false; // Track if message handler is already attached
@@ -1488,9 +1489,7 @@ ${fileContent}
 
             // AGENT MODE: /audit → audit codebase for legacy cn() mandate patterns
             if (/^\/audit\b/.test(text)) {
-              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-              if (!wsFolder) { throw new Error('No workspace folder open.'); }
-              const srcDir = path.join(wsFolder.fsPath, 'src');
+              const srcDir = extensionSrcPath;
 
               chatPanel?.webview.postMessage({
                 command: 'status',
@@ -1499,7 +1498,10 @@ ${fileContent}
               });
 
               try {
-                const report = await auditRun(CN_MANDATE, srcDir, llmClient);
+                // Use AuditAgent's own isolated client — never the shared chat client.
+                // Passing the chat client here caused its history to fill up across
+                // all classify calls, flooding the context window indicator.
+                const report = await auditRun(CN_MANDATE, srcDir);
 
                 const summaryLines = [
                   `## Audit Report: ${report.definition}`,
@@ -1912,6 +1914,9 @@ export async function activate(context: vscode.ExtensionContext) {
   console.log('');
   console.log('  LLM Local Assistant Activating...     ');
   console.log('');
+
+  // Capture the extension's own src/ path for /audit (independent of open workspace)
+  extensionSrcPath = path.join(context.extensionPath, 'src');
 
   // Initialize LLM client with config
   const config = getLLMConfig();

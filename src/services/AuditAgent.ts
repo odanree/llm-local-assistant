@@ -303,6 +303,9 @@ export async function run(
   for (const match of matches) {
     const rel = path.relative(rootDir, match.file).replace(/\\/g, '/');
     console.log(`[AuditAgent] Classifying ${rel}:${match.line} …`);
+    // Clear history before each classify call — each classification is single-shot;
+    // accumulated history from prior matches would push the context window to 100%.
+    llm.clearHistory();
     const classified = await classifyMatch(match.context, definition.rubric, llm);
     results.push({ match, ...classified });
   }
