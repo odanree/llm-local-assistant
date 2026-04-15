@@ -434,7 +434,7 @@ BENEFIT OF DECOUPLING:
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npx tsc --noEmit" to verify TypeScript compilation. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
+- run: Requires a real shell command (e.g. "npm test"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. NEVER add a step to run "npx tsc --noEmit" or check TypeScript compilation — the executor runs tsc automatically after every WRITE step. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -521,6 +521,12 @@ FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
 - Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
 
 STEP DESCRIPTION VOCABULARY (MANDATORY):
+- Step descriptions describe WHAT to create, not HOW to implement it. NEVER prescribe implementation utilities.
+  WRONG: "Create Badge component utilizing the cn() utility for class merging"
+  RIGHT:  "Create Badge component with severity prop and conditional Tailwind classes"
+  WRONG: "Create form using react-hook-form's register and handleSubmit"
+  RIGHT:  "Create form with controlled inputs, submit handler, and field-level validation"
+- NEVER write "cn()", "clsx()", "classnames()" in a step description — class merging is an implementation detail
 - In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
   These are react-hook-form library terms — do NOT use them to describe Zustand state management
 - If the task involves a form that reads state from a Zustand store, write:
@@ -572,7 +578,7 @@ ${contextSection}
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
 - read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test", "npx tsc --noEmit"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. Use "npx tsc --noEmit" to verify TypeScript compilation. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
+- run: Requires a real shell command (e.g. "npm test"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. NEVER add a step to run "npx tsc --noEmit" or check TypeScript compilation — the executor runs tsc automatically after every WRITE step. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
 - delete: Requires path. Removes files.
 
 DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
@@ -674,6 +680,12 @@ This applies to any new module: state stores, custom hooks, utility files, etc.
 Never write a file that imports a module you haven't written yet in this same plan.
 
 STEP DESCRIPTION VOCABULARY (MANDATORY):
+- Step descriptions describe WHAT to create, not HOW to implement it. NEVER prescribe implementation utilities.
+  WRONG: "Create Badge component utilizing the cn() utility for class merging"
+  RIGHT:  "Create Badge component with severity prop and conditional Tailwind classes"
+  WRONG: "Create form using react-hook-form's register and handleSubmit"
+  RIGHT:  "Create form with controlled inputs, submit handler, and field-level validation"
+- NEVER write "cn()", "clsx()", "classnames()" in a step description — class merging is an implementation detail
 - In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
   These are react-hook-form library terms — do NOT use them to describe Zustand state management
 - If the task involves a form that reads state from a Zustand store, write:
