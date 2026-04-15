@@ -51,7 +51,11 @@ This is a category of failure not covered by ADR-005 (Dual-Enforcement). ADR-005
 
 ## Decision
 
-**Acceptance criteria must be declarative: they describe what the output must be, not how to produce it.**
+**Acceptance criteria must be specific about the contract, and silent about implementation utilities.**
+
+Specificity about the *contract* (prop names, types, variant values, export shape) is valuable and should be preserved — it reduces generation variance and tells the LLM exactly what will be checked. Specificity about *implementation utilities* (which library to use for class merging, which hook to call internally) collapses the validator's probe space and should be removed.
+
+The imperative/declarative framing is a useful shorthand but not precise enough: "declarative" risks replacing specific contracts with vague descriptions, which hurts generation quality. The correct constraint is narrower.
 
 ### Enforcement — two layers (per ADR-005)
 
