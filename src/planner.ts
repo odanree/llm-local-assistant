@@ -144,22 +144,6 @@ export class Planner {
         sortedSteps = steps;
       }
 
-      // CRITICAL: Scaffold Dependency Check (Danh's "Last Mile" Gap)
-      // If rules require utilities like cn(), verify they exist in workspace
-      // If missing, prepend WRITE steps to create them
-      if (workspacePath) {
-        const scaffoldSteps = await this.checkScaffoldDependencies(
-          sortedSteps,
-          workspacePath,
-          userRequest
-        );
-        // Prepend any missing scaffold steps
-        if (scaffoldSteps.length > 0) {
-          console.log(`[Planner] Prepending ${scaffoldSteps.length} scaffold dependency steps`);
-          sortedSteps = [...scaffoldSteps, ...sortedSteps];
-        }
-      }
-
       // POST-PROCESS: Drop WRITE steps for files that are already in the RAG context
       // The LLM was explicitly told not to write these files, but sometimes ignores it.
       // Enforcing in code is more reliable than relying solely on prompt instructions.
@@ -500,18 +484,13 @@ WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable
 RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
 
 DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be specific):
-- Routes.ts: MUST name the exports: "ROUTES array", "RouteConfig interface", "getAccessibleRoutes()"
-  RIGHT: "Extract route config into Routes.ts — ROUTES array, RouteConfig interface, getAccessibleRoutes()"
-  WRONG: "Create the dedicated data file"  ← too vague
-- Navigation.tsx: MUST say it imports from Routes.ts and renders nav links
-  RIGHT: "Extract Navigation — reads accessible routes from Routes.ts, renders nav links + logout button"
+- Each extracted file description MUST name what the file owns/exports and what it reads from
+  RIGHT: "Extract Navigation — reads accessible routes from Routes module, renders nav links"
   WRONG: "Extract the navigation rendering logic"  ← missing data source
-- Layout.tsx: MUST say it OWNS <Routes>/<Route> rendering AND uses Navigation in sidebar
-  RIGHT: "Extract Layout — owns all <Routes>/<Route> rendering from ROUTES array, Navigation in sidebar"
-  WRONG: "Extract the main layout structure incorporating Navigation"  ← missing routing-owner responsibility
-- App.tsx slim: MUST say routing is delegated (App has no <Routes>, Layout does)
-  RIGHT: "Slim App.tsx — only <BrowserRouter><Layout .../></BrowserRouter>, routing delegated to Layout"
-  WRONG: "Update App.tsx to use new components"  ← doesn't state routing delegation
+- Each extracted file WRITE step must specify the contract: what it exports, what it consumes
+- The slimmed source file description MUST state what was delegated
+  RIGHT: "Slim App.tsx — routing delegated to Layout, only renders <BrowserRouter><Layout /></BrowserRouter>"
+  WRONG: "Update App.tsx to use new components"  ← doesn't state what changed
 
 FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
 - Route config files export arrays or objects of route definitions — they are DATA files, not components
@@ -542,179 +521,16 @@ A protected route checks whether the user IS ALREADY AUTHENTICATED — it does N
 - NEVER design the service to accept username/password arguments — there are no credentials at route-check time
 - The component checks auth status, shows loading while checking, then either renders children or navigates to /login
 - If an existing authStore is in scope (e.g. EXISTING CODEBASE has authStore.ts), read isLoggedIn from it directly
-- MOCK DEFAULT VALUE: The mock auth service MUST return false by default (unauthenticated state).
-  WRONG: return true  ← redirect never fires; ProtectedRoute is invisible and untestable
-  RIGHT:  return false ← redirect fires on load; demonstrates the guard works
-  Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
 📌 ALL NEW components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
-  - Use cn() utility from src/utils/cn.ts to merge custom classes
-  - Interactive components (button, input) MUST include px-4 py-2 in the cn() base string — components without padding are invisible by default
+  - If src/utils/cn.ts exists in the workspace (visible in RAG context), import and use it for class merging; otherwise use clsx or conditional class expressions — never hallucinate cn() if it is not present
+  - Interactive components (button, input) MUST include px-4 py-2 in base classes — components without padding are invisible by default
   - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
-  - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
-📌 EXCEPTION — DECOMPOSITION TASKS: When the task is "decompose/extract/split" an EXISTING file, do NOT impose cn() on extracted components. Match the styling approach of the source file. If the source uses inline style={{}}, the extracted components must also use inline style={{}}. Never write "uses cn()" in a step description for a component being extracted from an inline-style source.
-
-${contextSection}
-
-1. **CREATION = WRITE**: If the user says "create", "add", "generate", "build", or "make", you MUST use the WRITE action.
-   - WRONG: Step 1: READ, Path: src/Button.tsx, Description: "Create a button component"
-   - RIGHT: Step 1: WRITE, Path: src/components/Button.tsx, Description: "Create a button component"
-
-2. **NO MANUAL STEPS**: You are a fully autonomous executor. Never output "Manual verification" or "Check browser" as a step command.
-   - WRONG: Step 4: read, Path: "manual verification", Command: "Test button in browser"
-   - RIGHT: Add to plan summary: "Manual verification: Test button in browser after execution"
-
-3. **READ IS FOR EXISTING FILES**: Use READ when (a) refactoring a file that already exists, OR (b) a WRITE step needs to import from an EXISTING file whose API must be known first.
-   - DEPENDENCY READ: if the request says "using the existing X" or "integrating with X" and X is an existing file (store, hook, module), add READ X immediately BEFORE the WRITE step that imports it
-   - Example: "using the existing authStore" → Step 1: READ src/stores/authStore.ts, Step 2: WRITE the new component
-   - READ = File must exist before this step
-   - WRITE = File is being created or modified
-   - If unsure whether file exists, default to WRITE (executor will handle it)
-
-STEP TYPES & CONSTRAINTS (MANDATORY):
-- write: Requires path and content. Creates or modifies files.
-- read: Requires path. Reads existing files only.
-- run: Requires a real shell command (e.g. "npm test"). NEVER use run for manual/visual verification — omit the step and note it in the summary instead. NEVER use "npm run dev", "npm start", "yarn dev", "yarn start", or any command that starts a long-running server — these never exit and will hang execution. NEVER add a step to run "npx tsc --noEmit" or check TypeScript compilation — the executor runs tsc automatically after every WRITE step. Avoid "npm run build" — it may fail in environments without a complete entry point (e.g. missing index.html).
-- delete: Requires path. Removes files.
-
-DEPENDENCIES (NEW - CRITICAL FOR EXECUTION ORDER):
-- EACH STEP MAY HAVE DEPENDENCIES: List step IDs that must complete first
-- Format: "Depends on: step_write_config, step_install_deps"
-- Use when a step requires output/results from previous steps
-- EXAMPLES:
-  * Step 2 installs packages → Step 3 (run tests) Depends on: step_run_install
-  * Step 1 creates config → Step 2 (read config) Depends on: step_write_config
-  * Step 1-2 independent → Step 3 Depends on: step_write_app, step_install_deps
-- If a step has NO dependencies (can run first or independently), omit this field
-- IMPORTANT: Declare dependencies explicitly - don't assume the executor will figure it out
-
-MANUAL VERIFICATION (IMPORTANT):
-- If a step requires human intervention (e.g., "test in browser", "verify visually"):
-  * Do NOT create a step with action='read', 'run', or 'manual'
-  * Instead, put instructions in the plan summary
-  * CRITICAL: Do NOT use 'manual' as action or in path field
-  * CRITICAL: Do NOT use 'run' with a description instead of a real shell command
-  * Example WRONG: Step 4: run, Command: "Manual verification: Test Counter in browser"
-  * Example WRONG: Step 4: read, Path: manual verification
-  * Example RIGHT: Add to summary: "Manual verification: Test button in browser"
-
-RULES:
-- ONE file per write step (never multiple files)
-- Include commands for run steps
-${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
-- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils, config)
-  WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
-  WRONG: src/components/Button.ts (returns JSX) → RIGHT: src/components/Button.tsx
-  EXCEPTION — route config files export arrays of route data (no JSX):
-    RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
-    WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
-
-SCOPE CONSTRAINT — FILE CREATION:
-- ONLY create files explicitly named or clearly implied by the user's request
-- If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
-- If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
-- Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
-
-DELIVERABLE COMPLETENESS RULE (CRITICAL — check this first):
-The user's request names what they want created. That EXACT artifact MUST appear as a WRITE step.
-A step description that mentions a file is NOT the same as a WRITE step for that file.
-
-- "create a ProtectedRoute wrapper that checks a mockAuth service"
-  → MUST have: WRITE src/components/ProtectedRoute.tsx  (primary deliverable)
-  → MUST have: WRITE src/services/mockAuth.ts  (prerequisite)
-  → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
-  → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
-
-- "create a Button component with variants"
-  → MUST have: WRITE src/components/Button.tsx  (primary deliverable)
-
-- "refactor LoginForm to use Zustand"
-  → MUST have: WRITE (or READ+WRITE) for the LoginForm file
-
-- "decompose/extract/split App.tsx into Layout, Navigation, Routes"
-  → MUST have: READ App.tsx (get source), WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
-  → Count the deliverables in the request — every named artifact needs its own WRITE step
-  → The final WRITE App.tsx step is MANDATORY — without it the original bloated file stays unchanged
-
-DECOMPOSE / EXTRACT PATTERN (applies when request says "decompose", "extract", "split", "break out", "pull out"):
-The source file MUST be updated in the plan. Steps:
-  1. READ the source file first (get full content)
-  2. WRITE EVERY extracted file named in the request — if the request says "Layout, Navigation, Routes" that is THREE separate WRITE steps
-  3. WRITE the source file again as a slim version that imports the new files
-WRONG: Plan ends after writing the extracted files — source file still has all the old code
-WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
-RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
-
-DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be specific):
-- Routes.ts: MUST name the exports: "ROUTES array", "RouteConfig interface", "getAccessibleRoutes()"
-  RIGHT: "Extract route config into Routes.ts — ROUTES array, RouteConfig interface, getAccessibleRoutes()"
-  WRONG: "Create the dedicated data file"  ← too vague
-- Navigation.tsx: MUST say it imports from Routes.ts and renders nav links
-  RIGHT: "Extract Navigation — reads accessible routes from Routes.ts, renders nav links + logout button"
-  WRONG: "Extract the navigation rendering logic"  ← missing data source
-- Layout.tsx: MUST say it OWNS <Routes>/<Route> rendering AND uses Navigation in sidebar
-  RIGHT: "Extract Layout — owns all <Routes>/<Route> rendering from ROUTES array, Navigation in sidebar"
-  WRONG: "Extract the main layout structure incorporating Navigation"  ← missing routing-owner responsibility
-- App.tsx slim: MUST say routing is delegated (App has no <Routes>, Layout does)
-  RIGHT: "Slim App.tsx — only <BrowserRouter><Layout .../></BrowserRouter>, routing delegated to Layout"
-  WRONG: "Update App.tsx to use new components"  ← doesn't state routing delegation
-
-FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
-- Route config files export arrays or objects of route definitions — they are DATA files, not components
-  RIGHT: src/routes/Routes.ts  (exports RouteConfig[], no JSX)
-  WRONG: src/routes/Routes.tsx  (.tsx implies JSX; a data config file has no JSX)
-- Use .tsx ONLY when the file renders JSX (returns <JSX />)
-- Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
-
-Rule: if the deliverable is described as a dependency ("which X will use", "that Y imports") but not as its own WRITE step — the plan is incomplete. Add the WRITE step.
-
-PREREQUISITE FILE RULE (CRITICAL):
-If a WRITE step will import from a NEW file that does NOT exist in the EXISTING CODEBASE above, that new file MUST have its own WRITE step EARLIER in this plan.
-- WRONG: Step 1: WRITE LoginForm.tsx (imports useFormStore) — useFormStore doesn't exist yet
-- RIGHT: Step 1: WRITE src/store/useFormStore.ts, Step 2: WRITE src/components/LoginForm.tsx
-This applies to any new module: state stores, custom hooks, utility files, etc.
-Never write a file that imports a module you haven't written yet in this same plan.
-
-STEP DESCRIPTION VOCABULARY (MANDATORY):
-- Step descriptions must be specific about the CONTRACT (prop names, types, export shape) but silent about IMPLEMENTATION UTILITIES (how classes are merged, which library call is used).
-  WRONG: "Create Badge component utilizing the cn() utility for class merging"  ← prescribes internal utility
-  RIGHT:  "Create Badge component with severity: 'success'|'warning'|'error'|'info' prop and optional className prop"  ← specific contract, silent on utility
-  WRONG: "Create form using react-hook-form's register and handleSubmit"
-  RIGHT:  "Create form with email/password controlled inputs, onSubmit handler, and field-level error state"
-- NEVER write "cn()", "clsx()", "classnames()" in a step description — how classes are merged is an implementation detail the executor decides
-- In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
-  These are react-hook-form library terms — do NOT use them to describe Zustand state management
-- If the task involves a form that reads state from a Zustand store, write:
-  "reads email, password from useAuthStore; calls login() on submit" — NOT "useForm (Zustand)"
-- "useForm" is a react-hook-form hook. Zustand stores use "useXxxStore" (e.g. useAuthStore, useUserStore)
-
-PROTECTED ROUTE PATTERN (applies when request mentions "protected route", "route guard", "auth check", "redirect to /login"):
-A protected route checks whether the user IS ALREADY AUTHENTICATED — it does NOT re-validate credentials.
-- The auth service/hook must check session state: isAuthenticated() → boolean, or getToken() → string | null
-  WRONG: authenticateUser(username, password) — that's a LOGIN function, not a session check
-  RIGHT: isAuthenticated(): boolean — reads a stored flag (e.g. localStorage, cookie, or Zustand isLoggedIn)
-  RIGHT: getToken(): string | null — returns current session token from storage
-- NEVER design the service to accept username/password arguments — there are no credentials at route-check time
-- The component checks auth status, shows loading while checking, then either renders children or navigates to /login
-- If an existing authStore is in scope (e.g. EXISTING CODEBASE has authStore.ts), read isLoggedIn from it directly
-- MOCK DEFAULT VALUE: The mock auth service MUST return false by default (unauthenticated state).
-  WRONG: return true  ← redirect never fires; ProtectedRoute is invisible and untestable
-  RIGHT:  return false ← redirect fires on load; demonstrates the guard works
-  Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
-
-COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
-📌 ALL NEW components must:
-  - Extend standard HTML attributes (type, disabled, aria-label, etc.)
-  - Accept className?: string prop for style extensibility
-  - Use cn() utility from src/utils/cn.ts to merge custom classes
-  - Interactive components (button, input) MUST include px-4 py-2 in the cn() base string — components without padding are invisible by default
-  - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
-  - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
-  - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
+  - Merge styles with the workspace's established pattern (cn() if confirmed available, otherwise clsx or conditional strings)
 📌 EXCEPTION — DECOMPOSITION TASKS: When the task is "decompose/extract/split" an EXISTING file, do NOT impose cn() on extracted components. Match the styling approach of the source file. If the source uses inline style={{}}, the extracted components must also use inline style={{}}. Never write "uses cn()" in a step description for a component being extracted from an inline-style source.
 
 ${contextSection}
@@ -1183,18 +999,6 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
   }
 
   /**
-   * CRITICAL: Scaffold Dependency Check (Danh's "Last Mile" Gap)
-   * 
-   * Problem: Agent knows it should use cn() but doesn't verify it exists.
-   * Solution: Check for mandatory utilities in rules, create if missing.
-   * 
-   * Logic:
-   * 1. Scan rules for required utilities (cn(), clsx, etc.)
-   * 2. Check if utilities exist in workspace
-   * 3. Prepend WRITE steps for missing utilities
-   * 4. Ensure components can use what they need
-   */
-  /**
    * Repair a DECOMPOSE plan by injecting WRITE steps for any deliverables named in
    * the user request that the LLM dropped.
    *
@@ -1473,96 +1277,4 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     return filtered;
   }
 
-  private async checkScaffoldDependencies(
-    steps: ExecutionStep[],
-    workspacePath: string,
-    userRequest: string
-  ): Promise<ExecutionStep[]> {
-    const scaffoldSteps: ExecutionStep[] = [];
-    const fs = require('fs');
-    const path = require('path');
-
-    // Mandatory utilities that should exist if generating components/utilities
-    const mandatoryUtilities = [
-      {
-        name: 'cn utility',
-        path: 'src/utils/cn.ts',
-        check: (content: string) => content.includes('cn') && (content.includes('components') || content.includes('Component')),
-        template: `/**
- * cn() - Tailwind CSS class merging utility
- * Combines classNames intelligently, with Tailwind conflict resolution
- */
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-export function cn(...inputs: ClassValue[]): string {
-  return twMerge(clsx(inputs));
-}
-`
-      }
-    ];
-
-    // Check if any step involves creating components or utilities
-    const isComponentTask = steps.some(
-      s => (s.path?.includes('src/components') || userRequest.toLowerCase().includes('component'))
-        && s.action === 'write'
-    );
-
-    if (!isComponentTask) {
-      return scaffoldSteps; // Not a component task, no scaffolding needed
-    }
-
-    // Check each mandatory utility
-    for (const utility of mandatoryUtilities) {
-      const utilityPath = path.join(workspacePath, utility.path);
-      const utilityExists = fs.existsSync(utilityPath);
-
-      let needsWrite = !utilityExists;
-      let reason = 'missing';
-
-      if (utilityExists) {
-        // Existence is not enough — validate the file is healthy.
-        // A previous run could have written a corrupted version (e.g. circular import).
-        try {
-          const existingContent: string = fs.readFileSync(utilityPath, 'utf-8');
-
-          // Utility files must not import from the component layer (circular dependency)
-          const hasCircularImport = /from\s+['"].*(?:\/components|\/pages|\/app|\/routes|\/views)['"]/i.test(existingContent);
-          // Must actually export the expected utility function
-          const hasValidExport = /export\s+(?:function|const)\s+cn\b/.test(existingContent);
-
-          if (hasCircularImport) {
-            needsWrite = true;
-            reason = 'circular import detected';
-          } else if (!hasValidExport) {
-            needsWrite = true;
-            reason = 'missing cn export';
-          }
-        } catch {
-          needsWrite = true;
-          reason = 'unreadable';
-        }
-      }
-
-      if (needsWrite) {
-        console.log(`[Planner] Scaffold: ${utility.name} at ${utility.path} — ${reason}, will rewrite with golden template`);
-
-        // Create a WRITE step for the missing/corrupted utility
-        const scaffoldStep: ExecutionStep = {
-          stepId: 0, // Will be renumbered by executor
-          stepNumber: 0, // Will be renumbered by executor
-          id: `scaffold-${utility.name.replace(/\s+/g, '-')}`,
-          action: 'write' as ActionTypeString,
-          path: utility.path,
-          description: `${utilityExists ? 'Heal' : 'Create'} ${utility.name} utility (${reason})`,
-          expectedOutcome: `File written: ${utility.path}`,
-          command: utility.template, // Store template in command for executor
-        };
-
-        scaffoldSteps.push(scaffoldStep);
-      }
-    }
-
-    return scaffoldSteps;
-  }
 }

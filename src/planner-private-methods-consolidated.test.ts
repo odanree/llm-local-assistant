@@ -42,21 +42,6 @@ const createMockStep = (overrides?: Partial<ExecutionStep>): ExecutionStep => ({
   ...overrides,
 });
 
-const GOLDEN_TEMPLATES = {
-  'COMPONENT': {
-    name: 'React Component',
-    scaffold: ['src/components/', 'src/hooks/', 'src/utils/cn.ts'],
-  },
-  'FORM': {
-    name: 'Form Component',
-    scaffold: ['src/components/', 'src/utils/cn.ts'],
-  },
-  'PAGE': {
-    name: 'Page Component',
-    scaffold: ['src/pages/', 'src/components/'],
-  },
-};
-
 // ============================================================================
 // TIER 1: HIGH COMPLEXITY METHODS (CC ≈ 5-7)
 // ============================================================================
