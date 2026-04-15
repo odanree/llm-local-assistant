@@ -11,8 +11,64 @@
  *   incidental   — cn() appears in a string, comment, or example that is not an instruction
  */
 
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
-import { classifyMatch, CN_MANDATE } from './AuditAgent';
+import { classifyMatch, scan, CN_MANDATE } from './AuditAgent';
+
+// ---------------------------------------------------------------------------
+// Scanner tests (no LLM — pure file system)
+// ---------------------------------------------------------------------------
+
+describe('AuditAgent — scan()', () => {
+  const SRC = path.resolve(__dirname, '..');  // points to src/
+
+  it('finds cn() matches in executor.ts', () => {
+    const matches = scan(CN_MANDATE, SRC);
+    const executorMatches = matches.filter(m => m.file.endsWith('executor.ts'));
+    expect(executorMatches.length).toBeGreaterThan(0);
+  });
+
+  it('finds cn() matches in CodeAnalyzer.ts', () => {
+    const matches = scan(CN_MANDATE, SRC);
+    const analyzerMatches = matches.filter(m => m.file.endsWith('CodeAnalyzer.ts'));
+    expect(analyzerMatches.length).toBeGreaterThan(0);
+  });
+
+  it('excludes test files', () => {
+    const matches = scan(CN_MANDATE, SRC);
+    const testMatches = matches.filter(m => m.file.endsWith('.test.ts'));
+    expect(testMatches).toHaveLength(0);
+  });
+
+  it('each match has file, line, content, and context', () => {
+    const matches = scan(CN_MANDATE, SRC);
+    expect(matches.length).toBeGreaterThan(0);
+    for (const m of matches.slice(0, 5)) {
+      expect(typeof m.file).toBe('string');
+      expect(m.line).toBeGreaterThan(0);
+      expect(typeof m.content).toBe('string');
+      expect(typeof m.context).toBe('string');
+    }
+  });
+
+  it('context window includes the matched line marked with ▶', () => {
+    const matches = scan(CN_MANDATE, SRC);
+    expect(matches.length).toBeGreaterThan(0);
+    for (const m of matches.slice(0, 5)) {
+      expect(m.context).toContain('▶');
+    }
+  });
+
+  it('context window spans ±contextLines around the match', () => {
+    const matches = scan(CN_MANDATE, SRC);
+    expect(matches.length).toBeGreaterThan(0);
+    const m = matches[0];
+    const lineCount = m.context.split('\n').length;
+    // At most 2*contextLines+1 lines (fewer at file edges)
+    expect(lineCount).toBeLessThanOrEqual(CN_MANDATE.contextLines * 2 + 1);
+    expect(lineCount).toBeGreaterThan(1);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Audit definition — the cn mandate
@@ -55,6 +111,8 @@ describe('AuditAgent — cn-mandate definition', () => {
 // ---------------------------------------------------------------------------
 
 describe('AuditAgent — classifyMatch (known answers)', () => {
+  // LLM calls — each may take up to ~3s on local Ollama
+  const TIMEOUT = 30_000;
 
   // ── PRESCRIPTIVE ────────────────────────────────────────────────────────
 
@@ -68,7 +126,7 @@ conditional arguments — NEVER pass an empty string as an argument.
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('prescriptive');
-  });
+  }, TIMEOUT);
 
   it('classifies getGenerationConstraints cn injection as prescriptive', async () => {
     const snippet = `
@@ -78,7 +136,7 @@ if (this.data.cnUtilityPath) {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('prescriptive');
-  });
+  }, TIMEOUT);
 
   it('classifies planner unconditional cn mandate as prescriptive', async () => {
     const snippet = `
@@ -86,7 +144,7 @@ if (this.data.cnUtilityPath) {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('prescriptive');
-  });
+  }, TIMEOUT);
 
   // ── REACTIVE ─────────────────────────────────────────────────────────────
 
@@ -103,7 +161,7 @@ if (importsCn && hasManualConcat) {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('reactive');
-  });
+  }, TIMEOUT);
 
   it('classifies bare-string validator as reactive', async () => {
     const snippet = `
@@ -117,7 +175,7 @@ if (importsCn && bareStringClassName) {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('reactive');
-  });
+  }, TIMEOUT);
 
   it('classifies Wrong/Dead import cn removal as reactive', async () => {
     const snippet = `
@@ -132,7 +190,7 @@ if (error.includes('Dead import') && error.includes('cn')) {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('reactive');
-  });
+  }, TIMEOUT);
 
   // ── INCIDENTAL ───────────────────────────────────────────────────────────
 
@@ -149,7 +207,7 @@ export const cn = (...inputs: ClassValue[]) => {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('incidental');
-  });
+  }, TIMEOUT);
 
   it('classifies FIRST-B SmartAutoCorrection fix as reactive', async () => {
     const snippet = `
@@ -167,7 +225,7 @@ if (hasCnPhantomImport) {
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     // Reactive: fires only when cn() phantom import is detected in generated output
     expect(result.classification).toBe('reactive');
-  });
+  }, TIMEOUT);
 
   it('classifies JSDoc comment mentioning cn() as incidental', async () => {
     const snippet = `
@@ -179,7 +237,7 @@ if (hasCnPhantomImport) {
 `;
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     expect(result.classification).toBe('incidental');
-  });
+  }, TIMEOUT);
 
   // ── NEGATIVE / BOUNDARY ──────────────────────────────────────────────────
 
@@ -190,6 +248,6 @@ if (hasCnPhantomImport) {
     const result = await classifyMatch(snippet, CN_MANDATE.rubric);
     // Explicitly forbids cn() — not prescribing it, not enforcing it
     expect(result.classification).toBe('incidental');
-  });
+  }, TIMEOUT);
 
 });

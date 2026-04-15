@@ -11,6 +11,8 @@
  * code can be removed without touching legitimate enforcement logic.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { LLMClient, LLMConfig } from '../llmClient';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +21,33 @@ import { LLMClient, LLMConfig } from '../llmClient';
 
 export type Classification = 'prescriptive' | 'reactive' | 'incidental';
 export type RecommendedAction = 'remove' | 'update' | 'keep';
+
+export interface AuditMatch {
+  /** Absolute path to the file. */
+  file: string;
+  /** 1-based line number of the matched line. */
+  line: number;
+  /** The matched line content (trimmed). */
+  content: string;
+  /** ±contextLines lines around the match, joined as a single string. */
+  context: string;
+}
+
+export interface AuditResult {
+  match: AuditMatch;
+  classification: Classification;
+  reason: string;
+  action: RecommendedAction;
+}
+
+export interface AuditReport {
+  definition: string;
+  scannedFiles: number;
+  totalMatches: number;
+  results: AuditResult[];
+  /** Counts by classification for quick summary. */
+  summary: Record<Classification, number>;
+}
 
 export interface AuditDefinition {
   /** Human-readable name for the audit (used in reports). */
@@ -168,4 +197,124 @@ function makeDefaultClient(): LLMClient {
     timeout: 30_000,
   };
   return new LLMClient(config);
+}
+
+// ---------------------------------------------------------------------------
+// Scanner
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a directory recursively and return all .ts/.tsx files that are not
+ * excluded by the definition's excludeFiles patterns.
+ */
+function walkFiles(dir: string, excludeFiles: RegExp[] = []): string[] {
+  const results: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') { continue; }
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...walkFiles(full, excludeFiles));
+    } else if (/\.(ts|tsx)$/.test(entry.name)) {
+      const isExcluded = excludeFiles.some(p => p.test(full.replace(/\\/g, '/')));
+      if (!isExcluded) { results.push(full); }
+    }
+  }
+  return results;
+}
+
+/**
+ * Scan a single file for lines matching any of the definition's patterns.
+ * Returns one AuditMatch per matching line with surrounding context.
+ */
+function scanFile(filePath: string, definition: AuditDefinition): AuditMatch[] {
+  let source: string;
+  try {
+    source = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return [];
+  }
+
+  const lines = source.split('\n');
+  const matches: AuditMatch[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const matched = definition.patterns.some(p => p.test(line));
+    if (!matched) { continue; }
+
+    const from = Math.max(0, i - definition.contextLines);
+    const to = Math.min(lines.length - 1, i + definition.contextLines);
+    const contextLines = lines.slice(from, to + 1);
+
+    // Mark the matched line with a ▶ prefix so the classifier knows which line triggered
+    const matchOffset = i - from;
+    contextLines[matchOffset] = `▶ ${contextLines[matchOffset]}`;
+
+    matches.push({
+      file: filePath,
+      line: i + 1,
+      content: line.trim(),
+      context: contextLines.join('\n'),
+    });
+  }
+
+  return matches;
+}
+
+/**
+ * Scan a directory for all matches of the audit definition.
+ * Returns raw matches without classification — call run() for the full pipeline.
+ */
+export function scan(definition: AuditDefinition, rootDir: string): AuditMatch[] {
+  const files = walkFiles(rootDir, definition.excludeFiles);
+  return files.flatMap(f => scanFile(f, definition));
+}
+
+// ---------------------------------------------------------------------------
+// Full pipeline: scan → classify → report
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the full audit: scan rootDir, classify every match, return a report.
+ *
+ * @param definition  The audit definition (patterns, rubric, excludes).
+ * @param rootDir     Directory to scan (e.g. path.join(__dirname, '../../src')).
+ * @param client      Optional LLMClient — uses default local Ollama if omitted.
+ */
+export async function run(
+  definition: AuditDefinition,
+  rootDir: string,
+  client?: LLMClient
+): Promise<AuditReport> {
+  const llm = client ?? makeDefaultClient();
+  const matches = scan(definition, rootDir);
+
+  const files = new Set(matches.map(m => m.file));
+  console.log(`[AuditAgent] ${definition.name}: ${matches.length} matches in ${files.size} files`);
+
+  const results: AuditResult[] = [];
+  for (const match of matches) {
+    const rel = path.relative(rootDir, match.file).replace(/\\/g, '/');
+    console.log(`[AuditAgent] Classifying ${rel}:${match.line} …`);
+    const classified = await classifyMatch(match.context, definition.rubric, llm);
+    results.push({ match, ...classified });
+  }
+
+  const summary: Record<Classification, number> = { prescriptive: 0, reactive: 0, incidental: 0 };
+  for (const r of results) { summary[r.classification]++; }
+
+  return {
+    definition: definition.name,
+    scannedFiles: files.size,
+    totalMatches: matches.length,
+    results,
+    summary,
+  };
 }

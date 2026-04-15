@@ -13,6 +13,7 @@ import { WorkspaceDetector } from './utils';
 import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
 import { registerDiagnostics } from './diagnostics';
 import * as path from 'path';
+import { run as auditRun, CN_MANDATE } from './services/AuditAgent';
 
 let llmClient: LLMClient;
 let executor: Executor;
@@ -159,6 +160,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /refactor <file> → Suggest improvements\n\n` +
           `📝 **Files:**\n` +
           `- /read <path> → Read a file\n` +
+          `- /audit → Audit codebase for legacy cn() mandate patterns\n` +
           `- /write <path> <prompt> → Generate and write file content\n\n` +
           `📚 **Git:**\n` +
           `- /git-commit-msg → Generate commit message from staged changes\n` +
@@ -1478,6 +1480,61 @@ ${fileContent}
                 postChatMessage({
                   command: 'addMessage',
                   error: `Error explaining code: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
+            // AGENT MODE: /audit → audit codebase for legacy cn() mandate patterns
+            if (/^\/audit\b/.test(text)) {
+              const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
+              if (!wsFolder) { throw new Error('No workspace folder open.'); }
+              const srcDir = path.join(wsFolder.fsPath, 'src');
+
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: '🔍 Scanning codebase for cn() references...',
+                type: 'info',
+              });
+
+              try {
+                const report = await auditRun(CN_MANDATE, srcDir, llmClient);
+
+                const summaryLines = [
+                  `## Audit Report: ${report.definition}`,
+                  ``,
+                  `Scanned **${report.scannedFiles}** files — **${report.totalMatches}** matches found.`,
+                  ``,
+                  `| Classification | Count |`,
+                  `|---|---|`,
+                  `| prescriptive (remove) | ${report.summary.prescriptive} |`,
+                  `| reactive (keep) | ${report.summary.reactive} |`,
+                  `| incidental (keep) | ${report.summary.incidental} |`,
+                  ``,
+                ];
+
+                if (report.results.length > 0) {
+                  summaryLines.push(`### Matches`);
+                  summaryLines.push(`| File | Line | Classification | Action | Reason |`);
+                  summaryLines.push(`|---|---|---|---|---|`);
+                  for (const r of report.results) {
+                    const rel = path.relative(srcDir, r.match.file).replace(/\\/g, '/');
+                    const escaped = r.reason.replace(/\|/g, '\\|');
+                    summaryLines.push(`| ${rel} | ${r.match.line} | ${r.classification} | ${r.action} | ${escaped} |`);
+                  }
+                }
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: summaryLines.join('\n'),
+                  isMarkdown: true,
+                  success: true,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Audit failed: ${err instanceof Error ? err.message : String(err)}`,
                   success: false,
                 });
               }
