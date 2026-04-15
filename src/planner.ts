@@ -156,13 +156,6 @@ export class Planner {
       // even when the user only asked for one file. This is almost never correct behavior.
       sortedSteps = this.filterUnrequestedEntryWrites(sortedSteps, userRequest);
 
-      // POST-PROCESS: Inject missing deliverables for DECOMPOSE tasks.
-      // The LLM reliably drops one or more named artifacts from decompose/extract requests.
-      // This repair is deterministic — it doesn't re-invoke the LLM.
-      if (/\b(decompose|extract|split|break out|pull out)\b/i.test(userRequest)) {
-        sortedSteps = this.injectMissingDeliverables(sortedSteps, userRequest);
-      }
-
       // POST-PROCESS: Drop noise READ steps.
       // A READ step is noise when the plan already has WRITE steps but this READ
       // has no downstream WRITE to the same path — these are LLM epilogues:
@@ -998,87 +991,6 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     return null;
   }
 
-  /**
-   * Repair a DECOMPOSE plan by injecting WRITE steps for any deliverables named in
-   * the user request that the LLM dropped.
-   *
-   * The LLM reliably drops one or more artifacts from decompose/extract requests despite
-   * explicit prompt rules. This deterministic repair catches the gap without re-invoking the LLM.
-   *
-   * Strategy:
-   *   1. Extract component names ([A-Z][a-zA-Z]+ component) and .ts/.tsx filenames from the request
-   *   2. For each named artifact, check if a WRITE step exists for that name
-   *   3. If missing, synthesize a WRITE step and insert it after the last READ step
-   */
-  private injectMissingDeliverables(steps: ExecutionStep[], userRequest: string): ExecutionStep[] {
-    // Extract explicit .ts / .tsx filenames from request (e.g. "Routes.ts", "AppLayout.tsx")
-    const explicitFiles = [...userRequest.matchAll(/\b([A-Za-z][A-Za-z0-9]*\.[tj]sx?)\b/g)].map(m => m[1]);
-
-    // Extract component names from "X component" patterns (e.g. "Layout component")
-    const componentNames = [...userRequest.matchAll(/\b([A-Z][a-zA-Z]+)\s+component\b/gi)].map(m => m[1]);
-
-    const toInject: Array<{ name: string; path: string; description: string }> = [];
-
-    // Check each explicit file
-    for (const file of explicitFiles) {
-      const isTs = file.endsWith('.ts') && !file.endsWith('.tsx');
-      const alreadyPlanned = steps.some(s =>
-        s.action === 'write' && s.path && s.path.endsWith('/' + file)
-      );
-      if (!alreadyPlanned) {
-        const dir = isTs ? 'src/routes' : 'src/components';
-        toInject.push({
-          name: file,
-          path: `${dir}/${file}`,
-          description: `Extract ${file.replace(/\.[tj]sx?$/, '')} configuration from the source file into a dedicated ${isTs ? 'data config' : 'component'} file`,
-        });
-      }
-    }
-
-    // Check each component name
-    for (const name of componentNames) {
-      const alreadyPlanned = steps.some(s =>
-        s.action === 'write' && s.path && new RegExp(`/${name}\\.tsx?$`, 'i').test(s.path)
-      );
-      // Also skip if it appeared as an explicit file above
-      const alreadyQueued = toInject.some(t => t.path.includes(`/${name}.`));
-      if (!alreadyPlanned && !alreadyQueued) {
-        toInject.push({
-          name,
-          path: `src/components/${name}.tsx`,
-          description: `Extract ${name} component from the source file`,
-        });
-      }
-    }
-
-    if (toInject.length === 0) { return steps; }
-
-    console.log(`[Planner] Injecting ${toInject.length} missing deliverable(s): ${toInject.map(t => t.name).join(', ')}`);
-
-    // Insert after the last READ step (or at position 1 if no READ)
-    const lastReadIdx = steps.reduce((acc, s, i) => s.action === 'read' ? i : acc, -1);
-    const insertAt = lastReadIdx + 1;
-
-    const injected: ExecutionStep[] = toInject.map((item, offset) => {
-      const newStepId = 1000 + offset; // High IDs avoid collision with existing steps
-      return {
-        stepNumber: newStepId,
-        stepId: newStepId,
-        id: `step_${newStepId}`,
-        action: 'write' as ActionTypeString,
-        description: item.description,
-        path: item.path,
-        targetFile: item.path,
-        expectedOutcome: `${item.name} created`,
-        dependencies: undefined,
-        dependsOn: [],
-      };
-    });
-
-    const result = [...steps];
-    result.splice(insertAt, 0, ...injected);
-    return result;
-  }
 
   /**
    * Drop noise READ steps from a plan that contains WRITE steps.
@@ -1240,9 +1152,6 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
 
     const filtered = steps.filter(step => {
       if (step.action !== 'write' || !step.path) { return true; }
-
-      // Never filter scaffold steps — they are healing writes for corrupted/missing utilities
-      if (step.id?.startsWith('scaffold-')) { return true; }
 
       const normalizedPath = step.path.replace(/\\/g, '/');
       const inRagContext = ragPaths.has(normalizedPath);
