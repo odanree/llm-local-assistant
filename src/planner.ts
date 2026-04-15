@@ -521,12 +521,12 @@ FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
 - Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
 
 STEP DESCRIPTION VOCABULARY (MANDATORY):
-- Step descriptions describe WHAT to create, not HOW to implement it. NEVER prescribe implementation utilities.
-  WRONG: "Create Badge component utilizing the cn() utility for class merging"
-  RIGHT:  "Create Badge component with severity prop and conditional Tailwind classes"
+- Step descriptions must be specific about the CONTRACT (prop names, types, export shape) but silent about IMPLEMENTATION UTILITIES (how classes are merged, which library call is used).
+  WRONG: "Create Badge component utilizing the cn() utility for class merging"  ← prescribes internal utility
+  RIGHT:  "Create Badge component with severity: 'success'|'warning'|'error'|'info' prop and optional className prop"  ← specific contract, silent on utility
   WRONG: "Create form using react-hook-form's register and handleSubmit"
-  RIGHT:  "Create form with controlled inputs, submit handler, and field-level validation"
-- NEVER write "cn()", "clsx()", "classnames()" in a step description — class merging is an implementation detail
+  RIGHT:  "Create form with email/password controlled inputs, onSubmit handler, and field-level error state"
+- NEVER write "cn()", "clsx()", "classnames()" in a step description — how classes are merged is an implementation detail the executor decides
 - In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
   These are react-hook-form library terms — do NOT use them to describe Zustand state management
 - If the task involves a form that reads state from a Zustand store, write:
@@ -680,12 +680,12 @@ This applies to any new module: state stores, custom hooks, utility files, etc.
 Never write a file that imports a module you haven't written yet in this same plan.
 
 STEP DESCRIPTION VOCABULARY (MANDATORY):
-- Step descriptions describe WHAT to create, not HOW to implement it. NEVER prescribe implementation utilities.
-  WRONG: "Create Badge component utilizing the cn() utility for class merging"
-  RIGHT:  "Create Badge component with severity prop and conditional Tailwind classes"
+- Step descriptions must be specific about the CONTRACT (prop names, types, export shape) but silent about IMPLEMENTATION UTILITIES (how classes are merged, which library call is used).
+  WRONG: "Create Badge component utilizing the cn() utility for class merging"  ← prescribes internal utility
+  RIGHT:  "Create Badge component with severity: 'success'|'warning'|'error'|'info' prop and optional className prop"  ← specific contract, silent on utility
   WRONG: "Create form using react-hook-form's register and handleSubmit"
-  RIGHT:  "Create form with controlled inputs, submit handler, and field-level validation"
-- NEVER write "cn()", "clsx()", "classnames()" in a step description — class merging is an implementation detail
+  RIGHT:  "Create form with email/password controlled inputs, onSubmit handler, and field-level error state"
+- NEVER write "cn()", "clsx()", "classnames()" in a step description — how classes are merged is an implementation detail the executor decides
 - In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
   These are react-hook-form library terms — do NOT use them to describe Zustand state management
 - If the task involves a form that reads state from a Zustand store, write:
