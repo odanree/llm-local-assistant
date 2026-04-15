@@ -1,28 +1,29 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.14.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.15.0-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
-[![Tests](https://img.shields.io/badge/tests-2891%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
 [![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
 [![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
-**Local AI Code Orchestrator** - Multi-step planning, architecture validation, RAG-powered codebase context, and Zustand/React Hook auditing. 2,891 tests. All running on your local LLM with zero cloud dependencies.
+**Local AI Code Orchestrator** - Multi-step planning, architecture validation, RAG-powered codebase context, and Zustand/React Hook auditing. 2,872 tests. All running on your local LLM with zero cloud dependencies.
 
-**🚀 v2.14.0: Lean Edition — 79KB vsix, 0 runtime dependencies**
+**🚀 v2.15.0: Pipeline Correctness — planner filters, architecture validator, and auto-correction hardened**
 
-> **Latest Release**: v2.14.0 - **Lean Edition**: Replaced Babel AST (995KB) with targeted regex, dropped 8,800+ lines of dead code, .vsix shrank from 1.06MB → 79KB (-93%). 2,891 tests passing.
+> **Latest Release**: v2.15.0 - **Pipeline Correctness**: Fixed four deterministic bugs in the planner step filters, architecture validator recommendation logic, and `isAutoFixable` classification. `isNonVisualWrapper` extracted to shared static method. 2,872 tests passing.
 > **Advanced Capabilities**: Real-time Streaming, Interactive Prompts, RAG Embeddings, Suspend/Resume State Machine, Three-Layer Self-Healing
-> **Status**: 2,891 tests passing. Production-ready with enterprise reliability.
+> **Status**: 2,872 tests passing. Production-ready with enterprise reliability.
 
 ## 📚 Release History
 
 For a complete history of releases and detailed changelogs, see [CHANGELOG.md](CHANGELOG.md).
 
 **Recent Releases:**
-- **v2.14.0** (Current) - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
+- **v2.15.0** (Current) - Pipeline Correctness: planner filter over-firing fixed, ArchitectureValidator skip/fix recommendation restored, isAutoFixable unclosed-brace classification fixed, isNonVisualWrapper shared static method
+- **v2.15.0** - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
 - **v2.13.1** - Reactive Orchestrator: marketplace bloat fix (18.06MB → 1.59MB)
 - **v2.13.0** - Reactive Orchestrator: 81.61% coverage, 3,637 tests, self-healing architecture with safety rails
 - **v2.12.0** - Infrastructure: Real-time streaming, interactive prompts, suspend/resume state machine
@@ -488,8 +489,8 @@ See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATT
      ▼
  [CORRECTOR]  ── Two layers before giving up:
      │            A. Deterministic (SmartAutoCorrection):
-     │               merge split React imports, append missing braces,
-     │               remove cn from .ts files, fix circular imports
+     │               merge split React imports, remove cn from .ts files,
+     │               fix circular imports, template-literal→ternary in style objects
      │            B. LLM correction: targeted error list + file-specific
      │               instructions (e.g. "REMOVE ALL JSX" for .ts files,
      │               not the default "keep existing JSX structure")
@@ -513,12 +514,14 @@ The failure modes this architecture is designed to prevent:
 | Wrong step order (Layout before Routes) | Planner post-processor | Topological sort on description patterns |
 | Ghost symbol imports (`@/types/config`) | Validator Check 4 | Cross-file contract reads actual exports from disk |
 | Corrector loops on unfixable error | Corrector | Loop detector + `unfixablePatterns` early exit |
+| Architecture violation silently allowed | ArchitectureValidator | High-severity violations always produce `'skip'` regardless of strict mode |
+| Planner drops legitimate run/verify steps | Planner | Narrowed `isManualStep` and `isRedundantTestStep` guards to exact patterns |
 
 **A longer prompt is always cheaper than a failed correction attempt.** One hallucinated import triggers up to 9 correction calls (3 inner × 3 outer retries), each consuming context and producing a shorter, degraded file. Preventing the hallucination at generation time with an extra instruction line costs nothing.
 
 ## ✅ Quality & Testing
 
-- **2,891 tests** — 78 test files, 100% pass rate ✅
+- **2,872 tests** — 78 test files, 100% pass rate ✅
 - **TypeScript strict mode** — 0 compilation errors
 - **CI/CD** — Automatic quality checks on every PR
 
@@ -641,6 +644,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**v2.14.0** — Local AI Code Orchestrator | 🧪 2,891 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
+**v2.15.0** — Local AI Code Orchestrator | 🧪 2,872 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
 
 Created by [@odanree](https://github.com/odanree)

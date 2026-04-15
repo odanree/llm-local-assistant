@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0] - 2026-04-15 - "Pipeline Correctness"
+
+### Refactor
+- **`isNonVisualWrapper` shared static method** — extracted from inline logic to `ArchitectureValidator.isNonVisualWrapper()`, used consistently across validation checks
+
+### Bug Fixes
+
+**ArchitectureValidator (`validateAgainstLayer`)**
+- High-severity violations now always produce `recommendation = 'skip'` regardless of `strict` mode. Previously, the PR gated the entire recommendation block behind `if (this.strict)`, causing the validator to silently return `'allow'` for services files importing React hooks — a clear architectural violation.
+- `strict` mode now only controls the `'fix'` recommendation for low/medium severity violations (as intended).
+
+**SmartAutoCorrection (`isAutoFixable`)**
+- Moved `'unclosed brace'` from `fixablePatterns` to `unfixablePatterns`. The deterministic tail-append fixer still exists in `fixCommonPatterns` (Pass 0 of the tsc correction loop), but `isAutoFixable` must return `false` so that truncated output triggers the full correction path rather than being skipped.
+- Mixed-error arrays containing `'unclosed brace'` alongside fixable patterns (e.g. `['Missing import', 'unclosed brace']`) now correctly return `false`.
+
+**Planner step filters (`isManualStep` / `isRedundantTestStep`)**
+- `isManualStep`: removed `descLower.includes('manual')` (caught any step with "manual" in description, including `action: "manual"` steps with legitimate descriptions) and `descLower.startsWith('verify ')` (caught "Verify migration" — a legitimate automation step). Browser-verification steps are still caught by the specific patterns `'verify visually'`, `'test in browser'`, `'check browser'`.
+- `isRedundantTestStep`: changed `(!step.command || testRunnerCommand)` to `!step.command`. Run steps that carry an explicit test-runner command (e.g. `command: "npm test"`) are no longer dropped — only commandless test-description steps are filtered.
+
+### Quality
+- **2,872 tests** — 77 test files, 100% pass rate on Node 18.x and 20.x
+- Zero regressions across all CI checks
+
+---
+
 ## [2.13.0] - 2026-02-28 - "The Reactive Orchestrator"
 
 ### 🚀 Major Features
