@@ -1642,7 +1642,7 @@ export class Executor {
     if (cssModuleImport) {
       errors.push(
         `❌ Fabricated CSS module: \`${cssModuleImport[1]}\` was imported but this project uses Tailwind, not CSS modules. ` +
-        `Remove the CSS module import and replace all \`styles.xxx\` references with Tailwind classes via cn().`
+        `Remove the CSS module import and replace all \`styles.xxx\` references with Tailwind classes (use clsx or cn() if available in the project).`
       );
     }
 
@@ -2245,7 +2245,13 @@ export class Executor {
         : isDecomposedNavigationCriteria
         ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
         : '';
-      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
+      // For .tsx component files that are not pure-logic, remind the criteria LLM that
+      // components rendering content need a children prop — prevents it being silently omitted.
+      const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisualWrapper;
+      const childrenReminder = isTsxComponent && !step.description.toLowerCase().includes('children')
+        ? ' If this component wraps or displays content (text, icons, slots), include a criterion for "Accepts children: React.ReactNode". Omit it only for self-contained display components like icons or spinners.'
+        : '';
+      const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
 
       const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
       const controller = new AbortController();
@@ -2286,7 +2292,12 @@ export class Executor {
         return [];
       }
       if (!Array.isArray(criteria)) { return []; }
-      const filtered = criteria.filter((c): c is string => typeof c === 'string' && c.trim().length > 0);
+      const filtered = criteria
+        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+        // Strip criteria that prescribe the class-merging utility — these bypass phantom-import
+        // probes and lock the LLM into a specific import before validation can check if it exists.
+        // The validator's bare-string and manual-concat checks enforce cn() usage post-generation.
+        .filter(c => !/\bcn\s*\(|\bimports?\s+cn\b|\buse[s]?\s+cn\b/i.test(c));
 
       if (filtered.length > 0) {
         this.config.onMessage?.(
@@ -4574,23 +4585,22 @@ SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly des
 - Adding unrequested features is a spec violation. When in doubt, do less.
 
 TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into intermediate variables.
-- WRONG: const paddingStyle = 'px-4 py-2';  cn(paddingStyle, variantClasses[variant], className)
-- RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
-- Intermediate const variables for single class strings are dead indirection — inline them directly in cn().
+- WRONG: const paddingStyle = 'px-4 py-2';  clsx(paddingStyle, variantClasses[variant], className)
+- RIGHT: clsx('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
+- Intermediate const variables for single class strings are dead indirection — inline them directly.
 
-CN() USAGE RULE (mandatory): cn() takes a single base string plus optional conditional arguments — NEVER pass an empty string as an argument.
-- WRONG: className={cn('px-4 py-2', '')}  — the trailing '' is dead noise and fails the bare-string check
-- WRONG: className={cn('', 'px-4 py-2')}  — same problem, empty string as first arg
-- RIGHT: className={cn('px-4 py-2')}  — single string is fine
-- RIGHT: className={cn('px-4 py-2', isActive && 'bg-blue-600', className)}  — conditional booleans are fine
-- IMPORT PATH: always import cn as: import { cn } from '@/utils/cn' (not 'src/utils/cn' — bare paths don't resolve)
+CLASS MERGING RULE (mandatory): For combining Tailwind classes conditionally:
+- If src/utils/cn.ts is listed in the CONTEXT section above, import and use it: import { cn } from './utils/cn'
+- Otherwise use clsx: import { clsx } from 'clsx' — clsx is always available as an npm package
+- NEVER import cn from a path that is not explicitly present in the CONTEXT section above
+- NEVER pass an empty string as an argument: WRONG: clsx('px-4 py-2', '') — RIGHT: clsx('px-4 py-2')
 
 Example format (raw code, nothing else):
 import React from 'react';
-import { cn } from '@/utils/cn';
+import { clsx } from 'clsx';
 
 export const MyComponent = ({ className }: { className?: string }) => {
-  return <div className={cn('p-4', className)}>...</div>;
+  return <div className={clsx('p-4', className)}>...</div>;
 };
 
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
@@ -4663,6 +4673,14 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       let finalContent = content;
 
+      // Hoist matchingSource above the validation block so it's accessible in both
+      // the custom validation section and the post-write tsc correction section (line ~5182).
+      // const inside the validation if-block would go out of scope before tsc runs.
+      const targetFileName = step.path.split(/[\\/]/).pop() ?? '';
+      const matchingSource = sourceReadContents.find(r =>
+        (r.path.split(/[\\/]/).pop() ?? '') === targetFileName
+      );
+
       if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
         this.config.onMessage?.(
           `🔍 Validating ${step.path}...`,
@@ -4675,10 +4693,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         // in a prior step, ensure all useCallback handlers are preserved intact.
         // Uses collectCallbackErrors (also called in the correction loop below) so the
         // check runs on EVERY validation attempt, not just the first generation.
-        const targetFileName = step.path.split(/[\\/]/).pop() ?? '';
-        const matchingSource = sourceReadContents.find(r =>
-          (r.path.split(/[\\/]/).pop() ?? '') === targetFileName
-        );
         if (matchingSource) {
           const cbErrors = Executor.collectCallbackErrors(content, matchingSource.content);
           if (cbErrors.length > 0) {

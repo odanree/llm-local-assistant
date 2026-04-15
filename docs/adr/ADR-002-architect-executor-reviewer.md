@@ -103,6 +103,12 @@ Including `CURRENT CODE` is mandatory. Without it, the LLM regenerates from scra
 
 ---
 
+## In My Own Words
+
+> *What was broken about single-pass generation, and what does each of the three roles (Architect, Executor, Reviewer) actually do? (2-3 sentences in your own words)*
+
+---
+
 ## Alternatives Considered
 
 ### Single-pass generation with very long prompt

@@ -1835,6 +1835,30 @@ export class SmartAutoCorrection {
       console.log('[SmartAutoCorrection] Fixed absolute import paths (leading / → ./)');
     }
 
+    // FIRST-B: Replace phantom cn() import with clsx.
+    // cn() is a training-data hallucination — generators import it even when src/utils/cn.ts
+    // is absent from the workspace. The cross-file contract validator fires:
+    //   "Cannot find module 'src/utils/cn' from '...'"
+    // clsx is always available as a real npm package and has the same variadic API as cn().
+    // This fix is deterministic: no LLM call, no path guessing.
+    const hasCnPhantomImport = validationErrors.some(e =>
+      e.includes('Cannot find module') && /\bcn\b|utils\/cn/.test(e)
+    );
+    if (hasCnPhantomImport) {
+      // Remove any import line that brings in `cn` from a utils/cn path
+      fixed = fixed.replace(
+        /^import\s*\{[^}]*\bcn\b[^}]*\}\s*from\s*['"][^'"]*cn[^'"]*['"]\s*;?\n?/gm,
+        ''
+      );
+      // Add clsx import at the top if cn() is still used in the file and clsx not already imported
+      if (fixed.includes('cn(') && !/from\s+['"]clsx['"]/.test(fixed)) {
+        fixed = `import { clsx } from 'clsx';\n` + fixed;
+      }
+      // Replace all cn( call sites with clsx(
+      fixed = fixed.replace(/\bcn\(/g, 'clsx(');
+      console.log('[SmartAutoCorrection] Replaced phantom cn() with clsx — src/utils/cn.ts not in workspace');
+    }
+
     // FIRST: Merge split React imports (deterministic — no LLM needed)
     fixed = this.mergeSplitReactImports(fixed);
 

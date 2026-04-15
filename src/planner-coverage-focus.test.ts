@@ -52,14 +52,14 @@ describe('Planner - Coverage Focus', () => {
     });
 
     it('3. should parse single run step', async () => {
-      const response = `[{"step": 1, "action": "run", "command": "npm test", "description": "Run tests"}]`;
+      const response = `[{"step": 1, "action": "run", "command": "npm run lint", "description": "Run linting"}]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Run tests');
+      const plan = await planner.generatePlan('Run linting');
 
       expect(plan.steps.length).toBe(1);
       expect(plan.steps[0].action).toBe('run');
-      expect(plan.steps[0].command).toBe('npm test');
+      expect(plan.steps[0].command).toBe('npm run lint');
     });
 
     it('4. should parse single delete step', async () => {
@@ -264,7 +264,7 @@ describe('Planner - Coverage Focus', () => {
 
   describe('Commands - Various Types', () => {
     it('21. should parse npm test command', async () => {
-      const response = `[{"step": 1, "action": "run", "command": "npm test", "description": "Run tests"}]`;
+      const response = `[{"step": 1, "action": "run", "command": "npm test", "description": "Verify migration"}]`;
       mockLLMCall.mockResolvedValue(response);
 
       const plan = await planner.generatePlan('Test command');

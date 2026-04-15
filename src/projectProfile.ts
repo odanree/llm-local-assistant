@@ -197,8 +197,12 @@ export class ProjectProfile {
       if (!this.exists(abs)) { continue; }
       try {
         const content = fs.readFileSync(abs, 'utf-8');
-        // Check if this file exports a `cn` function
-        if (/export\s+(?:function|const)\s+cn\b/.test(content) || /export\s+\{[^}]*\bcn\b/.test(content)) {
+        // Check if this file exports a `cn` function and imports from clsx/tailwind-merge.
+        // The utility-import guard prevents false positives from template files that embed
+        // cn.ts source code inside a string literal (e.g. GOLDEN_TEMPLATES.CN_UTILITY).
+        const hasCnExport = /export\s+(?:function|const)\s+cn\b/.test(content) || /export\s+\{[^}]*\bcn\b/.test(content);
+        const hasUtilityImport = /from\s+['"](?:clsx|tailwind-merge)['"]/.test(content);
+        if (hasCnExport && hasUtilityImport) {
           const importStatement = `import { cn } from '${this.toImportPath(rel)}'`;
           return { filePath: rel, importStatement };
         }
@@ -324,7 +328,12 @@ export class ProjectProfile {
     for (const file of files) {
       try {
         const content = fs.readFileSync(file, 'utf-8');
-        if (/export\s+(?:function|const)\s+cn\b/.test(content)) {
+        // Require both: the cn export AND a real import from clsx or tailwind-merge.
+        // This prevents matching `export const cn` that appears inside a string literal
+        // (e.g. a GOLDEN_TEMPLATES const whose value is the source code of cn.ts).
+        const hasCnExport = /export\s+(?:function|const)\s+cn\b/.test(content);
+        const hasUtilityImport = /from\s+['"](?:clsx|tailwind-merge)['"]/.test(content);
+        if (hasCnExport && hasUtilityImport) {
           return file;
         }
       } catch { continue; }

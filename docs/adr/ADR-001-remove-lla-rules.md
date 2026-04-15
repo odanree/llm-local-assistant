@@ -58,6 +58,12 @@ Architecture rules are now expressed as:
 
 ---
 
+## In My Own Words
+
+> *What problem was this solving, and what did we do instead? (2-3 sentences in your own words)*
+
+---
+
 ## Alternatives Considered
 
 ### Keep `.lla-rules` but add conflict detection

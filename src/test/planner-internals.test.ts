@@ -40,7 +40,7 @@ describe('Planner: Internal Parsing & Sorting Matrix (Phase 2.3)', () => {
     {
       name: 'Clean JSON: Multiple steps',
       mood: 'clean' as const,
-      jsonInput: '[{"step": 1, "action": "write", "path": "src/app.ts", "description": "Create app"}, {"step": 2, "action": "run", "command": "npm test", "description": "Run tests"}]',
+      jsonInput: '[{"step": 1, "action": "write", "path": "src/app.ts", "description": "Create app"}, {"step": 2, "action": "run", "command": "npm run lint", "description": "Run linting"}]',
       expected: { stepCount: 2, firstAction: 'write', hasPath: true },
       desc: 'Should handle multiple steps with different actions',
     },
@@ -130,7 +130,7 @@ describe('Planner: Internal Parsing & Sorting Matrix (Phase 2.3)', () => {
     {
       name: 'Fields: Command field for run actions',
       mood: 'clean' as const,
-      jsonInput: '[{"step": 1, "action": "run", "description": "Run tests", "command": "npm run test:ci"}]',
+      jsonInput: '[{"step": 1, "action": "run", "description": "Run linting", "command": "npm run lint"}]',
       expected: { stepCount: 1, hasCommand: true },
       desc: 'Should extract command field for run actions',
     },

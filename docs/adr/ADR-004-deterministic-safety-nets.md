@@ -75,6 +75,12 @@ If yes, the constraint belongs in the deterministic layer (prompt section + vali
 
 ---
 
+## In My Own Words
+
+> *Why can't we just rely on the criteria generator to catch everything? What's the specific failure this ADR is responding to, and what's the fix pattern? (2-3 sentences in your own words)*
+
+---
+
 ## Alternatives Considered
 
 ### Fix criteria generation to always include state values

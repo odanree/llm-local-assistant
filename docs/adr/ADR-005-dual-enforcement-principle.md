@@ -81,6 +81,12 @@ The principle does NOT apply to:
 
 ---
 
+## In My Own Words
+
+> *What's the difference between a prompt constraint and actual enforcement? Give an example from this codebase of each. (2-3 sentences in your own words)*
+
+---
+
 ## Alternatives Considered
 
 ### Improve the prompt until the LLM is reliable
