@@ -1642,7 +1642,7 @@ export class Executor {
     if (cssModuleImport) {
       errors.push(
         `❌ Fabricated CSS module: \`${cssModuleImport[1]}\` was imported but this project uses Tailwind, not CSS modules. ` +
-        `Remove the CSS module import and replace all \`styles.xxx\` references with Tailwind classes via cn().`
+        `Remove the CSS module import and replace all \`styles.xxx\` references with Tailwind classes (use clsx or cn() if available in the project).`
       );
     }
 
@@ -4585,23 +4585,22 @@ SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly des
 - Adding unrequested features is a spec violation. When in doubt, do less.
 
 TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into intermediate variables.
-- WRONG: const paddingStyle = 'px-4 py-2';  cn(paddingStyle, variantClasses[variant], className)
-- RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
-- Intermediate const variables for single class strings are dead indirection — inline them directly in cn().
+- WRONG: const paddingStyle = 'px-4 py-2';  clsx(paddingStyle, variantClasses[variant], className)
+- RIGHT: clsx('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
+- Intermediate const variables for single class strings are dead indirection — inline them directly.
 
-CN() USAGE RULE (mandatory): cn() takes a single base string plus optional conditional arguments — NEVER pass an empty string as an argument.
-- WRONG: className={cn('px-4 py-2', '')}  — the trailing '' is dead noise and fails the bare-string check
-- WRONG: className={cn('', 'px-4 py-2')}  — same problem, empty string as first arg
-- RIGHT: className={cn('px-4 py-2')}  — single string is fine
-- RIGHT: className={cn('px-4 py-2', isActive && 'bg-blue-600', className)}  — conditional booleans are fine
-- IMPORT PATH: always import cn as: import { cn } from '@/utils/cn' (not 'src/utils/cn' — bare paths don't resolve)
+CLASS MERGING RULE (mandatory): For combining Tailwind classes conditionally:
+- If src/utils/cn.ts is listed in the CONTEXT section above, import and use it: import { cn } from './utils/cn'
+- Otherwise use clsx: import { clsx } from 'clsx' — clsx is always available as an npm package
+- NEVER import cn from a path that is not explicitly present in the CONTEXT section above
+- NEVER pass an empty string as an argument: WRONG: clsx('px-4 py-2', '') — RIGHT: clsx('px-4 py-2')
 
 Example format (raw code, nothing else):
 import React from 'react';
-import { cn } from '@/utils/cn';
+import { clsx } from 'clsx';
 
 export const MyComponent = ({ className }: { className?: string }) => {
-  return <div className={cn('p-4', className)}>...</div>;
+  return <div className={clsx('p-4', className)}>...</div>;
 };
 
 Do NOT include: backticks, markdown, explanations, other files, instructions`;

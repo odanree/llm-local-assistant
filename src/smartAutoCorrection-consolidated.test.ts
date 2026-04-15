@@ -462,6 +462,63 @@ const [state] = useState(0);`;
   });
 
   // ============================================================
+  // cn() Phantom Import Fix (FIRST-B deterministic fix)
+  // ============================================================
+  describe('cn() phantom import replacement', () => {
+    const cnPhantomError = "❌ Cross-file Contract: Cannot find module 'src/utils/cn' from 'src/components/Badge.tsx'. Verify the file exists at: src/utils/cn.ts (or .tsx)";
+
+    it('replaces cn import with clsx and renames call sites', () => {
+      const code = [
+        `import { cn } from 'src/utils/cn';`,
+        `export const Badge = ({ label }: { label: string }) => (`,
+        `  <span className={cn('badge', 'badge-blue')}>{label}</span>`,
+        `);`,
+      ].join('\n');
+
+      const result = SmartAutoCorrection.fixCommonPatterns(code, [cnPhantomError]);
+      expect(result).not.toContain("from 'src/utils/cn'");
+      expect(result).toContain("from 'clsx'");
+      expect(result).not.toMatch(/\bcn\(/);
+      expect(result).toContain('clsx(');
+    });
+
+    it('handles relative cn import paths', () => {
+      const code = [
+        `import { cn } from '../utils/cn';`,
+        `export const Chip = () => <div className={cn('chip')} />;`,
+      ].join('\n');
+      const error = "❌ Cross-file Contract: Cannot find module 'utils/cn' from 'src/components/Chip.tsx'. Verify the file exists at: utils/cn.ts (or .tsx)";
+
+      const result = SmartAutoCorrection.fixCommonPatterns(code, [error]);
+      expect(result).not.toContain("from '../utils/cn'");
+      expect(result).toContain('clsx(');
+    });
+
+    it('does not add duplicate clsx import when already present', () => {
+      const code = [
+        `import { clsx } from 'clsx';`,
+        `import { cn } from 'src/utils/cn';`,
+        `export const Badge = () => <div className={cn('a', 'b')} />;`,
+      ].join('\n');
+
+      const result = SmartAutoCorrection.fixCommonPatterns(code, [cnPhantomError]);
+      const clsxImportCount = (result.match(/from 'clsx'/g) ?? []).length;
+      expect(clsxImportCount).toBe(1);
+      expect(result).toContain('clsx(');
+    });
+
+    it('is a no-op when no cn phantom import error is present', () => {
+      const code = [
+        `import { cn } from 'src/utils/cn';`,
+        `export const Badge = () => <div className={cn('badge')} />;`,
+      ].join('\n');
+
+      const result = SmartAutoCorrection.fixCommonPatterns(code, []);
+      expect(result).toBe(code);
+    });
+  });
+
+  // ============================================================
   // Static Methods Exposure
   // ============================================================
   describe('Static Methods', () => {
