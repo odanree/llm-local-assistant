@@ -171,6 +171,18 @@ const LAYER_RULES: Record<string, LayerRule> = {
 
 export class ArchitectureValidator {
   /**
+   * When strict=false (the default), layer violations are reported as warnings
+   * but recommendation is always 'allow' — they never block a write.
+   * Set strict=true (via lla.config.json or explicit caller opt-in) to restore
+   * blocking behavior for projects that have committed to this layer architecture.
+   */
+  private readonly strict: boolean;
+
+  constructor(options: { strict?: boolean } = {}) {
+    this.strict = options.strict ?? false;
+  }
+
+  /**
    * Detect which layer a file belongs to based on file path
    */
   private detectLayer(filePath: string): string {
@@ -382,7 +394,8 @@ export class ArchitectureValidator {
           import: importModule,
           message: `Forbidden import in ${layer}: "${importModule}"`,
           suggestion: `${layer} layer only allows: ${rule.allowedImportPatterns.join(', ')}. Forbidden: ${rule.forbiddenImports.join(', ')}`,
-          severity: 'high',
+          // In non-strict mode, downgrade severity so violations never block writes
+          severity: this.strict ? 'high' : 'low',
         });
       }
     }
@@ -397,13 +410,16 @@ export class ArchitectureValidator {
       violations.push(...this.detectTypeSemanticErrors(code));
     }
 
-    // Determine recommendation
+    // Determine recommendation.
+    // High-severity violations always block the write ('skip').
+    // In strict mode, any violation triggers a fix attempt ('fix').
+    // In non-strict mode (the default), low/medium violations are surfaced as warnings only ('allow').
     let recommendation: 'allow' | 'fix' | 'skip' = 'allow';
     const highSeverity = violations.some(v => v.severity === 'high');
     if (highSeverity) {
-      recommendation = 'skip'; // Don't write this file
-    } else if (violations.length > 0) {
-      recommendation = 'fix'; // Try to fix it
+      recommendation = 'skip';
+    } else if (this.strict && violations.length > 0) {
+      recommendation = 'fix';
     }
 
     return {
@@ -499,9 +515,15 @@ export class ArchitectureValidator {
         const currentDir = filePath.substring(0, filePath.lastIndexOf('/'));
         let resolvedPath = imp.source;
 
-        // Skip npm packages — they don't start with . or / and live in node_modules
-        if (!resolvedPath.startsWith('.') && !resolvedPath.startsWith('/')) {
+        // Skip npm packages — they don't start with . or / or @/ and live in node_modules
+        // BUT check @/ alias paths (they map to src/ and may not exist)
+        if (!resolvedPath.startsWith('.') && !resolvedPath.startsWith('/') && !resolvedPath.startsWith('@/')) {
           continue;
+        }
+
+        // Resolve @/ alias (maps to src/ in standard TypeScript projects)
+        if (resolvedPath.startsWith('@/')) {
+          resolvedPath = 'src/' + resolvedPath.slice(2); // e.g. '@/utils/cn' → 'src/utils/cn'
         }
 
         // Skip JSON/config files — they have no TypeScript exports to verify
@@ -1325,10 +1347,13 @@ export class ArchitectureValidator {
 
     // Step 5: Check for MIXED STATE MANAGEMENT
     // Using both useState and store hooks means you're not fully refactored
+    // Exception: root App component legitimately uses both Zustand (global auth state) and
+    // local useState (pure UI state like theme, sidebar toggle) — skip this check for App.tsx
     const stateHooks = importedHooks.filter(h => h.names.some(n => n.includes('Store') || n.includes('store')));
     const usesLocalState = /const\s+\[\w+,\s*\w+\]\s*=\s*useState/.test(generatedCode);
+    const isRootAppFile = /(?:^|\/)App\.tsx$/.test(filePath);
 
-    if (stateHooks.length > 0 && usesLocalState) {
+    if (stateHooks.length > 0 && usesLocalState && !isRootAppFile) {
       violations.push({
         type: 'semantic-error',
         import: stateHooks[0].names[0],
@@ -1430,6 +1455,56 @@ export class SmartAutoCorrection {
     });
     
     return circularImports;
+  }
+
+  /**
+   * Merge split React imports into one line — deterministic, no LLM needed.
+   * Routes.ts / config files often generate:
+   *   import React from 'react';
+   *   import type { ComponentType } from 'react';
+   * which must become:
+   *   import React, { ComponentType } from 'react';
+   */
+  static mergeSplitReactImports(code: string): string {
+    const reactImportRegex = /^import\s+.+\s+from\s+['"]react['"];?$/gm;
+    const reactImportLines = code.match(reactImportRegex);
+    if (!reactImportLines || reactImportLines.length <= 1) { return code; }
+
+    let defaultImport = '';
+    const namedImports: string[] = [];
+
+    for (const line of reactImportLines) {
+      // Extract default import: `import React from 'react'` or `import React, { ... } from 'react'`
+      const defaultMatch = line.match(/^import\s+([A-Z]\w*)\s*(?:,|from)/);
+      if (defaultMatch) { defaultImport = defaultMatch[1]; }
+      // Extract named imports: `{ X, Y }` or `import type { X }`
+      const namedMatch = line.match(/\{([^}]+)\}/);
+      if (namedMatch) {
+        namedMatch[1].split(',').forEach(n => {
+          const cleaned = n.trim().replace(/^type\s+/, ''); // strip 'type' keyword
+          if (cleaned) { namedImports.push(cleaned); }
+        });
+      }
+    }
+
+    const named = namedImports.length > 0 ? `{ ${namedImports.join(', ')} }` : '';
+    let merged: string;
+    if (defaultImport && named) {
+      merged = `import ${defaultImport}, ${named} from 'react';`;
+    } else if (defaultImport) {
+      merged = `import ${defaultImport} from 'react';`;
+    } else if (named) {
+      merged = `import ${named} from 'react';`;
+    } else {
+      return code;
+    }
+
+    // Replace first react import with merged, blank out the rest, then collapse blank lines
+    let firstFound = false;
+    return code.replace(reactImportRegex, (line) => {
+      if (!firstFound) { firstFound = true; return merged; }
+      return ''; // subsequent react imports removed
+    }).replace(/\n{3,}/g, '\n\n');
   }
 
   /**
@@ -1733,9 +1808,192 @@ export class SmartAutoCorrection {
   static fixCommonPatterns(code: string, validationErrors: string[], filePath?: string): string {
     let fixed = code;
 
-    // FIRST: Check for circular imports (highest priority - always wrong)
+    // ZEROTH: Strip LLM narration comment lines that reference other file paths.
+    // When the LLM produces a single file but includes comments like "// src/components/Layout.tsx"
+    // or "// See src/routes/Routes.ts", the "Multiple file references detected" validator fires.
+    // These comment lines are never part of valid executable code and can be stripped safely.
+    // Only fires when the "Multiple file references" error is already present, so unrelated
+    // comment lines in other files are never touched.
+    const hasMultiFileError = validationErrors.some(e => e.includes('Multiple file references detected'));
+    if (hasMultiFileError) {
+      // Match comment-only lines that contain a file extension reference (.ts / .tsx / .js / .json / .yaml / .css).
+      // Uses the same extension set as the validator regex so we clear exactly what it counts.
+      fixed = fixed.replace(/^[ \t]*\/\/[^\n]*\.(ts|tsx|js|jsx|json|yaml|css)[^\n]*\n?/gm, '');
+      console.log('[SmartAutoCorrection] Stripped file-reference comment lines (multi-file error fix)');
+    }
+
+    // FIRST-A: Fix absolute-path imports to relative paths.
+    // The LLM sometimes generates: import X from '/routes/Routes' (absolute, starting with '/')
+    // instead of the correct relative: import X from './routes/Routes'.
+    // Strip the leading '/' and replace with './' — correct for files at src/ level.
+    // Only fires when a "Cannot find module '/" error is present, so unrelated imports are untouched.
+    const hasAbsolutePathError = validationErrors.some(e => e.includes("Cannot find module '/"));
+    if (hasAbsolutePathError) {
+      fixed = fixed.replace(/\bfrom\s+(['"])\/([a-zA-Z][^'"]*)\1/g, (_match, q, importPath) => {
+        return `from ${q}./${importPath}${q}`;
+      });
+      console.log('[SmartAutoCorrection] Fixed absolute import paths (leading / → ./)');
+    }
+
+    // FIRST: Merge split React imports (deterministic — no LLM needed)
+    fixed = this.mergeSplitReactImports(fixed);
+
+    // SECOND: Check for circular imports (always wrong)
     if (filePath) {
       fixed = this.fixCircularImports(fixed, filePath);
+    }
+
+    // THIRD: Deterministic import repair for "Symbol X not found in Y" cross-file contract errors.
+    // Rather than handing the whole file to the LLM (which rewrites too much and breaks template literals),
+    // do a targeted import-line fix: remove the wrong symbol, reroute to the correct source.
+    const REACT_ROUTER_SYMBOLS = new Set([
+      'BrowserRouter', 'Routes', 'Route', 'Navigate', 'Link', 'Outlet',
+      'NavLink', 'useNavigate', 'useLocation', 'useParams', 'useSearchParams',
+      'useMatch', 'RouterProvider',
+    ]);
+    for (const error of validationErrors) {
+      const symbolMatch = error.match(/Symbol '(\w+)' not found in '([^']+)'\. Available exports: (.+)/);
+      if (!symbolMatch) { continue; }
+      const [, missingSymbol, sourceFilePath] = symbolMatch;
+      const sourceBasename = sourceFilePath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+
+      // 1. Remove missingSymbol from the wrong import (the source it doesn't belong to)
+      const importRemoveRe = new RegExp(
+        `^(import\\s*\\{)([^}]+)(\\}\\s*from\\s*['"][^'"]*${sourceBasename}['"])`,
+        'm'
+      );
+      const wrongImportMatch = fixed.match(importRemoveRe);
+      if (wrongImportMatch) {
+        const symbols = wrongImportMatch[2]
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s && s !== missingSymbol);
+        const replacement = symbols.length > 0
+          ? `${wrongImportMatch[1]} ${symbols.join(', ')} ${wrongImportMatch[3]}`
+          : ''; // Remove entire import line if it's now empty
+        fixed = fixed.replace(wrongImportMatch[0], replacement);
+      }
+
+      // 2. Re-route react-router-dom symbols to their correct package
+      if (REACT_ROUTER_SYMBOLS.has(missingSymbol)) {
+        const routerImportRe = /import\s*\{([^}]+)\}\s*from\s*['"]react-router-dom['"]/;
+        const routerMatch = fixed.match(routerImportRe);
+        if (routerMatch) {
+          if (!routerMatch[1].includes(missingSymbol)) {
+            const updated = routerMatch[0].replace(
+              routerMatch[1],
+              `${routerMatch[1].trim()}, ${missingSymbol}`
+            );
+            fixed = fixed.replace(routerMatch[0], updated);
+          }
+        } else {
+          fixed = `import { ${missingSymbol} } from 'react-router-dom';\n` + fixed;
+        }
+      }
+    }
+
+    // FOURTH: Deterministic export default → named export conversion.
+    // The validator flags "Export consistency: Component uses only a default export — named exports are required."
+    // This is a structural transform, not a semantic one — always safe to do deterministically.
+    const hasDefaultExportError = validationErrors.some(e =>
+      e.includes('Export consistency') && e.includes('default export')
+    );
+    if (hasDefaultExportError) {
+      // Pattern 1: `const Foo = ...; export default Foo;`
+      // → add `export` to the const declaration, remove the `export default Foo;` line
+      const defaultExportLineRe = /^export\s+default\s+(\w+)\s*;?\s*$/m;
+      const defaultMatch = fixed.match(defaultExportLineRe);
+      if (defaultMatch) {
+        const componentName = defaultMatch[1];
+        // Add export keyword to the const/function declaration if not already exported
+        const declarationRe = new RegExp(
+          `^(const|function|class)\\s+(${componentName}\\b)`,
+          'm'
+        );
+        if (declarationRe.test(fixed) && !new RegExp(`^export\\s+(const|function|class)\\s+${componentName}\\b`, 'm').test(fixed)) {
+          fixed = fixed.replace(declarationRe, `export $1 $2`);
+        }
+        // Remove the `export default ComponentName;` line
+        fixed = fixed.replace(defaultExportLineRe, '');
+        // Clean up any trailing blank lines left by the removal
+        fixed = fixed.replace(/\n{3,}/g, '\n\n');
+      }
+
+      // Pattern 2: `export default function Foo(...)` → `export function Foo(...)`
+      fixed = fixed.replace(/^export\s+default\s+(function\s+\w)/m, 'export $1');
+    }
+
+    // FIFTH: Convert template literals in JSX style objects to plain ternary expressions.
+    // Template literals with ternary operators inside ${...} in style props (e.g.
+    // `borderBottom: \`1px solid ${theme === 'dark' ? '#444' : '#ddd'}\``) consistently cause
+    // TS1002 "Unterminated string literal" parse errors when the LLM mismatches backtick quotes.
+    // They can also cause TS1005 "',' expected", TS1128 "Declaration or statement expected", and
+    // TS1180 "Property destructuring pattern expected" as cascade parse errors from the same root
+    // cause. All four share the same fix: convert the backtick template to a plain ternary.
+    // The transform: `prefix${A ? B : C}suffix` → A ? 'prefixBsuffix' : 'prefixCsuffix'
+    // Only applies for the common single-ternary-interpolation case used in theme style objects.
+    // Fires when tsc reports TS1002 (unterminated string literal), OR when TS1005/TS1128/TS1180
+    // appear alongside actual backtick template literals in style-like positions in the file.
+    const hasUnterminatedStringLiteral = validationErrors.some(e => e.includes('TS1002'));
+    const hasStyleTemplateLiteral = /:\s*`[^`]*\$\{[^}]+\}[^`]*`/.test(fixed);
+    const hasCascadeParseError = validationErrors.some(e =>
+      e.includes('TS1005') || e.includes('TS1128') || e.includes('TS1180') || e.includes('TS1434')
+    );
+    if (hasUnterminatedStringLiteral || (hasCascadeParseError && hasStyleTemplateLiteral)) {
+      // Pattern: propertyName: `staticPrefix${condition ? trueLiteral : falseLiteral}staticSuffix`
+      // e.g. borderBottom: `1px solid ${theme === 'dark' ? '#444' : '#ddd'}`
+      fixed = fixed.replace(
+        /:\s*`([^`$]*)\$\{([^}]+)\s*\?\s*(['"][^'"]*['"])\s*:\s*(['"][^'"]*['"])\}([^`]*)`/g,
+        (_match, prefix, _cond, trueVal, falseVal, suffix) => {
+          const condition = _cond.trim();
+          const trueLiteral = trueVal.replace(/^['"]|['"]$/g, '');
+          const falseLiteral = falseVal.replace(/^['"]|['"]$/g, '');
+          const trueStr = prefix || suffix
+            ? `'${prefix}${trueLiteral}${suffix}'`
+            : trueVal;
+          const falseStr = prefix || suffix
+            ? `'${prefix}${falseLiteral}${suffix}'`
+            : falseVal;
+          return `: ${condition} ? ${trueStr} : ${falseStr}`;
+        }
+      );
+    }
+
+    // SEVENTH-A: Fix CSS string-literal properties in extracted style const variables — TS2322.
+    // When a style object is assigned to a const variable, TypeScript widens string literals like
+    // 'center' to `string`. CSSProperties expects the narrow literal type, so tsc reports TS2322:
+    //   Type '{ textAlign: string; }' is not assignable to type 'Properties<...>'.
+    // Fix: add `as const` to the value of known CSS properties that require string literal types.
+    // Only fires when tsc reports TS2322 with 'Properties<string | number' in the message.
+    const hasCSSPropertiesError = validationErrors.some(e =>
+      e.includes('TS2322') && e.includes('Properties<string | number')
+    );
+    if (hasCSSPropertiesError) {
+      const cssStringProps = [
+        'textAlign', 'alignItems', 'alignSelf', 'justifyContent', 'justifySelf',
+        'flexDirection', 'flexWrap', 'position', 'display', 'float',
+        'overflow', 'overflowX', 'overflowY', 'whiteSpace', 'wordBreak',
+        'textTransform', 'textDecoration', 'fontWeight', 'fontStyle',
+        'verticalAlign', 'boxSizing', 'cursor', 'pointerEvents',
+        'visibility', 'userSelect', 'resize',
+      ];
+      const propPattern = new RegExp(
+        `((?:${cssStringProps.join('|')})\\s*:\\s*'[^']+')(?!\\s+as\\s+const)`,
+        'g'
+      );
+      fixed = fixed.replace(propPattern, '$1 as const');
+    }
+
+    // SEVENTH: Fix `element={X.component}` — TS2322 ComponentType not assignable to ReactNode.
+    // React Router's `element` prop expects ReactNode (a rendered element), not ComponentType
+    // (a constructor/function). The generator sometimes passes the type directly instead of
+    // calling it as JSX. Wrap in React.createElement() to produce a valid ReactElement.
+    // Only fires when tsc reports TS2322 with ComponentType→ReactNode mismatch.
+    const hasComponentTypeError = validationErrors.some(e =>
+      e.includes('TS2322') && e.includes('ComponentType') && e.includes('ReactNode')
+    );
+    if (hasComponentTypeError) {
+      fixed = fixed.replace(/\belement=\{(\w+\.component)\}/g, 'element={React.createElement($1)}');
     }
 
     validationErrors.forEach(error => {
@@ -1804,10 +2062,97 @@ export class SmartAutoCorrection {
         fixed = fixed.replace(/\bas\s+any\b/g, 'as unknown');
       }
 
-      // Fix: Unmatched braces → Check and report (can't auto-fix)
+      // Fix: Config/data .ts file imports from a store — remove the store import line entirely.
+      // Config files have no React lifecycle so store hooks are invalid here.
+      if (error.includes('Config File Store Import')) {
+        // Remove any import line that imports from a store file
+        fixed = fixed.replace(/^import\s+[^;]*from\s+['"][^'"]*\/stores\/[^'"]*['"];?\s*\n?/gm, '');
+        console.log(`[SmartAutoCorrection] Removed store import from config/data .ts file`);
+      }
+
+      // Fix: Semicolons used as commas in TypeScript object literals (CSSProperties pattern).
+      // LLM sometimes outputs CSS syntax (semicolons) inside TS object literals:
+      //   const headerStyle: CSSProperties = { padding: '1rem'; display: 'flex'; }
+      // TypeScript reports TS1005: ',' expected at these lines.
+      // Strategy: use the line number from the error message to fix only the bad line.
+      if (error.includes("',' expected") || error.includes('TS1005')) {
+        const lineNumMatch = error.match(/\(line (\d+)\)/);
+        if (lineNumMatch) {
+          const lineNum = parseInt(lineNumMatch[1], 10);
+          const lines = fixed.split('\n');
+          if (lineNum > 0 && lineNum <= lines.length) {
+            const targetLine = lines[lineNum - 1];
+            const trimmed = targetLine.trim();
+            // Only fix lines that look like object property assignments ending with ;
+            // Skip comments, standalone statements, and interface declarations
+            const isObjectProperty = trimmed
+              && !trimmed.startsWith('//')
+              && !trimmed.startsWith('*')
+              && !trimmed.startsWith('interface')
+              && !trimmed.startsWith('type ')
+              && /^\w/.test(trimmed)
+              && trimmed.includes(':')
+              && /;\s*$/.test(targetLine);
+            if (isObjectProperty) {
+              lines[lineNum - 1] = targetLine.replace(/;\s*$/, ',');
+              fixed = lines.join('\n');
+              console.log(`[SmartAutoCorrection] Fixed semicolon→comma in object literal at line ${lineNum}`);
+            }
+          }
+        }
+      }
+
+      // Fix: cn() imported but bare string className detected.
+      // Replace all className="foo" / className='foo' / className={"foo"} / className={'foo'}
+      // with className={cn('foo')} so the validator stops firing.
+      if (error.includes('bare string literal')) {
+        const importsCn = /import\s+.*\bcn\b.*from/.test(fixed);
+        if (importsCn) {
+          // className="foo bar" → className={cn('foo bar')}
+          fixed = fixed.replace(/className="([^"]+)"/g, `className={cn('$1')}`);
+          // className='foo bar' → className={cn('foo bar')}
+          fixed = fixed.replace(/className='([^']+)'/g, `className={cn('$1')}`);
+          // className={"foo bar"} → className={cn('foo bar')}
+          fixed = fixed.replace(/className=\{"([^"]+)"\}/g, `className={cn('$1')}`);
+          // className={'foo bar'} → className={cn('foo bar')}
+          fixed = fixed.replace(/className=\{'([^']+)'\}/g, `className={cn('$1')}`);
+          console.log(`[SmartAutoCorrection] Wrapped bare className strings in cn()`);
+        }
+      }
+
+      // Fix: cn() imported but template-literal className used for concatenation.
+      // className={`foo ${bar}`} → className={cn('foo', bar)}
+      // Handles simple one-variable cases; complex template literals are left for LLM.
+      if (error.includes('manual string concatenation')) {
+        const importsCn = /import\s+.*\bcn\b.*from/.test(fixed);
+        if (importsCn) {
+          // Match: className={`staticPart ${varName}`}  (exactly one static part + one variable)
+          fixed = fixed.replace(
+            /className=\{`([^`${}]+)\$\{([^}]+)\}`\}/g,
+            (_match, staticPart, varExpr) => {
+              const base = staticPart.trim();
+              const varName = varExpr.trim();
+              return base
+                ? `className={cn('${base}', ${varName})}`
+                : `className={cn(${varName})}`;
+            }
+          );
+          console.log(`[SmartAutoCorrection] Converted template-literal className to cn()`);
+        }
+      }
+
+      // Fix: Unclosed braces — deterministic tail append
+      // Common cause: LLM truncated the output; missing closing braces are at the end.
+      // Extract the count from the error "Syntax error: N unclosed brace(s)" and append N '}'.
       if (error.includes('unclosed brace')) {
-        // This needs manual fixing
-        console.log('[SmartAutoCorrection] Cannot auto-fix brace mismatch');
+        const countMatch = error.match(/(\d+)\s+unclosed brace/);
+        const missing = countMatch ? parseInt(countMatch[1], 10) : 1;
+        const openCount = (fixed.match(/{/g) || []).length;
+        const closeCount = (fixed.match(/}/g) || []).length;
+        const actualMissing = Math.max(0, openCount - closeCount);
+        const toAppend = actualMissing > 0 ? actualMissing : missing;
+        console.log(`[SmartAutoCorrection] Appending ${toAppend} closing brace(s) to fix truncation`);
+        fixed = fixed.trimEnd() + '\n' + '}'.repeat(toAppend);
       }
     });
 
@@ -1827,11 +2172,9 @@ export class SmartAutoCorrection {
     resolver: (name: string) => Promise<string | null>,
     filePath?: string
   ): Promise<string> {
-    let fixed = code;
-
-    if (filePath) {
-      fixed = this.fixCircularImports(fixed, filePath);
-    }
+    // First: apply ALL synchronous deterministic fixes (mergeSplitReactImports, cn bare-string,
+    // unclosed brace, any-type, etc.). fixCommonPatterns also handles fixCircularImports.
+    let fixed = this.fixCommonPatterns(code, validationErrors, filePath);
 
     for (const error of validationErrors) {
       // React hook not imported
@@ -1907,6 +2250,7 @@ export class SmartAutoCorrection {
     const fixablePatterns = [
       'Missing import',
       'Unused import',
+      'Split React imports',             // Deterministic merge — no LLM needed
       'is used but not imported from React',  // NEW: Specific hook import pattern
       'any type',
       'typo',
@@ -1914,14 +2258,24 @@ export class SmartAutoCorrection {
       'imported but never called',  // Added: More specific pattern
       'Wrong import',  // Added: cn/UI import in a non-component .ts file
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
+      'bare string literal',        // Deterministic: className="foo" → className={cn('foo')}
+      'manual string concatenation', // Deterministic: className={`foo ${bar}`} → className={cn('foo', bar)}
+      'Config File Store Import',    // Deterministic: remove store imports from plain .ts config files
+      "',' expected",                // Deterministic: semicolons used as commas in TS object literals (CSSProperties)
+      'TS1005',                      // Same — TypeScript ',' expected error code
+      'Wrong file extension',        // LLM corrector removes JSX from .ts file content (no rename needed)
+      'Cross-file Contract',         // Deterministic: wrong symbol removed from import, rerouted to correct package
+      'Export consistency',          // Deterministic: export default → named export transformation
     ];
 
+    // NOTE: 'Wrong file extension' is NOT here — the corrector CAN fix this by removing JSX
+    // from the content (it doesn't need to rename the file; the file extension is what the
+    // planner intended, but the LLM put JSX inside a .ts file by mistake).
     const unfixablePatterns = [
-      'unclosed brace',
+      'unclosed brace',  // Deterministic fixer exists in fixCommonPatterns, but isAutoFixable must stay false
       'unmatched brace',
       'documentation instead of code',
       'multiple file',
-      'Wrong file extension',  // Can't rename a file in code — planner must generate correct extension
     ];
 
     let hasFixable = false;

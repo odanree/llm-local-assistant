@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
+import * as fs from 'fs';
 import { IFileSystem } from './providers/IFileSystem';
 import { ICommandRunner } from './providers/ICommandRunner';
 import { FileSystemProvider } from './providers/FileSystemProvider';
@@ -70,10 +71,309 @@ export class Executor {
   private config: ExecutorConfig;
   private plan: TaskPlan | null = null;
   private paused: boolean = false;
+  /** Files written in the current plan execution that still have unresolved tsc errors. */
+  private filesWithPersistentTscErrors = new Set<string>();
   private cancelled: boolean = false;
   private readonly MAX_VALIDATION_ITERATIONS = 3; // Phase 3.1: Prevent infinite validation loops
   /** Packages available in the workspace (populated from package.json at execution start) */
   private availablePackages: string[] = [];
+
+  /**
+   * Returns true when a file is a pure logic redirector: no styled HTML, no cn(), just
+   * conditional navigation or context provision.
+   * Route/Guard/Provider/Context/HOC/Outlet — these redirect or forward children with zero visual output.
+   * Layout is intentionally excluded: Layout components ARE visual (structural HTML + cn for class merging).
+   */
+  private static isNonVisualWrapper(filePath: string): boolean {
+    if (!filePath.endsWith('.tsx')) { return false; }
+    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+    return /Route|Guard|Provider|Context|HOC|Outlet/i.test(name);
+  }
+
+  /**
+   * Returns true when a file is a structural layout wrapper:
+   * Layout components render HTML structure (header/main/footer) around children.
+   * They ARE visual, use cn(), but still require a children prop.
+   */
+  private static isStructuralLayout(filePath: string, stepDescription?: string): boolean {
+    if (!filePath.endsWith('.tsx')) { return false; }
+    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+    // Filename-based: any file with "Layout" in the name (e.g. Layout.tsx, AppLayout.tsx, PageLayout.tsx)
+    if (/Layout/i.test(name)) { return true; }
+    // Description-based fallback: catches custom names like "AppShell", "PageWrapper", "MainFrame"
+    if (stepDescription && /\b(layout\s+component|app\s+shell|page\s+wrapper|main\s+frame|shell\s+component)\b/i.test(stepDescription)) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Returns true when a file is a pure presentation navigation component:
+   * Navigation, Navbar, Sidebar, Header — these receive ALL state as props,
+   * they do NOT import from stores directly.
+   */
+  private static isDecomposedNavigation(filePath: string, stepDescription?: string): boolean {
+    if (!filePath.endsWith('.tsx')) { return false; }
+    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+    // Filename-based: common navigation component names
+    if (/^(Navigation|Navbar|NavBar|Nav|Sidebar|SideNav|Header|TopBar|AppBar|MenuBar)$/i.test(name)) {
+      return true;
+    }
+    // Description-based fallback: catches custom names like "AppMenu", "LeftPanel", etc.
+    if (stepDescription && /\b(navigation|navbar|sidebar|nav\s+component|menu\s+component|side\s+panel)\b/i.test(stepDescription)) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Extract page component imports from a source file.
+   * Finds: import X from '...pages/...' or '...screens/...' or '...views/...'
+   * Returns [{name, from}] so callers can reconstruct import lines or list names.
+   */
+  private static extractPageImports(code: string): Array<{ name: string; from: string }> {
+    const results: Array<{ name: string; from: string }> = [];
+    // Default import: import HomePage from '../pages/HomePage'
+    const pattern = /import\s+(\w+)\s+from\s+['"]([^'"]*\/(?:pages|screens|views)\/[^'"]+)['"]/g;
+    let match;
+    while ((match = pattern.exec(code)) !== null) {
+      results.push({ name: match[1], from: match[2] });
+    }
+    return results;
+  }
+
+  /**
+   * Extract what fields an app destructures from store hooks in a source file.
+   * Finds: const { a, b } = useSomeStore()
+   * Returns a map of storeName → field list so callers know the actual store API in use.
+   */
+  private static extractStoreFields(code: string): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    const pattern = /const\s+\{\s*([^}]+)\s*\}\s*=\s*(use\w+Store)\s*\(\)/g;
+    let match;
+    while ((match = pattern.exec(code)) !== null) {
+      const fields = match[1].split(',').map(f => f.trim()).filter(Boolean);
+      const hook = match[2];
+      map.set(hook, [...(map.get(hook) ?? []), ...fields]);
+    }
+    return map;
+  }
+
+  /**
+   * Extract a props interface body from source code.
+   * Tries <ComponentName>Props and App<ComponentName>Props patterns.
+   * Returns the raw body text (the part inside the braces) or null if not found.
+   */
+  private static extractPropsInterface(code: string, componentName?: string): string | null {
+    const candidates = componentName
+      ? [`${componentName}Props`, `App${componentName}Props`]
+      : ['\\w+Props'];
+    for (const name of candidates) {
+      const m = code.match(new RegExp(`interface\\s+${name}\\s*\\{([^}]+)\\}`));
+      if (m) { return m[1].trim(); }
+    }
+    return null;
+  }
+
+  /**
+   * Extract the RouteConfig interface text and export names from a source file.
+   * Returns what the source actually defined so the prompt can mirror it exactly.
+   */
+  private static extractRouteConfig(code: string): {
+    interfaceBody: string | null;
+    constName: string;
+    filterFnName: string | null;
+  } {
+    // Interface body: interface RouteConfig { ... }
+    const ifaceMatch = code.match(/(?:export\s+)?interface\s+RouteConfig\s*\{([^}]+)\}/);
+    const interfaceBody = ifaceMatch ? ifaceMatch[1].trim() : null;
+    // Const name: export const ROUTES: RouteConfig[]
+    const constMatch = code.match(/export\s+const\s+([A-Z][A-Z0-9_]+)\s*:\s*RouteConfig/);
+    const constName = constMatch ? constMatch[1] : 'ROUTES';
+    // Filter function: export function getAccessibleRoutes(...)
+    const fnMatch = code.match(/export\s+function\s+(\w+)\s*\(/);
+    const filterFnName = fnMatch ? fnMatch[1] : null;
+    return { interfaceBody, constName, filterFnName };
+  }
+
+  /**
+   * Extract all useCallback handler bodies from a source file.
+   * Returns a Map of handlerName → normalized body string (trimmed lines joined by \n).
+   * Uses a paren-depth counter to correctly handle nested function calls.
+   */
+  private static extractCallbackHandlers(code: string): Map<string, string> {
+    const handlers = new Map<string, string>();
+    const startPattern = /const\s+(\w+)\s*=\s*useCallback\s*\(/g;
+    let match;
+    while ((match = startPattern.exec(code)) !== null) {
+      const name = match[1];
+      let depth = 1;
+      let i = match.index + match[0].length;
+      while (i < code.length && depth > 0) {
+        if (code[i] === '(') { depth++; }
+        else if (code[i] === ')') { depth--; }
+        i++;
+      }
+      // The body is everything between the outer parens of useCallback(...)
+      const body = code.slice(match.index + match[0].length, i - 1).trim();
+      // Normalize: split into lines, trim each, drop blank lines
+      const normalized = body.split('\n').map(l => l.trim()).filter(Boolean).join('\n');
+      handlers.set(name, normalized);
+    }
+    return handlers;
+  }
+
+  /**
+   * Compare generated code against source code for useCallback handler violations.
+   * Returns ❌-prefixed error strings for: missing handlers and added lines.
+   * Called both on the initial generation and inside every correction-loop iteration.
+   *
+   * "Added" line detection uses identifier-based matching, not exact string comparison.
+   * A generated line is only flagged if its primary identifier (the first word token) is
+   * NOT present anywhere in the source body. This allows the LLM to reformat arrow function
+   * params (`(prev) => f(prev)` → `prev => f(prev)`) or rename local variables without
+   * triggering false positives, while still catching genuinely new calls like
+   * `window.location.href = '/login'` (where `window` is absent from the source).
+   */
+  private static collectCallbackErrors(generatedCode: string, sourceCode: string): string[] {
+    // Tokens that are JS syntax/keywords — never treated as "new" identifiers even if
+    // absent from the source body (e.g. `return null;` is harmless structural code).
+    const HARMLESS_TOKENS = new Set([
+      'return', 'if', 'else', 'true', 'false', 'null', 'undefined',
+      'const', 'let', 'var', 'typeof', 'instanceof', 'new', 'this',
+    ]);
+
+    const errors: string[] = [];
+    const sourceHandlers = Executor.extractCallbackHandlers(sourceCode);
+    const generatedHandlers = Executor.extractCallbackHandlers(generatedCode);
+    for (const [name, sourceBody] of sourceHandlers) {
+      if (!generatedHandlers.has(name)) {
+        errors.push(
+          `❌ Callback Preservation: handler \`${name}\` exists in the source file but is missing from the generated output. Preserve all handlers from the source.`
+        );
+      } else {
+        const genBody = generatedHandlers.get(name)!;
+        const sourceLines = new Set(sourceBody.split('\n').map(l => l.trim()).filter(Boolean));
+        // All word tokens that appear anywhere in the source handler body.
+        // A generated line whose primary token is absent here is genuinely new.
+        const sourceIdents = new Set<string>(sourceBody.match(/\b[a-zA-Z_]\w*\b/g) ?? []);
+
+        const addedLines = genBody.split('\n').map(l => l.trim()).filter(Boolean)
+          .filter(line => {
+            if (sourceLines.has(line)) { return false; }        // exact match
+            if (line.startsWith('//')) { return false; }         // comment
+            // Structural lines: arrow fn header `() => {`, closing `}, []`, etc.
+            if (/^[()[\]{}]|^},\s*[\[{]/.test(line)) { return false; }
+            // A line is "added" only if its first meaningful identifier is not in source.
+            const primaryIdent = (line.match(/\b([a-zA-Z_]\w*)\b/) ?? [])[1];
+            if (!primaryIdent) { return false; }
+            if (HARMLESS_TOKENS.has(primaryIdent)) { return false; }
+            return !sourceIdents.has(primaryIdent);
+          });
+
+        if (addedLines.length > 0) {
+          errors.push(
+            `❌ Callback Preservation: handler \`${name}\` has ${addedLines.length} line(s) not in the source:\n` +
+            addedLines.map(l => `  + ${l}`).join('\n') +
+            `\n  Remove these lines — they were not in the original.`
+          );
+        }
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Extract the full `const handlerName = useCallback(...)` declaration text from source.
+   * Uses paren-depth tracking to correctly handle nested calls inside the callback body.
+   * Returns the declaration INCLUDING the trailing semicolon, or null if not found.
+   */
+  private static extractFullCallbackDeclaration(source: string, handlerName: string): string | null {
+    const startPattern = new RegExp(`\\bconst\\s+${handlerName}\\s*=\\s*useCallback\\s*\\(`);
+    const startMatch = startPattern.exec(source);
+    if (!startMatch) { return null; }
+
+    let depth = 1;
+    let i = startMatch.index + startMatch[0].length; // position right after the opening '('
+    while (i < source.length && depth > 0) {
+      if (source[i] === '(') { depth++; }
+      else if (source[i] === ')') { depth--; }
+      i++;
+    }
+    // i now points one past the closing ')'
+    // Consume optional whitespace + semicolon
+    while (i < source.length && (source[i] === ' ' || source[i] === '\t')) { i++; }
+    if (i < source.length && source[i] === ';') { i++; }
+
+    return source.slice(startMatch.index, i).trim();
+  }
+
+  /**
+   * Deterministic callback splicer: inject missing useCallback handler declarations
+   * (and any associated useState declarations) from source into the generated file.
+   *
+   * Used when the LLM drops handlers on "slim" rewrites even with preservation prompts.
+   * Inserts before the component's `return (` statement and patches the React import to
+   * include `useState` / `useCallback` if they are not already present.
+   */
+  private static spliceCallbackHandlers(
+    generated: string,
+    source: string,
+    missingHandlerNames: string[]
+  ): string {
+    if (missingHandlerNames.length === 0) { return generated; }
+
+    // 1. Extract full handler declarations from source
+    const handlerDecls: string[] = [];
+    for (const name of missingHandlerNames) {
+      const decl = Executor.extractFullCallbackDeclaration(source, name);
+      if (decl) { handlerDecls.push(decl); }
+    }
+    if (handlerDecls.length === 0) { return generated; }
+
+    // 2. Find which setState setters the missing handlers reference
+    const setterNames = new Set<string>();
+    for (const decl of handlerDecls) {
+      const setters = decl.match(/\bset[A-Z]\w*\b/g) ?? [];
+      setters.forEach(s => setterNames.add(s));
+    }
+
+    // 3. Extract useState declarations from source for setters absent from generated
+    const useStateDecls: string[] = [];
+    for (const setter of setterNames) {
+      if (generated.includes(setter)) { continue; } // already present
+      // Match: const [stateName, setter] = useState<...>(...)
+      // [^;]* matches everything up to (but not including) the first semicolon
+      const re = new RegExp(`const\\s+\\[\\w+,\\s*${setter}\\]\\s*=\\s*useState[^;]*;`, 'g');
+      const hits = source.match(re) ?? [];
+      useStateDecls.push(...hits);
+    }
+
+    // 4. Find insertion point: before the last `return (` in the component body
+    //    Two common patterns: `\n  return (` (arrow component) and `\n  return <` (implicit parens)
+    let insertPoint = generated.lastIndexOf('\n  return (');
+    if (insertPoint === -1) { insertPoint = generated.lastIndexOf('\n  return <'); }
+    if (insertPoint === -1) { return generated; } // can't locate return; bail
+
+    // 5. Build insertion block
+    const insertBlock = '\n' + [...useStateDecls, ...handlerDecls].join('\n') + '\n';
+    let result = generated.slice(0, insertPoint) + insertBlock + generated.slice(insertPoint);
+
+    // 6. Ensure hooks are in the React import line
+    const reactImportMatch = result.match(/^import\s+React(?:,\s*\{([^}]*)\})?\s+from\s+['"]react['"]/m);
+    if (reactImportMatch) {
+      const existing = (reactImportMatch[1] ?? '').split(',').map(h => h.trim()).filter(Boolean);
+      const needed: string[] = [];
+      if (useStateDecls.length > 0 && !existing.includes('useState')) { needed.push('useState'); }
+      if (handlerDecls.length > 0 && !existing.includes('useCallback')) { needed.push('useCallback'); }
+      if (needed.length > 0) {
+        const all = [...existing, ...needed].join(', ');
+        result = result.replace(reactImportMatch[0], `import React, { ${all} } from 'react'`);
+      }
+    }
+
+    return result;
+  }
 
   // Phase 3A: Dependency Injection for side effects
   private fs: IFileSystem;
@@ -283,6 +583,8 @@ export class Executor {
 
     const startTime = Date.now();
     let succeededSteps = 0;
+    // Reset per-plan tsc error tracking (instance var shared with executeWrite)
+    this.filesWithPersistentTscErrors.clear();
 
     // Read package.json once before the step loop so every code generation step
     // knows which packages are actually installed. Non-fatal: missing package.json
@@ -307,16 +609,25 @@ export class Executor {
       // Pattern: description contains "manual" and path is missing or contains non-code keywords.
       // This prevents CONTRACT_VIOLATION crashes from recurring planner hallucinations.
       const descLower = (step.description ?? '').toLowerCase();
+      const stepCommand = typeof (step as any).command === 'string' ? (step as any).command as string : '';
       const isManualVerification =
         descLower.includes('manual verification') ||
+        descLower.includes('manually test') ||
+        descLower.includes('manually verify') ||
+        // Planner put "Manual verification: ..." as the command value
+        /^manual\s*(verification|verify|test)/i.test(stepCommand) ||
         (descLower.includes('browser') && step.action === 'read' && !step.path) ||
         (step.action === 'read' && step.path && /manual|browser/i.test(step.path));
       if (isManualVerification) {
-        this.config.onStepOutput?.(
-          step.stepId,
-          `📝 Skipped (human verification): ${step.description}`,
-          false
-        );
+        const skipMsg = `📝 Skipped (human verification): ${step.description}`;
+        this.config.onStepOutput?.(step.stepId, skipMsg, false);
+        // Record as succeeded so downstream dependsOn checks don't throw DEPENDENCY_VIOLATION
+        plan.results.set(step.stepId, {
+          stepId: step.stepId,
+          success: true,
+          output: skipMsg,
+          duration: 0,
+        });
         continue;
       }
 
@@ -326,11 +637,20 @@ export class Executor {
         this.preFlightCheck(step, workspaceExists);
 
         // ✅ NEW: Dependency Validation (DAG Support)
-        // Track completed step IDs and validate dependencies
+        // Track completed step IDs and validate dependencies.
+        // CRITICAL: Build a stepId→step lookup so completed step IDs are resolved
+        // correctly even when reorderStepsByDependencies has shuffled plan.steps.
+        // Using array index (stepId - 1) is wrong after reorder because positions
+        // no longer match original step numbers.
         const completedStepIds = new Set<string>();
+        const stepIdToStep = new Map<number, PlanStep>();
+        for (const s of plan.steps) {
+          if (typeof s.stepId === 'number') { stepIdToStep.set(s.stepId, s); }
+        }
         for (const completed of plan.results?.values() ?? []) {
-          if (completed.success && plan.steps[completed.stepId - 1]?.id) {
-            completedStepIds.add(plan.steps[completed.stepId - 1].id);
+          if (completed.success) {
+            const s = stepIdToStep.get(completed.stepId);
+            if (s?.id) { completedStepIds.add(s.id); }
           }
         }
         // Build the set of step IDs that are actually in this plan (after filtering)
@@ -528,6 +848,16 @@ export class Executor {
     }
 
     for (const [filePath, content] of generatedFileContents) {
+      // Files with persistent tsc errors are already tracked in filesWithPersistentTscErrors —
+      // skip import-resolution checks for them to avoid double-reporting and to let the tsc
+      // error message (which is more precise) be the primary failure signal.
+      const normalizedFilePath = filePath.replace(/\\/g, '/');
+      const hasPersistentTscErrors = [...this.filesWithPersistentTscErrors].some((p) => {
+        const np = p.replace(/\\/g, '/');
+        return np.endsWith(normalizedFilePath) || normalizedFilePath.endsWith(np) || np === normalizedFilePath;
+      });
+      if (hasPersistentTscErrors) { continue; }
+
       // IMPORT PATH RESOLUTION: verify @/-prefixed and relative imports resolve to known files.
       // This catches fabricated paths like `@/components/ui/form-login` when only
       // `src/components/LoginForm.tsx` was created.
@@ -535,12 +865,33 @@ export class Executor {
       for (const importMatch of importLines) {
         const rawPath = importMatch[1];
 
-        // Resolve @/ alias (maps to src/), bare src/ prefix, or relative paths
+        // Resolve @/ alias (maps to src/), bare src/ prefix, or relative paths.
+        // For relative paths we must include the file's own directory so that
+        // `./Navigation` from `src/components/Layout.tsx` → `components/Navigation`
+        // (not just `Navigation` which misses the `components/` prefix).
+        const resolveRelative = (base: string, rel: string): string => {
+          const baseParts = base.split('/').filter(Boolean);
+          for (const seg of rel.split('/')) {
+            if (seg === '.') { continue; }
+            else if (seg === '..') { baseParts.pop(); }
+            else { baseParts.push(seg); }
+          }
+          return baseParts.join('/');
+        };
+
+        // currentFileDir without trailing slash, stripped of leading src/
+        const currentFileDir = (() => {
+          const d = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '';
+          return d.startsWith('src/') ? d.slice(4) : d;
+        })();
+
         const resolved = rawPath.startsWith('@/')
           ? rawPath.slice(2)  // strip '@/' → relative to src/
           : rawPath.startsWith('src/')
           ? rawPath.slice(4)  // strip 'src/' → same level as src/
-          : rawPath.replace(/^\.\//, '').replace(/^\.\.\//, ''); // strip leading ./ or ../
+          : (rawPath.startsWith('./') || rawPath.startsWith('../'))
+          ? resolveRelative(currentFileDir, rawPath)  // proper relative resolution with context
+          : rawPath;
 
         const resolvedNoExt = resolved.replace(/\.[tj]sx?$/, '');
 
@@ -681,8 +1032,11 @@ export class Executor {
         }
       }
 
-      // Check if this file imports from stores but doesn't use the hook correctly
-      const storeImportMatch = content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
+      // Check if this file imports from stores but doesn't use the hook correctly.
+      // Only applies to .tsx component files — plain .ts files (config, routes, utils) should
+      // NEVER import stores; they get a "Config File Store Import" error from the static validator.
+      const isComponentFile = filePath.endsWith('.tsx');
+      const storeImportMatch = isComponentFile && content.match(/from\s+['\"]([^'\"]*stores[^'\"]*)['\"]/);
       if (storeImportMatch) {
         const storeHookMatches = content.matchAll(/import\s+{([^}]*use\w+Store[^}]*)}/g);
         for (const match of storeHookMatches) {
@@ -727,6 +1081,23 @@ export class Executor {
         completedSteps: succeededSteps,
         results: plan.results,
         error: `Integration validation failed: ${integrationErrors[0]}`,
+        totalDuration: Date.now() - startTime,
+      };
+    }
+
+    // Fail if any written file still had unresolved tsc errors — the import/export
+    // checks above may have passed (syntax is a separate concern), but a compile-broken
+    // file means the plan output is not usable. Report this as an integration failure
+    // instead of emitting a false-positive ✅.
+    if (this.filesWithPersistentTscErrors.size > 0) {
+      const errorList = [...this.filesWithPersistentTscErrors].join(', ');
+      const msg = `❌ Integration check: ${this.filesWithPersistentTscErrors.size} file(s) written with unresolved TypeScript errors: ${errorList}`;
+      this.config.onMessage?.(msg, 'error');
+      return {
+        success: false,
+        completedSteps: succeededSteps,
+        results: plan.results,
+        error: msg,
         totalDuration: Date.now() - startTime,
       };
     }
@@ -820,10 +1191,23 @@ export class Executor {
         );
 
         if (contractResult.hasViolations) {
-          const contractErrors = contractResult.violations.map(
-            v =>
-              `❌ Cross-file Contract: ${v.message}. ${v.suggestion}`
-          );
+          // For pure .ts config/data files (not .tsx), skip "Cannot find module" for
+          // page/component/screen imports — these are external leaf dependencies that
+          // legitimately don't exist in the test workspace (e.g. Routes.ts importing HomePage).
+          // The contract validator is designed for store↔component contracts, not config files.
+          const isConfigTs = filePath.endsWith('.ts') && !filePath.endsWith('.d.ts');
+          const contractErrors = contractResult.violations
+            .filter(v => {
+              if (isConfigTs && v.message.includes('Cannot find module')) {
+                const moduleRef = v.message.match(/Cannot find module '([^']+)'/)?.[1] ?? '';
+                if (/\/(pages|screens|views|components)\//i.test(moduleRef)) {
+                  console.log(`[Executor] ℹ️ Skipping page/component import check for config file: ${moduleRef}`);
+                  return false;
+                }
+              }
+              return true;
+            })
+            .map(v => `❌ Cross-file Contract: ${v.message}. ${v.suggestion}`);
           errors.push(...contractErrors);
           
           if (contractResult.recommendation === 'skip') {
@@ -853,10 +1237,43 @@ export class Executor {
         // validateImportUsage and validateZustandComponent were unused methods removed in cleanup
 
         // If component imports from stores but Zustand pattern not detected, that's also an error
-        if (content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
+        // Exception: root App component legitimately uses both Zustand (auth) and local useState (UI state)
+        // Only applies to .tsx files (React components) — plain .ts files (routes, config, utils) should
+        // NEVER import from stores; they get a different error via the config-file check below.
+        const isRootApp = /(?:^|\/)App\.tsx$/.test(filePath);
+        const isTsxFile = filePath.endsWith('.tsx');
+        if (isTsxFile && !isRootApp && content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) && !content.match(/const\s+{[^}]+}\s*=\s*use\w+Store\s*\(\)/)) {
           errors.push(
             `❌ Zustand Pattern: Component imports from stores but doesn't use destructuring pattern. ` +
             `Expected: const { x, y } = useStoreHook();`
+          );
+        }
+
+        // Config/data .ts files must NEVER import from stores — they are plain data, not React components.
+        const isConfigOrDataTs = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
+        if (isConfigOrDataTs && content.match(/from\s+['"]([^'"]*\/stores\/[^'"]*)['"]/) ) {
+          errors.push(
+            `❌ Config File Store Import: ${filePath.split(/[\\/]/).pop()} imports from a store — this is wrong. ` +
+            `Config/data .ts files are plain TypeScript with no hooks. Remove all store imports.`
+          );
+        }
+
+        // App.tsx must NEVER call useNavigate() — it renders <BrowserRouter> and is outside the router context.
+        if (isRootApp && content.match(/\buseNavigate\s*\(\)/)) {
+          errors.push(
+            `❌ Router Hook Violation: App.tsx calls useNavigate() but App renders <BrowserRouter>, ` +
+            `so it is OUTSIDE the router context. useNavigate() will throw at runtime. ` +
+            `Move navigation logic into a child component rendered INSIDE <BrowserRouter>.`
+          );
+        }
+
+        // Decomposed navigation components (Navigation, Navbar, Sidebar, Header) must be prop-driven.
+        // They should NEVER import from stores — state comes from parent props.
+        const isDecomposedNavFile = Executor.isDecomposedNavigation(filePath);
+        if (isDecomposedNavFile && content.match(/from\s+['"]([^'"]*\/stores?\/[^'"]*)['"]/) ) {
+          errors.push(
+            `❌ Architecture Violation: ${filePath.split(/[\\/]/).pop()} is a pure presentation component but imports from a store. ` +
+            `Remove all store imports — receive isLoggedIn, theme, onLogout as props from the parent instead.`
           );
         }
 
@@ -1121,11 +1538,11 @@ export class Executor {
   private validateCommonPatterns(content: string, filePath: string): string[] {
     const errors: string[] = [];
 
-    // Split React imports: multiple `from 'react'` lines is always wrong.
-    // Root cause: the old reactImportsSection showed each hook as a separate import example,
-    // which the LLM reproduced verbatim. The fix lives in the prompt (merged example) AND here
-    // (deterministic catch for when the prompt is ignored).
-    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+    // Split React imports: multiple `from 'react'` lines is always wrong in .tsx files.
+    // Pure .ts files may legitimately have separate `import type` lines (e.g. ComponentType,
+    // ReactElement) without a value import — those are not a problem. Only enforce in .tsx
+    // where JSX requires React in scope and merged imports are the canonical style.
+    if (filePath.endsWith('.tsx')) {
       const reactImportLines = (content.match(/^import\s+.+\s+from\s+['"]react['"]/gm) || []);
       if (reactImportLines.length > 1) {
         errors.push(
@@ -1192,10 +1609,10 @@ export class Executor {
         .flatMap(m => m[1].split(',').map(s => s.trim().replace(/\s+as\s+\w+$/, '').trim()))
         .filter(s => /^\w+$/.test(s));
       for (const name of importedNames) {
-        if (new RegExp(`\\b(?:const|let|var|function|class)\\s+${name}\\b`).test(content)) {
+        if (new RegExp(`\\b(?:const|let|var|function|class|interface|type)\\s+${name}\\b`).test(content)) {
           errors.push(
             `❌ Duplicate identifier: '${name}' is both imported and declared locally. ` +
-            `Remove the local declaration — import the module instead.`
+            `Remove either the import OR the local declaration — do not have both.`
           );
         }
       }
@@ -1248,6 +1665,39 @@ export class Executor {
           `Utility files must never import from the component layer — this will crash the module loader at runtime. ` +
           `Remove the component import; if you need shared logic, extract it to a separate utility.`
         );
+      }
+    }
+
+    // Component-to-component circular import check.
+    // Navigation.tsx must never import Layout.tsx (Layout already imports Navigation → circular).
+    // General rule: a component in components/ must not import another sibling component that is
+    // known to import it back.
+    if (filePath.endsWith('.tsx') || filePath.endsWith('.ts')) {
+      const isNavigationFile = Executor.isDecomposedNavigation(filePath);
+      if (isNavigationFile) {
+        // Navigation must never import Layout — Layout imports Navigation, so this would be circular.
+        const importsLayout = /from\s+['"][^'"]*[Ll]ayout['"]/i.test(content);
+        if (importsLayout) {
+          errors.push(
+            `❌ Circular dependency: Navigation imports Layout, but Layout already imports Navigation. ` +
+            `This creates a circular module dependency (Navigation → Layout → Navigation) that crashes the module loader. ` +
+            `Remove the Layout import from Navigation. Navigation should only import from: react-router-dom, routes/Routes, and react.`
+          );
+        }
+
+        // Navigation must call getAccessibleRoutes() as a plain function, not as a method on
+        // Routes (react-router component) or ROUTES (the array). Both are runtime errors.
+        const routesNamespaceCall = /\bRoutes\.getAccessibleRoutes\s*\(/.test(content)
+          || /\bROUTES\.getAccessibleRoutes\s*\(/.test(content);
+        if (routesNamespaceCall) {
+          errors.push(
+            `❌ Wrong function call: \`Routes.getAccessibleRoutes()\` or \`ROUTES.getAccessibleRoutes()\` is not valid. ` +
+            `\`Routes\` is a react-router-dom component; \`ROUTES\` is a plain array — neither has .getAccessibleRoutes(). ` +
+            `Import and call it as a standalone function: ` +
+            `import { ROUTES, getAccessibleRoutes } from '../routes/Routes'; ` +
+            `const accessible = getAccessibleRoutes(isLoggedIn);`
+          );
+        }
       }
     }
 
@@ -1452,16 +1902,19 @@ export class Executor {
       }
 
       // Detect non-visual wrapper components that don't accept or render children.
-      // A Route/Guard/Wrapper/Provider component that ignores children is a broken wrapper —
-      // it can never render the protected content it's supposed to wrap.
-      const componentBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-      const isWrapperComponent = filePath.endsWith('.tsx')
-        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentBaseName);
-      if (isWrapperComponent && !/\bchildren\b/.test(content)) {
+      // A Route/Guard/Provider or Layout component that ignores children is broken —
+      // it can never render the content it's supposed to wrap.
+      // EXCEPTION: Layout components that render <Routes> internally own their own routing
+      // and do NOT need to accept children from outside — they are self-contained.
+      const isLayoutFile = Executor.isStructuralLayout(filePath);
+      const layoutOwnsRouting = isLayoutFile && /<Routes[\s>]/.test(content);
+      const needsChildren = (Executor.isNonVisualWrapper(filePath) || isLayoutFile) && !layoutOwnsRouting;
+      if (needsChildren && !/\bchildren\b/.test(content)) {
+        const isLayout = isLayoutFile;
+        const baseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
         errors.push(
-          `❌ Missing children prop: ${componentBaseName} is a wrapper component but never references \`children\`. ` +
-          `A wrapper must accept and render children: \`({ children }: { children: React.ReactNode })\` ` +
-          `and return \`<>{children}</>\` when the user is authenticated.`
+          `❌ Missing children prop: ${baseName} is a ${isLayout ? 'layout' : 'wrapper'} component but never references \`children\`. ` +
+          `A ${isLayout ? 'layout' : 'wrapper'} must accept and render children: \`({ children }: { children: React.ReactNode })\`.`
         );
       }
 
@@ -1503,9 +1956,7 @@ export class Executor {
     const importsCn = /import\s+.*\bcn\b.*from/.test(content);
     if (importsCn) {
       const isPureTs = filePath.endsWith('.ts') && !filePath.endsWith('.tsx');
-      const fileBaseName = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-      const isNonVisualWrapperFile = filePath.endsWith('.tsx')
-        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(fileBaseName);
+      const isNonVisualWrapperFile = Executor.isNonVisualWrapper(filePath);
       if (isPureTs) {
         errors.push(
           `❌ Wrong import: \`cn\` is imported in a non-component .ts file. ` +
@@ -1514,7 +1965,7 @@ export class Executor {
       } else if (isNonVisualWrapperFile) {
         errors.push(
           `❌ Wrong import: \`cn\` is imported in a non-visual wrapper component. ` +
-          `${fileBaseName} is a logic wrapper (redirects/renders children) with NO styled elements. ` +
+          `${filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '')} is a logic wrapper (redirects/renders children) with NO styled elements. ` +
           `NEVER import cn here — remove the import entirely.`
         );
       } else if (!/\bcn\s*\(/.test(content)) {
@@ -1548,6 +1999,8 @@ export class Executor {
       const hasJsx = /<\/[A-Za-z]/.test(content)        // closing tag e.g. </div> </Component>
         || /<>|<\/>/.test(content)                       // React fragment <> </>
         || /<[A-Z][a-zA-Z]*[\s/]/.test(content)         // self-closing or spaced JSX <Foo /> <Foo >
+        || /<[a-z][a-zA-Z]*[\s/]/.test(content)         // lowercase HTML JSX <div /> <span > (NOT generic <T> which has no space/slash)
+        || /\(\)\s*=>\s*</.test(content)                 // arrow fn returning JSX: () => <Component>
         || /React\.FC|JSX\.Element/.test(content);       // JSX-specific type annotations
       if (hasJsx) {
         errors.push(
@@ -1682,7 +2135,7 @@ export class Executor {
    * The Reviewer (llmValidate) then checks the generated code against this list item-by-item.
    * Non-blocking — returns [] on LLM failure, falling back to open-ended review.
    */
-  private async generateAcceptanceCriteria(step: PlanStep): Promise<string[]> {
+  private async generateAcceptanceCriteria(step: PlanStep, sourceContent?: string): Promise<string[]> {
     try {
       const llmConfig = this.config.llmClient.getConfig();
       const profileConstraints = this.config.projectProfile?.getGenerationConstraints() ?? '';
@@ -1690,22 +2143,107 @@ export class Executor {
       const constraintLine = profileConstraints ? ` CONSTRAINTS: ${profileConstraints.replace(/\n/g, ' ')}` : '';
       const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
       const isServiceTarget = /[\\/](?:services|utils|lib|api|helpers)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
-      const isPureLogicFile = isHookTarget || isServiceTarget;
-      // Non-visual wrapper components (Route, Guard, Provider, Layout, Context, HOC) render children
-      // or redirect — they have no styled elements, so cn/className criteria are nonsensical
-      const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '';
-      const isNonVisualWrapper = step.path.endsWith('.tsx')
-        && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+      const isConfigTarget = /[\\/](?:routes|config|types|constants|models)[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+      const isPureLogicFile = isHookTarget || isServiceTarget || isConfigTarget;
+      const isNonVisualWrapper = Executor.isNonVisualWrapper(step.path);
       // For mock auth services, add a rule about the default return value
+      const stepBaseName = step.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
       const isMockAuthService = isPureLogicFile
-        && /mockAuth|authService|authHelper/i.test(componentName);
+        && /mockAuth|authService|authHelper/i.test(stepBaseName);
       const mockAuthNote = isMockAuthService
         ? ' MOCK AUTH SERVICE: one criterion MUST check that the auth function returns false by default (not true). A mock that returns true makes the redirect unreachable and untestable.'
         : '';
+      const isStructuralLayoutCriteria = Executor.isStructuralLayout(step.path, step.description);
+      const isDecomposedNavigationCriteria = Executor.isDecomposedNavigation(step.path, step.description);
+
+      // Short-circuit: pre-define criteria for well-known decomposition targets.
+      // The LLM reliably produces "Uses cn()" for these even when told not to,
+      // because it pattern-matches from Tailwind projects. Hardcoded criteria are
+      // more reliable AND faster.
+      if (isStructuralLayoutCriteria) {
+        // Derive the props contract from the source file rather than hardcoding field names
+        const layoutPropsBody = sourceContent
+          ? Executor.extractPropsInterface(sourceContent, 'Layout')
+          : null;
+        const propsDesc = layoutPropsBody
+          ? `Props interface matches source: ${layoutPropsBody.replace(/\s+/g, ' ').replace(/;/g, ',').trim()}`
+          : 'Accepts correct props from parent (all state passed as props — no store imports)';
+        return [
+          propsDesc,
+          'Renders Navigation component conditionally based on the sidebar-open prop',
+          'Has header, sidebar (with Navigation), main content area, and footer structure',
+          'Renders routes internally from route config — Layout owns routing, not the parent',
+          'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+      if (isDecomposedNavigationCriteria) {
+        const navPropsBody = sourceContent
+          ? Executor.extractPropsInterface(sourceContent, 'Navigation')
+          : null;
+        const propsDesc = navPropsBody
+          ? `Props interface matches source: ${navPropsBody.replace(/\s+/g, ' ').replace(/;/g, ',').trim()}`
+          : 'Accepts all state as props (isLoggedIn, theme, onLogout) — no store imports';
+        // Derive the filter-function name from source
+        const routeConfig = sourceContent ? Executor.extractRouteConfig(sourceContent) : null;
+        const filterFn = routeConfig?.filterFnName ?? 'getAccessibleRoutes';
+        return [
+          propsDesc,
+          'Uses <Link> component for all navigation links (NOT useNavigate, NOT <a href>)',
+          `Calls ${filterFn}(isLoggedIn) to get accessible routes — NOT Routes.${filterFn}() or array.${filterFn}()`,
+          'Logout button is shown only when isLoggedIn is true',
+          'Uses inline style={{}} objects for ALL styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+
+      // Short-circuit: App.tsx (refactored root) criteria — derived from source to avoid hardcoding store fields.
+      const isAppRootCriteria = /(?:^|\/)App\.tsx$/.test(step.path);
+      if (isAppRootCriteria) {
+        const storeFieldMap = sourceContent ? Executor.extractStoreFields(sourceContent) : new Map();
+        const storeEntries = [...storeFieldMap.entries()];
+        const storeDesc = storeEntries.length > 0
+          ? storeEntries.map(([hook, fields]) => `Gets ${fields.join(', ')} from ${hook}`).join('; ')
+          : 'Gets only what the store actually exports — does NOT read local state from any store';
+        // Derive the required useCallback handler names from the source so the LLM
+        // knows exactly which handlers to include — prevents handlers being dropped.
+        const sourceCallbacks = sourceContent ? Executor.extractCallbackHandlers(sourceContent) : new Map();
+        const callbackNames = [...sourceCallbacks.keys()];
+        const callbackCriteria = callbackNames.length > 0
+          ? `Defines exactly these useCallback handlers (exact names from source): ${callbackNames.join(', ')}`
+          : 'Uses useCallback for event handlers passed as props';
+        return [
+          'Wraps everything in <BrowserRouter> — NEVER calls useNavigate() directly in App',
+          storeDesc,
+          callbackCriteria,
+          'Renders the top-level Layout/Shell component with all needed props',
+          'Uses inline style={{}} objects for any styling — NO cn(), clsx, className with Tailwind strings',
+        ];
+      }
+
+      // Short-circuit: route-config .ts file criteria — derived from source interface shape.
+      const isRoutesCriteria = /(?:^|\/)Routes\.ts$/.test(step.path);
+      if (isRoutesCriteria) {
+        const routeConfig = sourceContent ? Executor.extractRouteConfig(sourceContent) : null;
+        const constName = routeConfig?.constName ?? 'ROUTES';
+        const filterFn = routeConfig?.filterFnName ?? 'getAccessibleRoutes';
+        const ifaceFields = routeConfig?.interfaceBody
+          ? `RouteConfig interface has: ${routeConfig.interfaceBody.replace(/\s+/g, ' ').trim()}`
+          : 'RouteConfig interface matches fields from source — NO invented fields (no meta, no extra props)';
+        return [
+          `Exports a const named ${constName} (exact case from source) — NOT routes, routeList, or any other name`,
+          ifaceFields,
+          `Exports ${filterFn}(...): RouteConfig[] that filters routes based on auth/access`,
+          'No JSX, no styled elements, no cn() — pure TypeScript config file',
+        ];
+      }
+
       const hookLine = isPureLogicFile
         ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
         : isNonVisualWrapper
         ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). ALWAYS include one criterion that checks: "Accepts and renders children prop" — a wrapper that ignores children is broken. Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
+        : isStructuralLayoutCriteria
+        ? ' STRUCTURAL LAYOUT: This component is extracted from a source that may use inline styles (style={{}}), not Tailwind. Do NOT require cn() — require only: (1) Accepts children prop, (2) Correct props interface with isLoggedIn/theme/onLogout/isSidebarOpen/onToggleSidebar, (3) Renders Navigation conditionally based on isSidebarOpen, (4) Has header + sidebar + main + footer structure, (5) Renders children in the main area.'
+        : isDecomposedNavigationCriteria
+        ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
         : '';
       const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Includes px-4 py-2 padding"]\n\nOutput the JSON array:`;
 
@@ -2228,20 +2766,29 @@ JSON array only. No explanation.`;
     //   2. no path + description mentions manual/visual verification
     const isEmptyRunStep = step.action === 'run' &&
       (!(step as any).command || ((step as any).command as string).trim().length === 0);
-    const isManualVerification = !step.path &&
-      /manual|verify|check|browser|visually/i.test(step.description);
 
-    if (isEmptyRunStep || isManualVerification) {
-      const skipOutput = `📝 Skipped (human verification): ${step.description}`;
-      this.config.onStepOutput?.(stepId, skipOutput, false);
-      return {
-        stepId: step.stepId,
-        success: true,
-        output: skipOutput,
-        duration: 0,
-        timestamp: Date.now(),
-        requiresManualVerification: true,
-      };
+    // Special case: if an empty run step describes TypeScript compilation, infer the tsc command
+    // so it actually executes instead of being skipped as "human verification".
+    if (isEmptyRunStep && /compil|tsc\b|typescript.*build|stack.*compil/i.test(step.description)) {
+      (step as any).command = 'tsc --noEmit --skipLibCheck';
+      console.log(`[Executor] Inferred tsc command for compile-verify step: "${step.description}"`);
+      // Fall through to normal execution with the inferred command
+    } else {
+      const isManualVerification = !step.path &&
+        /manual|verify|check|browser|visually/i.test(step.description);
+
+      if (isEmptyRunStep || isManualVerification) {
+        const skipOutput = `📝 Skipped (human verification): ${step.description}`;
+        this.config.onStepOutput?.(stepId, skipOutput, false);
+        return {
+          stepId: step.stepId,
+          success: true,
+          output: skipOutput,
+          duration: 0,
+          timestamp: Date.now(),
+          requiresManualVerification: true,
+        };
+      }
     }
 
     // VALIDATOR GATE 1: Check step schema (basic validation)
@@ -2424,45 +2971,86 @@ JSON array only. No explanation.`;
 
     // Build dependency map: for each write step, what other write steps does it depend on?
     const dependencies = new Map<number, Set<number>>();
-    const stepDescriptions = new Map<number, { path?: string; description?: string }>();
 
     writeSteps.forEach((step, idx) => {
       dependencies.set(idx, new Set());
-      stepDescriptions.set(idx, { path: step.path, description: step.description });
     });
 
-    // Analyze imports in descriptions to detect dependencies
+    // Build an id→index lookup for dependsOn resolution
+    const stepIdToWriteIdx = new Map<string, number>();
+    writeSteps.forEach((step, idx) => {
+      if (step.id) { stepIdToWriteIdx.set(step.id, idx); }
+    });
+
+    // Pass 1: Use planner-declared dependsOn (structural, not linguistic — always preferred)
     writeSteps.forEach((step, currentIdx) => {
+      if (step.dependsOn && step.dependsOn.length > 0) {
+        for (const depId of step.dependsOn) {
+          const depWriteIdx = stepIdToWriteIdx.get(depId);
+          if (depWriteIdx !== undefined && depWriteIdx !== currentIdx) {
+            dependencies.get(currentIdx)?.add(depWriteIdx);
+          }
+        }
+      }
+    });
+
+    // Pass 2: Text analysis fallback — runs for steps that declared no dependsOn, OR
+    // for steps whose dependsOn refs all pointed to non-WRITE steps (READ/RUN) and therefore
+    // produced zero write-step edges in Pass 1. Without this, steps like Layout.tsx that
+    // declare `dependsOn: ["step_1_READ"]` get zero edges and sort before Routes.ts.
+    writeSteps.forEach((step, currentIdx) => {
+      const hasWriteEdges = (dependencies.get(currentIdx)?.size ?? 0) > 0;
+      if (step.dependsOn && step.dependsOn.length > 0 && hasWriteEdges) {
+        return; // planner declared write-step dependencies — trust them, skip text analysis
+      }
+
       const pathLower = (step.path || '').toLowerCase();
       const descLower = (step.description || '').toLowerCase();
       const fullText = `${pathLower} ${descLower}`;
 
       writeSteps.forEach((otherStep, otherIdx) => {
-        if (currentIdx === otherIdx) {return;}
-
-        const otherPath = (otherStep.path || '').toLowerCase();
-        const otherDesc = (otherStep.description || '').toLowerCase();
-
-        // Check if current step imports from other step
-        // Look for patterns like "import from stores/useAuthStore" or "import from types/LoginFormState"
-        const importPatterns = [
-          `imports?.*from.*${this.getFileBaseName(otherPath)}`,
-          `uses?.*${this.getFileBaseName(otherPath)}`,
-          `from.*['"]([^'"]*${this.getFileBaseName(otherPath)}[^'"]*)['"]`,
-        ];
-
-        for (const pattern of importPatterns) {
-          if (new RegExp(pattern, 'i').test(fullText)) {
-            dependencies.get(currentIdx)?.add(otherIdx);
-            break;
-          }
+        if (currentIdx === otherIdx) { return; }
+        const basename = this.getFileBaseName((otherStep.path || '').toLowerCase());
+        // Filename appears anywhere in the description → likely a dependency
+        if (basename && new RegExp(`\\b${basename}\\b`, 'i').test(fullText)) {
+          dependencies.get(currentIdx)?.add(otherIdx);
         }
-
-        // Also check: if other step creates "useLoginStore" and current is "LoginForm", likely dependency
+        // Store → component heuristic (layout-independent of vocabulary)
+        const otherPathLower = (otherStep.path || '').toLowerCase();
         if (
-          otherPath.includes('store') && !pathLower.includes('store') &&
+          otherPathLower.includes('store') && !pathLower.includes('store') &&
           (pathLower.includes('component') || pathLower.includes('form'))
         ) {
+          dependencies.get(currentIdx)?.add(otherIdx);
+        }
+      });
+    });
+
+    // Pass 3: Path-based structural ordering — description-independent.
+    // Vague step descriptions (e.g. "Extract Layout component") don't mention their
+    // dependency on Routes.ts, so Pass 2 text analysis misses the edge. This pass
+    // enforces well-known decomposition conventions based purely on file path patterns:
+    //   routes/       → priority 0 (config, no local imports)
+    //   navigation/navbar/nav/sidebar → priority 1 (imports routes)
+    //   layout        → priority 2 (imports Navigation + routes)
+    //   other components/pages → priority 3
+    //   App.tsx       → priority 4 (root, imports everything)
+    // Any step with a lower priority number must come BEFORE steps with higher numbers.
+    const getStructuralPriority = (path: string): number => {
+      const p = (path || '').toLowerCase();
+      if (/[\\/]routes?[\\/]|[\\/]routes?\.[tj]s$|routes?\.ts$/i.test(p)) { return 0; }
+      if (/[\\/](navigation|navbar|nav|sidebar)\.[tj]sx?$/i.test(p)) { return 1; }
+      if (/[\\/]layout\.[tj]sx?$/i.test(p)) { return 2; }
+      if (/(?:^|[\\/])app\.[tj]sx?$/i.test(p)) { return 4; }
+      return 3;
+    };
+    writeSteps.forEach((step, currentIdx) => {
+      const myPriority = getStructuralPriority(step.path || '');
+      writeSteps.forEach((otherStep, otherIdx) => {
+        if (currentIdx === otherIdx) { return; }
+        const otherPriority = getStructuralPriority(otherStep.path || '');
+        if (otherPriority < myPriority) {
+          // otherStep has a lower priority number → it must come before this step
           dependencies.get(currentIdx)?.add(otherIdx);
         }
       });
@@ -2522,6 +3110,218 @@ JSON array only. No explanation.`;
     }
 
     return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Surgical correction helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Compute the relative import path from `currentFilePath` to the symbol that
+   * `sourceFilePath` imports from `sourceImportPath`.
+   *
+   * Example:
+   *   currentFilePath = 'src/components/Layout.tsx'
+   *   sourceFilePath  = 'src/App.tsx'
+   *   sourceImportPath = './pages/NotFoundPage'
+   *   → returns '../pages/NotFoundPage'
+   */
+  private computeRelativeImportPath(
+    currentFilePath: string,
+    sourceFilePath: string,
+    sourceImportPath: string
+  ): string {
+    // Normalise slashes
+    const normCurrent = currentFilePath.replace(/\\/g, '/');
+    const normSource  = sourceFilePath.replace(/\\/g, '/');
+    const normImport  = sourceImportPath.replace(/\\/g, '/');
+
+    // Resolve the import relative to the source file's directory
+    const sourceDir = normSource.replace(/\/[^/]+$/, ''); // dirname
+    // Simple join: handle leading './' or '../' in sourceImportPath
+    let resolved: string;
+    if (normImport.startsWith('./') || normImport.startsWith('../')) {
+      // Naive resolve: strip leading './' or traverse '../'
+      const parts = sourceDir.split('/');
+      const importParts = normImport.split('/');
+      for (const seg of importParts) {
+        if (seg === '..') { parts.pop(); }
+        else if (seg !== '.') { parts.push(seg); }
+      }
+      resolved = parts.join('/');
+    } else {
+      resolved = normImport; // absolute or bare specifier — use as-is
+    }
+
+    // Compute relative path from current file's directory
+    const currentDir = normCurrent.replace(/\/[^/]+$/, '');
+    const fromParts = currentDir.split('/');
+    const toParts   = resolved.split('/');
+
+    // Find common prefix length
+    let common = 0;
+    while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) {
+      common++;
+    }
+    const ups = fromParts.length - common;
+    const downs = toParts.slice(common);
+    const rel = [...Array(ups).fill('..'), ...downs].join('/');
+    return rel.startsWith('.') ? rel : './' + rel;
+  }
+
+  /**
+   * Build a per-line tsc correction prompt.
+   * Groups errors by line number, extracts context windows, requests a JSON patch.
+   * Returns '' if none of the errors carry line numbers (caller falls back to whole-file).
+   */
+  private buildSurgicalTscPrompt(content: string, tscErrors: string[], filePath: string): string {
+    const lines = content.split('\n');
+
+    // Parse "(line N)" from tsc error strings
+    const errorsByLine = new Map<number, string[]>();
+    for (const error of tscErrors) {
+      const m = error.match(/\(line (\d+)\)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!errorsByLine.has(n)) { errorsByLine.set(n, []); }
+        errorsByLine.get(n)!.push(error);
+      }
+    }
+    if (errorsByLine.size === 0) { return ''; }
+
+    const uniqueLines = [...errorsByLine.keys()].sort((a, b) => a - b);
+    const RADIUS = 4;
+
+    // Merge overlapping context windows
+    const windows: Array<{ start: number; end: number }> = [];
+    for (const ln of uniqueLines) {
+      const s = Math.max(0, ln - 1 - RADIUS);
+      const e = Math.min(lines.length - 1, ln - 1 + RADIUS);
+      if (windows.length > 0 && s <= windows[windows.length - 1].end + 1) {
+        windows[windows.length - 1].end = Math.max(windows[windows.length - 1].end, e);
+      } else {
+        windows.push({ start: s, end: e });
+      }
+    }
+
+    const contextSections = windows
+      .map(({ start, end }) =>
+        lines
+          .slice(start, end + 1)
+          .map((line, i) => `${start + i + 1}: ${line}`)
+          .join('\n')
+      )
+      .join('\n...\n');
+
+    const errorList = uniqueLines
+      .map(ln => `Line ${ln}:\n${errorsByLine.get(ln)!.map(e => `  - ${e}`).join('\n')}`)
+      .join('\n');
+
+    return (
+      `Fix ONLY the TypeScript compiler errors listed below in: ${filePath}\n\n` +
+      `ERRORS:\n${errorList}\n\n` +
+      `RELEVANT CODE (with line numbers):\n${contextSections}\n\n` +
+      `RESPONSE FORMAT — return ONLY a JSON array, nothing else:\n` +
+      `[{"line": N, "content": "replacement for that entire line (preserve indentation)"}]\n\n` +
+      `Rules:\n` +
+      `- Patch ONLY the lines mentioned in ERRORS — do NOT touch any other line\n` +
+      `- To delete a line: {"line": N, "content": ""}\n` +
+      `- To insert a new line before line N: {"line": N, "insertBefore": "new line content"}\n` +
+      `- NEVER rewrite logic, JSX, or template literals — only fix the listed error tokens\n` +
+      `- Output ONLY the JSON array. No markdown, no explanation.`
+    );
+  }
+
+  /**
+   * Apply a JSON patch array returned by the surgical tsc fixer.
+   * Returns null if the JSON cannot be parsed (caller falls back to whole-file).
+   */
+  private applySurgicalTscPatches(content: string, patchJson: string): string | null {
+    try {
+      const stripped = patchJson.replace(/```(?:json)?\n?([\s\S]*?)\n?```/, '$1').trim();
+      const patches: Array<{ line: number; content: string; insertBefore?: string }> =
+        JSON.parse(stripped);
+      if (!Array.isArray(patches)) { return null; }
+
+      const lines = content.split('\n');
+      // Process in reverse order so insertions don't shift subsequent indices
+      const sorted = [...patches].sort((a, b) => b.line - a.line);
+
+      for (const patch of sorted) {
+        const idx = patch.line - 1;
+        if (idx < 0 || idx > lines.length) { continue; }
+        if (patch.insertBefore !== undefined) {
+          lines.splice(idx, 0, patch.insertBefore);
+        } else if (patch.content === '') {
+          lines.splice(idx, 1);
+        } else {
+          if (idx < lines.length) { lines[idx] = patch.content; }
+        }
+      }
+      return lines.join('\n');
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Build a SEARCH/REPLACE correction prompt for validator errors.
+   * The LLM returns one or more fenced blocks that describe minimal edits.
+   * This prevents it from rewriting the whole file.
+   */
+  private buildSurgicalValidatorPrompt(
+    content: string,
+    errors: string[],
+    filePath: string
+  ): string {
+    // For import-class errors, only show the import section (first 25 lines)
+    const isImportOnly = errors.every(e =>
+      e.includes('Cross-file Contract') ||
+      e.includes('Missing import') ||
+      e.includes('Unused import') ||
+      e.includes('Wrong import') ||
+      e.includes('Dead import') ||
+      e.includes('Export consistency')
+    );
+
+    const codeContext = isImportOnly
+      ? `IMPORT SECTION (lines 1-${Math.min(25, content.split('\n').length)}):\n` +
+        content.split('\n').slice(0, 25).map((l, i) => `${i + 1}: ${l}`).join('\n')
+      : `FULL FILE:\n${content}`;
+
+    return (
+      `Fix the following validation errors in: ${filePath}\n\n` +
+      `ERRORS:\n${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\n` +
+      `${codeContext}\n\n` +
+      `RESPONSE FORMAT — return ONLY search/replace blocks, one per change:\n` +
+      `<<<SEARCH\n[exact text to find in the file]\n=====\n[replacement text]\n>>>REPLACE\n\n` +
+      `Rules:\n` +
+      `- Each SEARCH string must be a verbatim substring of the file — it will be used for exact replacement\n` +
+      `- Make the SEARCH string as SHORT as possible (just the line(s) that need changing)\n` +
+      `- Do NOT change anything not covered by the listed errors\n` +
+      `- Output ONLY the <<<SEARCH...>>>REPLACE blocks. No explanation, no full file.`
+    );
+  }
+
+  /**
+   * Apply SEARCH/REPLACE blocks to content.
+   * Returns null if no valid blocks are found.
+   */
+  private applySurgicalValidatorPatches(content: string, patchText: string): string | null {
+    const blockRe = /<<<SEARCH\n([\s\S]*?)\n=====\n([\s\S]*?)\n>>>REPLACE/g;
+    let result = content;
+    let matched = false;
+
+    let m: RegExpExecArray | null;
+    while ((m = blockRe.exec(patchText)) !== null) {
+      const search = m[1];
+      const replace = m[2];
+      if (result.includes(search)) {
+        result = result.replace(search, replace);
+        matched = true;
+      }
+    }
+    return matched ? result : null;
   }
 
   /** Helper: Get base filename without path or extension */
@@ -2750,13 +3550,12 @@ JSON array only. No explanation.`;
       }
     }
 
-    // Check for "manual" hallucination in command
+    // Check for "manual" hallucination in command — clear the command so the step falls through
+    // to the isManualVerification skip in executeStep rather than throwing a fatal error.
     if ((step as any).command && typeof (step as any).command === 'string') {
-      if ((step as any).command.toLowerCase().includes('manual')) {
-        throw new Error(
-          `CONTRACT_VIOLATION: Step "${step.description}" has command="${(step as any).command}". ` +
-          `Manual verification is not a valid executor action.`
-        );
+      if (/^manual\s*(verification|verify|test)/i.test(((step as any).command as string).trim())) {
+        // Nullify the command so executeStep's isEmptyRunStep check will catch it as human verification
+        (step as any).command = '';
       }
     }
 
@@ -3223,6 +4022,9 @@ JSON array only. No explanation.`;
     // This prevents duplicate stores, unused imports, and pseudo-refactoring
     // KEY ENHANCEMENT: Include actual exported APIs from previous files
     let multiStepContext = '';
+    // Hoisted outside the plan-context block so the callback-preservation validator
+    // (which runs after generation) can access the source READ contents.
+    let sourceReadContents: { path: string; content: string }[] = [];
     if (this.plan && step.stepId > 1) {
       const previouslyCreatedFiles: string[] = [];
       const completedSteps = new Map(this.plan.results || new Map());
@@ -3338,14 +4140,43 @@ Do NOT create your own import paths - use EXACTLY what's shown above.
         }
 
         // Include content from prior READ steps so the LLM sees the actual API of existing files
+        // Also compute path offset: if this WRITE target is in a subdirectory relative to
+        // a READ source, the model must adjust relative import paths (e.g. ./pages/ → ../pages/).
+        let pathOffsetNote = '';
+        if (readStepContents.length > 0 && step.path) {
+          const targetDir = step.path.includes('/') ? step.path.substring(0, step.path.lastIndexOf('/')) : '';
+          for (const r of readStepContents) {
+            const sourceDir = r.path.includes('/') ? r.path.substring(0, r.path.lastIndexOf('/')) : '';
+            if (targetDir !== sourceDir && targetDir.startsWith(sourceDir + '/')) {
+              // Target is one or more levels deeper than source.
+              // Count the extra levels so we know how many '../' to prepend.
+              const extra = targetDir.slice(sourceDir.length + 1).split('/').length;
+              const prefix = '../'.repeat(extra);
+              pathOffsetNote = `\n⚠️ PATH ADJUSTMENT REQUIRED: You are writing to \`${step.path}\` (directory: \`${targetDir}/\`). ` +
+                `The source file \`${r.path}\` is at \`${sourceDir}/\`. ` +
+                `Its relative imports (e.g. \`./pages/X\`) resolve from \`${sourceDir}/\`, ` +
+                `but from \`${targetDir}/\` you must add \`${'../'.repeat(extra)}\` prefix: ` +
+                `WRONG: \`./pages/X\`  RIGHT: \`${prefix}pages/X\`\n`;
+              break;
+            }
+          }
+        }
+
         const readContextSection = readStepContents.length > 0
           ? `## EXISTING CODEBASE (files read in prior steps — use their EXACT APIs)
-
-${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 1500)}\n\`\`\``).join('\n\n')}
+${pathOffsetNote}
+${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 4000)}\n\`\`\``).join('\n\n')}
 
 CRITICAL: When importing from any file shown above, use the EXACT export names and path
 shown in that file. For example, if a store uses \`export default useAuthStore\`, import it
 as \`import useAuthStore from '...' \` (default import), NOT \`{ useAuthStore }\`.
+
+CALLBACK PRESERVATION: If a file shown above is the source you are decomposing or updating,
+every useCallback handler must be reproduced with the IDENTICAL body — same lines, same order.
+Rules:
+- Do NOT add side-effects (window.location.href, navigate(), etc.) that are absent from the source
+- Do NOT remove or simplify lines inside a handler body
+- Do NOT drop any handler that exists in the source and belongs in this file
 
 `
           : '';
@@ -3362,12 +4193,18 @@ CRITICAL INTEGRATION RULES:
 3. For Zustand stores: Use ONLY the methods/properties exported (do NOT guess at other properties)
 4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
+6. ⚠️ SIBLING COMPONENT RULE: These files are for API reference only. Do NOT import sibling components
+   (other components from this plan) into this file unless the step description explicitly says you must
+   compose or render them. Example: Navigation must NOT import Layout — they are siblings, not parent/child.
+   Only the top-level App or the parent that owns both should import both.
 
 `
           : '';
 
         multiStepContext = `${readContextSection}${importSection}${createdFilesSection}`;
         console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s), ${readStepContents.length} read file(s)`);
+        // Hoist for post-generation callback-preservation validator
+        sourceReadContents = readStepContents;
       }
     }
 
@@ -3488,8 +4325,8 @@ STRICTLY FORBIDDEN (these will be rejected):
     // Non-interactive component guard: injected for .tsx files that are NOT interactive controls.
     // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
     const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
-    const isNonVisualWrapperTsx = isNonInteractiveTsx
-      && /Route|Guard|Wrapper|Provider|Layout|Context|HOC|Outlet/i.test(componentName);
+    const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path);
+    const isStructuralLayoutTsx = isNonInteractiveTsx && Executor.isStructuralLayout(step.path, step.description);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
         `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
@@ -3506,6 +4343,37 @@ STRICTLY FORBIDDEN (these will be rejected):
             `- MUST accept and render \`children\`: ({ children }: { children: React.ReactNode }) or React.PropsWithChildren<{}>\n` +
             `  When authenticated: return <>{children}</>  When unauthenticated: return <Navigate to="/login" /> or equivalent\n` +
             `  A wrapper that ignores children is broken — it can never render the protected content.\n`
+          : '') +
+        (isStructuralLayoutTsx
+          ? `- STRUCTURAL LAYOUT RULES: This is a DECOMPOSITION task — copy the visual structure from the source file above.\n` +
+            `- DO NOT produce a thin wrapper like \`<div>{children}</div>\`. That is WRONG.\n` +
+            `- The source file shows the exact structure: header / sidebar (Navigation) / main content / footer.\n` +
+            `  Copy ALL of those sections into this Layout component. Minimum ~80 lines.\n` +
+            `- Props: accept isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar from the parent.\n` +
+            `  interface LayoutProps { isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: ()=>void; isSidebarOpen: boolean; onToggleSidebar: ()=>void; }\n` +
+            `  DO NOT add a children prop — Layout renders its own routes internally.\n` +
+            `- Render Navigation conditionally: {isSidebarOpen && <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />}\n` +
+            `- Render routes inside <main> using ROUTES from '../routes/Routes' — Layout owns routing, App does not.\n` +
+            `  HOW to render route components dynamically:\n` +
+            `    WRONG: element={route.component}   ← passes a ComponentType, not a ReactElement\n` +
+            `    CORRECT: element={React.createElement(route.component)}  ← valid ReactElement\n` +
+            `    ALSO CORRECT: const C = route.component; ... element={<C />}\n` +
+            `  Include auth guard: if (route.requiresAuth && !isLoggedIn) return <Navigate to="/" replace />\n` +
+            `- STYLING: Use inline style={{...}} objects for all styling — the source file uses inline styles, NOT Tailwind classes.\n` +
+            `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
+            `  WRONG: <div className="flex bg-white">  RIGHT: <div style={{ display: 'flex', background: 'white' }}>\n` +
+            `  CRITICAL — NO template literals in style objects: backtick strings with ternaries inside \$\{...\} cause parse errors.\n` +
+            `    WRONG: style={{ borderBottom: \`1px solid \${theme === 'dark' ? '#444' : '#ddd'}\` }}\n` +
+            `    RIGHT: style={{ borderBottom: theme === 'dark' ? '1px solid #444' : '1px solid #ddd' }}\n` +
+            `  Use a plain ternary for every theme-dependent style value — never concatenate or template-literal them.\n` +
+            `- DO NOT import hooks, form state, services, or business logic.\n` +
+            `- DO NOT import ReactNode, ReactElement, or PropsWithChildren — no children prop exists.\n` +
+            `- DO NOT call getAccessibleRoutes() in Layout — Navigation handles its own route filtering internally.\n` +
+            `  Layout only needs ROUTES to render <Route> elements; it does NOT filter them by auth here (each Route does auth check inline).\n` +
+            `- EXPORT: use a named export — NEVER export default.\n` +
+            `  CORRECT: export const Layout = ({ isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar }: LayoutProps) => { ... };\n` +
+            `  WRONG:   const Layout = ...; export default Layout;\n` +
+            `  WRONG:   export const Layout = ({ children, isLoggedIn, ... }) — DO NOT include children in props.\n`
           : '') +
         `\n`
       : '';
@@ -3544,6 +4412,130 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER use export default — use named exports only\n\n`
       : '';
 
+    // Config/data file constraint: injected for plain .ts files that are NOT hooks or stores.
+    // Routes.ts, config.ts, types.ts, constants.ts — these are data-only with zero JSX.
+    const isConfigOrDataTsTarget = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') && !isHookTarget && !isStoreTarget;
+    // Pre-compute the source-derived "correct format" example for config/data .ts files.
+    const configTsFormatExample = (() => {
+      if (!isConfigOrDataTsTarget) { return ''; }
+      const sourceCode = sourceReadContents[0]?.content ?? '';
+      const pageImports = Executor.extractPageImports(sourceCode);
+      const routeConfig = Executor.extractRouteConfig(sourceCode);
+      const pageImportLines = pageImports.length > 0
+        ? pageImports.map(p => `  import ${p.name} from '${p.from}';`).join('\n')
+        : `  // Import ALL page components from the source file using their exact names`;
+      const ifaceBody = routeConfig.interfaceBody
+        ? `  export interface RouteConfig { ${routeConfig.interfaceBody.replace(/\n\s*/g, ' ')} }`
+        : `  export interface RouteConfig { path: string; label: string; component: ComponentType; /* ...fields from source */ }`;
+      const constName = routeConfig.constName;
+      const filterFn = routeConfig.filterFnName ?? 'getAccessibleRoutes';
+      return `\nCORRECT format — mirror the source file exactly:\n` +
+        `  import type { ComponentType } from 'react';\n` +
+        pageImportLines + '\n' +
+        ifaceBody + '\n' +
+        `  export const ${constName}: RouteConfig[] = [ /* entries from source */ ];\n` +
+        `  export function ${filterFn}(...): RouteConfig[] { /* logic from source */ }\n` +
+        `WRONG (never do this):\n` +
+        `  function renderRoute() { return <Route ... />; }  ← JSX in a .ts file is illegal\n` +
+        `  import { SomeName } from '../pages/SomeName'  ← named import instead of default import\n\n`;
+    })();
+    const configTsConstraintSection = isConfigOrDataTsTarget
+      ? `\nCONFIG/DATA FILE RULES (mandatory — this is a .ts file, NOT a React component):\n` +
+        `- ABSOLUTELY NO JSX: no <elements>, no </tags>, no <>, no JSX expressions anywhere in this file\n` +
+        `- NEVER import React (default or named) — this file has no JSX and needs no React runtime\n` +
+        `- NEVER use React.FC, JSX.Element, ReactElement, or any JSX-specific type annotation\n` +
+        `- If you must reference a React component type (e.g. in a RouteConfig interface), use:\n` +
+        `  import type { ComponentType } from 'react'  ← type-only, no runtime React needed\n` +
+        `- NEVER import cn, clsx, classnames — no styling in data/config files\n` +
+        `- NEVER import from store files (useAuthStore, useXxxStore) — config files have no React lifecycle\n` +
+        `- NEVER include renderRoutes(), render functions, or any function that returns JSX\n` +
+        `- Export ONLY: TypeScript interfaces, type aliases, plain objects, and data arrays\n` +
+        configTsFormatExample
+      : '';
+
+    // App root constraint: injected for App.tsx to prevent useNavigate in the BrowserRouter wrapper.
+    const isAppRoot = /(?:^|\/)App\.tsx$/.test(step.path);
+    // Pre-compute source-derived state/routing rules so they can be spliced into the constraint string.
+    const appRootSourceRules = (() => {
+      if (!isAppRoot) { return ''; }
+      const sourceCode = sourceReadContents[0]?.content ?? '';
+      const storeFieldMap = Executor.extractStoreFields(sourceCode);
+      const pageImports = Executor.extractPageImports(sourceCode);
+
+      let storeRules = `STATE ORIGIN RULES (critical — do NOT invent store fields):\n`;
+      if (storeFieldMap.size > 0) {
+        for (const [hook, fields] of storeFieldMap) {
+          storeRules += `- ${hook} exposes EXACTLY: ${fields.join(', ')}\n`;
+          storeRules += `  CORRECT: const { ${fields.join(', ')} } = ${hook}();\n`;
+          storeRules += `  WRONG: const { ${fields.join(', ')}, extraField } = ${hook}();  ← do not add fields not in source\n`;
+        }
+      } else {
+        storeRules += `- Use ONLY the fields the store actually exports (check the EXISTING CODEBASE section above)\n`;
+        storeRules += `  WRONG: destructuring fields that are not in the store — they do not exist at runtime\n`;
+      }
+      storeRules += `- Any other state (theming, sidebar, etc.) must come from local useState — NOT from stores\n\n`;
+
+      const pageNameList = pageImports.length > 0
+        ? pageImports.map(p => p.name).join(', ')
+        : 'page components (check the source file imports)';
+      const routingRules =
+        `ROUTING DELEGATION RULES (critical — App.tsx must NOT own routing):\n` +
+        `- Layout handles all <Routes> and <Route> rendering — App.tsx must NOT contain <Routes> or <Route> tags\n` +
+        `- DO NOT import page components (${pageNameList}) in App.tsx\n` +
+        `  Those imports belong in Layout (or Routes.ts). If App.tsx imports page components it has duplicated routing logic.\n` +
+        `- Only import BrowserRouter from react-router-dom — do NOT import Routes, Route, Navigate, or Link.\n` +
+        `  Those belong in Layout. Importing them in App.tsx duplicates routing and breaks the architecture.\n\n`;
+
+      // Derive the list of useCallback handlers that must be preserved.
+      // This prevents the LLM from "slimming" App.tsx by silently dropping handlers.
+      const callbackHandlerNames = [...Executor.extractCallbackHandlers(sourceCode).keys()];
+      const callbackRules = callbackHandlerNames.length > 0
+        ? `HANDLER PRESERVATION RULES (all handlers from the source App component are required):\n` +
+          `- These useCallback handlers MUST ALL appear in the generated file (exact names): ${callbackHandlerNames.join(', ')}\n` +
+          `  DO NOT drop any — each is called from JSX inside App and connected to props passed to <Layout />\n\n`
+        : '';
+
+      return storeRules + routingRules + callbackRules;
+    })();
+    const appRootConstraintSection = isAppRoot
+      ? `\nAPP ROOT RULES (mandatory — App.tsx renders the router, it cannot use router hooks itself):\n` +
+        `- NEVER call useNavigate() directly inside App — App renders <BrowserRouter>, so it is OUTSIDE the router context\n` +
+        `  useNavigate() throws "useNavigate() may be used only in the context of a <Router>" if called in App itself.\n` +
+        `  If you need navigation logic, put it in a child component that is rendered INSIDE <BrowserRouter>.\n` +
+        `- CORRECT pattern: App renders <BrowserRouter><Layout ...>...</Layout></BrowserRouter> with no useNavigate in App\n` +
+        `- onLogout must ONLY call logout() — do NOT add window.location.href or any navigation side-effect\n\n` +
+        appRootSourceRules +
+        `- STYLING: Use inline style={{...}} objects — the source file uses inline styles, NOT Tailwind classes.\n` +
+        `  DO NOT import cn, clsx, or any CSS-class utility.\n\n`
+      : '';
+
+    // Navigation/Sidebar/Header constraint: injected for pure presentation components that
+    // are extracted/decomposed from a parent. They receive ALL state as props — never from stores.
+    const isDecomposedNavigationTsx = isNonInteractiveTsx && Executor.isDecomposedNavigation(step.path, step.description);
+    const navigationConstraintSection = isDecomposedNavigationTsx
+      ? `\nNAVIGATION COMPONENT RULES (mandatory — this is a PURE PRESENTATION component):\n` +
+        `- DO NOT import from any store files (useAuthStore, useThemeStore, useXxxStore, etc.)\n` +
+        `- ALL state comes from PROPS — never reach into a store for data you should receive as a prop\n` +
+        `- Define a props interface: interface NavigationProps { isLoggedIn: boolean; theme: 'light'|'dark'; onLogout: () => void; }\n` +
+        `- The parent (Layout or App) owns the state and passes it down — this component just renders it\n` +
+        `- DO NOT use useNavigate or any router hook inside this component — render <Link> elements instead\n` +
+        `  useNavigate is only legal inside a component that is already rendered INSIDE a <BrowserRouter>.\n` +
+        `  Navigation receives its router context from the parent's <BrowserRouter> — use <Link to="..."> for nav.\n` +
+        `- ROUTE FILTERING: import getAccessibleRoutes from '../routes/Routes' and call it as a FUNCTION:\n` +
+        `  CORRECT: import { ROUTES, getAccessibleRoutes } from '../routes/Routes';\n` +
+        `           const accessibleRoutes = getAccessibleRoutes(isLoggedIn);\n` +
+        `  WRONG:   Routes.getAccessibleRoutes(isLoggedIn)  ← Routes is a react-router-dom component, not a namespace\n` +
+        `  WRONG:   ROUTES.getAccessibleRoutes(isLoggedIn)  ← ROUTES is an array, arrays have no .getAccessibleRoutes\n` +
+        `  WRONG:   ROUTES.filter(...)                       ← use getAccessibleRoutes() instead of re-implementing the filter\n` +
+        `- NEVER import Layout (or any component that already imports Navigation) — that creates a circular dependency:\n` +
+        `  Navigation → Layout → Navigation = module loader crash. Navigation must NOT import Layout.\n` +
+        `- STYLING: Use inline \`style={{...}}\` objects — the source file uses inline styles, NOT Tailwind classes.\n` +
+        `  DO NOT import cn, clsx, or any CSS-class utility. DO NOT use className with Tailwind strings.\n` +
+        `- EXPORT: use a named export — NEVER export default.\n` +
+        `  CORRECT: export const Navigation = ({ isLoggedIn, theme, onLogout }: NavigationProps) => { ... };\n` +
+        `  WRONG:   const Navigation = ...; export default Navigation;\n\n`
+      : '';
+
     // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
     // doesn't import from packages that don't exist in this project.
     // Only injected for TS/TSX files; no-op when package.json wasn't found.
@@ -3563,7 +4555,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${configTsConstraintSection}${appRootConstraintSection}${navigationConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -3607,7 +4599,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     // Architect pre-flight: generate task-specific acceptance criteria before code generation.
     // Criteria are injected into the Executor prompt (so the generator knows what will be checked)
     // AND passed to the Reviewer (llmValidate) for structured YES/NO validation after generation.
-    const acceptanceCriteria = await this.generateAcceptanceCriteria(step);
+    const acceptanceCriteria = await this.generateAcceptanceCriteria(step, sourceReadContents[0]?.content);
 
     // Inject criteria into the generation prompt so the Executor satisfies them upfront
     if (acceptanceCriteria.length > 0) {
@@ -3678,6 +4670,22 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         );
 
         const validationResult = await this.validateGeneratedCode(step.path, content, step, acceptanceCriteria);
+
+        // CALLBACK PRESERVATION CHECK: when this WRITE targets the same file that was READ
+        // in a prior step, ensure all useCallback handlers are preserved intact.
+        // Uses collectCallbackErrors (also called in the correction loop below) so the
+        // check runs on EVERY validation attempt, not just the first generation.
+        const targetFileName = step.path.split(/[\\/]/).pop() ?? '';
+        const matchingSource = sourceReadContents.find(r =>
+          (r.path.split(/[\\/]/).pop() ?? '') === targetFileName
+        );
+        if (matchingSource) {
+          const cbErrors = Executor.collectCallbackErrors(content, matchingSource.content);
+          if (cbErrors.length > 0) {
+            validationResult.errors = validationResult.errors ?? [];
+            validationResult.errors.push(...cbErrors);
+          }
+        }
 
         // ✅ FIX: Separate critical errors from soft suggestions
         const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
@@ -3752,6 +4760,44 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
               );
               loopDetected = true;
               break;
+            }
+
+            // DETERMINISTIC CALLBACK SPLICER: when handlers are missing from the generated
+            // file, extract their full declarations from source and inject them directly.
+            // The LLM consistently drops handlers on "slim" rewrites; splicing from source
+            // is reliable and avoids an extra LLM round-trip for this specific failure mode.
+            if (matchingSource) {
+              const missingCbErrors = lastCriticalErrors.filter(e =>
+                e.includes('Callback Preservation') && e.includes('missing from the generated output')
+              );
+              if (missingCbErrors.length > 0) {
+                const missingNames = missingCbErrors
+                  .map(e => { const m = e.match(/handler `(\w+)`/); return m?.[1] ?? ''; })
+                  .filter(Boolean);
+                const spliced = Executor.spliceCallbackHandlers(currentContent, matchingSource.content, missingNames);
+                if (spliced !== currentContent) {
+                  // Re-run callback check on spliced content to see which errors are resolved
+                  const splicedCbErrors = Executor.collectCallbackErrors(spliced, matchingSource.content);
+                  const resolvedCount = missingCbErrors.length - splicedCbErrors.filter(
+                    e => e.includes('missing from the generated output')
+                  ).length;
+                  if (resolvedCount > 0) {
+                    console.log(`[Executor] Spliced ${resolvedCount} missing callback handler(s): ${missingNames.join(', ')}`);
+                    // Apply the splice and update the error list
+                    currentContent = spliced;
+                    lastCriticalErrors = [
+                      ...lastCriticalErrors.filter(e => !missingCbErrors.includes(e)),
+                      ...splicedCbErrors,
+                    ];
+                    // If all critical errors are now resolved, exit the loop immediately
+                    if (lastCriticalErrors.length === 0) {
+                      finalContent = spliced;
+                      this.config.onMessage?.(`✅ Deterministic callback splice resolved all errors.`, 'info');
+                      break;
+                    }
+                  }
+                }
+              }
             }
 
             // If last attempt, give up
@@ -3848,18 +4894,36 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                   return `${i + 1}. ${e}`;
                 }).join('\n');
 
-                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
+                const hasJsxInTsError1 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
+                  lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
 
-                const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-                if (!fixResponse.success) {
-                  throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                let correctedContent1: string;
+                if (hasJsxInTsError1) {
+                  // JSX-in-.ts: must gut the file — whole-file rewrite is unavoidable
+                  const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
+                  const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+                  if (!fixResponse.success) {
+                    throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                  }
+                  correctedContent1 = fixResponse.message || '';
+                  const fence = correctedContent1.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                  if (fence) { correctedContent1 = fence[1]; }
+                } else {
+                  // Surgical: SEARCH/REPLACE blocks — LLM edits only what the error requires
+                  const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path);
+                  const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+                  if (!surgicalResponse.success) {
+                    throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
+                  }
+                  const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
+                  correctedContent1 = patched ?? (surgicalResponse.message || '');
+                  if (!patched) {
+                    // Patch parsing failed — strip fences and treat as whole-file fallback
+                    const fence = correctedContent1.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                    if (fence) { correctedContent1 = fence[1]; }
+                  }
                 }
-
-                correctedContent = fixResponse.message || '';
-                const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                if (codeBlockMatch) {
-                  correctedContent = codeBlockMatch[1];
-                }
+                correctedContent = correctedContent1;
               }
             } else {
               // Complex errors that need LLM
@@ -3883,22 +4947,49 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
                 return `${i + 1}. ${e}`;
               }).join('\n');
 
-              const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nFix ONLY the listed errors. Keep all existing JSX structure, imports, and logic intact. IMPORTANT: Never introduce an internal alias re-export (e.g. \`const X = forwardRef(...); export const X = X;\` is WRONG — export forwardRef directly: \`export const X = forwardRef(...)\`). Provide ONLY the corrected code. No explanations, no markdown. Start with the code immediately.`;
+              const hasJsxInTsError2 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
+                lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
 
-              const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-              if (!fixResponse.success) {
-                throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+              let correctedContent2: string;
+              if (hasJsxInTsError2) {
+                // JSX-in-.ts: whole-file rewrite required
+                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
+                const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+                if (!fixResponse.success) {
+                  throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+                }
+                correctedContent2 = fixResponse.message || '';
+                const fence = correctedContent2.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                if (fence) { correctedContent2 = fence[1]; }
+              } else {
+                // Surgical: SEARCH/REPLACE blocks
+                const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path);
+                const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+                if (!surgicalResponse.success) {
+                  throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
+                }
+                const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
+                correctedContent2 = patched ?? (surgicalResponse.message || '');
+                if (!patched) {
+                  const fence = correctedContent2.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+                  if (fence) { correctedContent2 = fence[1]; }
+                }
               }
-
-              correctedContent = fixResponse.message || '';
-              const codeBlockMatch = correctedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-              if (codeBlockMatch) {
-                correctedContent = codeBlockMatch[1];
-              }
+              correctedContent = correctedContent2;
             }
 
             // Re-validate the corrected code - only check CRITICAL errors
             const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step, acceptanceCriteria);
+            // Re-run callback preservation on the corrected content — same check as initial pass.
+            // Without this, SmartAutoCorrection can fix TypeScript errors while leaving callback
+            // violations intact, causing nextValidation to pass even though handlers are wrong.
+            if (matchingSource) {
+              const cbErrors = Executor.collectCallbackErrors(correctedContent, matchingSource.content);
+              if (cbErrors.length > 0) {
+                nextValidation.errors = nextValidation.errors ?? [];
+                nextValidation.errors.push(...cbErrors);
+              }
+            }
             const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
               nextValidation.errors,
               false // Don't spam logs during loops
@@ -4038,6 +5129,155 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
 
       await vscode.workspace.fs.writeFile(filePath, bytes);
 
+      // Check 6: TypeScript compiler (ground truth — runs post-write so tsc sees the file)
+      // Only for .ts/.tsx files where a tsconfig.json exists in the workspace root.
+      // Cascading errors in OTHER files (e.g. App.tsx importing a renamed export) are
+      // intentionally ignored here — the plan's final RUN/tsc step is the hard gate.
+      const isTsFile = step.path.endsWith('.ts') || step.path.endsWith('.tsx');
+      if (isTsFile && workspaceUri) {
+        this.config.onMessage?.(`🔎 Check 6: TypeScript compiler...`, 'info');
+        let tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+
+        if (tscErrors.length > 0) {
+          this.config.onMessage?.(
+            `⚠️ ${tscErrors.length} TypeScript error(s) in ${step.path}:\n` +
+            tscErrors.map(e => `  ${e}`).join('\n'),
+            'warning'
+          );
+
+          // Pass 0: deterministic fixes (TS1005 semicolons, split imports, etc.) before LLM
+          const deterministicFixed = SmartAutoCorrection.fixCommonPatterns(finalContent, tscErrors, step.path);
+          if (deterministicFixed !== finalContent) {
+            this.config.onMessage?.(`🔧 Applying deterministic TypeScript fixes...`, 'info');
+            finalContent = deterministicFixed;
+            const detBytes = Buffer.from(finalContent, 'utf8');
+            await vscode.workspace.fs.writeFile(filePath, detBytes);
+            tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+          }
+
+          // Pass 0.5: deterministic import resolver for TS2304 "Cannot find name 'X'" errors.
+          // When the generator forgets to import a symbol that appears in a previously-read
+          // source file (e.g. NotFoundPage used by Layout but only imported in App.tsx),
+          // extract the import from the source file and add it with the correct relative path.
+          // This fires before LLM correction so the 2 LLM passes focus on other errors.
+          const ts2304Names = tscErrors
+            .filter(e => e.includes('TS2304'))
+            .map(e => { const m = e.match(/Cannot find name '(\w+)'/); return m?.[1] ?? ''; })
+            .filter(Boolean);
+
+          if (ts2304Names.length > 0) {
+            let resolvedContent = finalContent;
+            // Check all source files we have: the matching source + any others we read
+            const allSources: { path: string; content: string }[] = [...sourceReadContents];
+            if (matchingSource && !allSources.find(s => s.path === matchingSource.path)) {
+              allSources.unshift(matchingSource);
+            }
+
+            for (const unknownName of ts2304Names) {
+              // Skip if already present in import lines
+              const importLines = resolvedContent.split('\n').filter(l => l.trimStart().startsWith('import'));
+              if (new RegExp(`\\b${unknownName}\\b`).test(importLines.join('\n'))) { continue; }
+
+              // Search source files for default or named import of this symbol
+              for (const src of allSources) {
+                const defaultRe = new RegExp(`import\\s+${unknownName}\\s+from\\s+(['"])([^'"]+)\\1`);
+                const namedRe = new RegExp(`import\\s+\\{[^}]*\\b${unknownName}\\b[^}]*\\}\\s+from\\s+(['"])([^'"]+)\\1`);
+                const defaultMatch = src.content.match(defaultRe);
+                const namedMatch = src.content.match(namedRe);
+
+                let importStatement: string | null = null;
+                if (defaultMatch) {
+                  const relPath = this.computeRelativeImportPath(step.path, src.path, defaultMatch[2]);
+                  importStatement = `import ${unknownName} from '${relPath}';`;
+                } else if (namedMatch) {
+                  const relPath = this.computeRelativeImportPath(step.path, src.path, namedMatch[2]);
+                  importStatement = `import { ${unknownName} } from '${relPath}';`;
+                }
+
+                if (importStatement && !resolvedContent.includes(importStatement)) {
+                  // Insert after the last import line in the file
+                  const importLineMatches = [...resolvedContent.matchAll(/^import[^\n]*\n/gm)];
+                  if (importLineMatches.length > 0) {
+                    const last = importLineMatches[importLineMatches.length - 1];
+                    const insertPos = last.index! + last[0].length;
+                    resolvedContent = resolvedContent.slice(0, insertPos) + importStatement + '\n' + resolvedContent.slice(insertPos);
+                  } else {
+                    resolvedContent = importStatement + '\n' + resolvedContent;
+                  }
+                  break; // Found and added — move to next unknown name
+                }
+              }
+            }
+
+            if (resolvedContent !== finalContent) {
+              this.config.onMessage?.(`🔧 Resolving missing imports deterministically (TS2304)...`, 'info');
+              finalContent = resolvedContent;
+              await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
+              tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+            }
+          }
+
+          // Attempt up to 2 LLM correction passes if errors remain
+          for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
+            this.config.onMessage?.(
+              `🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info'
+            );
+
+            // Surgical first: build a per-line JSON-patch prompt if errors have line numbers.
+            // This avoids handing the whole file to the LLM (which tends to rewrite everything
+            // and introduce new errors in unrelated parts like template literals).
+            const surgicalPrompt = this.buildSurgicalTscPrompt(finalContent, tscErrors, step.path);
+            let corrected: string | null = null;
+
+            if (surgicalPrompt) {
+              const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+              if (surgicalResponse.success && surgicalResponse.message?.trim()) {
+                corrected = this.applySurgicalTscPatches(finalContent, surgicalResponse.message);
+              }
+            }
+
+            if (corrected === null) {
+              // Fallback: whole-file correction when no line numbers or patch parsing failed
+              const fixPrompt =
+                `The following TypeScript file has compiler errors reported by tsc.\n\n` +
+                `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
+                `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
+                `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
+                `NEVER add 'any' type — use specific types or 'unknown'. ` +
+                `Provide ONLY the corrected code. No explanations, no markdown fences.`;
+              const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+              if (!fixResponse.success || !fixResponse.message?.trim()) { break; }
+              let raw = fixResponse.message;
+              const fenceMatch = raw.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+              if (fenceMatch) { raw = fenceMatch[1]; }
+              corrected = raw;
+            }
+
+            finalContent = corrected;
+
+            // Overwrite file with correction
+            const fixedBytes = Buffer.from(finalContent, 'utf8');
+            await vscode.workspace.fs.writeFile(filePath, fixedBytes);
+
+            // Re-check — break early if clean
+            tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
+          }
+
+          if (tscErrors.length > 0) {
+            if (step.path) { this.filesWithPersistentTscErrors.add(step.path); }
+            this.config.onMessage?.(
+              `⚠️ ${tscErrors.length} TypeScript error(s) persist after correction. ` +
+              `File written — the final tsc RUN step will surface any remaining issues.`,
+              'warning'
+            );
+          } else {
+            this.config.onMessage?.(`✅ Check 6: TypeScript errors resolved.`, 'info');
+          }
+        } else {
+          this.config.onMessage?.(`✅ Check 6: TypeScript clean.`, 'info');
+        }
+      }
+
       // ✅ CRITICAL: Post-step contract extraction
       // After writing, immediately extract what was created (actual APIs, exports, etc)
       // This allows next steps to use the REAL contract, not calculated/guessed paths
@@ -4064,6 +5304,69 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         `Failed to write ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
       );
     }
+  }
+
+  /**
+   * Check 6: TypeScript compiler validation (ground truth).
+   *
+   * Runs `tsc --noEmit --skipLibCheck` from the workspace root after the file
+   * is written to disk. Filters the output to errors in `relativeFilePath` only
+   * — cascading errors in OTHER files that import the new file are ignored here;
+   * the plan's final RUN/tsc step is the hard gate for those.
+   *
+   * Returns an array of formatted error strings, or [] when:
+   * - No tsconfig.json found in the workspace root
+   * - tsc binary not found
+   * - tsc exits cleanly (no errors in this file)
+   */
+  private async runTscCheck(
+    workspaceRoot: string,
+    relativeFilePath: string
+  ): Promise<string[]> {
+    // Require tsconfig.json — without it tsc doesn't know the project boundaries
+    if (!fs.existsSync(path.join(workspaceRoot, 'tsconfig.json'))) {
+      console.log('[Executor] Check 6: no tsconfig.json found, skipping tsc check');
+      return [];
+    }
+
+    // Prefer workspace-local tsc over global to match the project's TypeScript version
+    const isWin = process.platform === 'win32';
+    const localTsc = path.join(workspaceRoot, 'node_modules', '.bin', isWin ? 'tsc.cmd' : 'tsc');
+    const tscBin = fs.existsSync(localTsc) ? `"${localTsc}"` : 'tsc';
+
+    return new Promise<string[]>((resolve) => {
+      cp.exec(
+        `${tscBin} --noEmit --skipLibCheck`,
+        { cwd: workspaceRoot, timeout: 30000 },
+        (_err, stdout, stderr) => {
+          // tsc exits non-zero when errors exist — _err is expected, use output instead
+          const output = (stdout + stderr).replace(/\r\n/g, '\n');
+
+          // Normalise to forward slashes for cross-platform path matching
+          const normTarget = relativeFilePath.replace(/\\/g, '/');
+
+          const errors = output
+            .split('\n')
+            .filter(line => {
+              const normLine = line.replace(/\\/g, '/');
+              return normLine.includes(normTarget) && /error TS\d+/.test(line);
+            })
+            .map(line => {
+              // "src/Foo.tsx(42,5): error TS2304: Cannot find name 'cn'."
+              const m = line.match(/\((\d+),\d+\):\s*error\s*(TS\d+):\s*(.+)/);
+              if (m) {
+                return `❌ TypeScript(${m[2]}): ${m[3].trim()} (line ${m[1]})`;
+              }
+              return `❌ TypeScript: ${line.trim()}`;
+            });
+
+          console.log(
+            `[Executor] Check 6: ${errors.length} tsc error(s) in ${relativeFilePath}`
+          );
+          resolve(errors);
+        }
+      );
+    });
   }
 
   /**

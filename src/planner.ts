@@ -172,6 +172,13 @@ export class Planner {
       // even when the user only asked for one file. This is almost never correct behavior.
       sortedSteps = this.filterUnrequestedEntryWrites(sortedSteps, userRequest);
 
+      // POST-PROCESS: Inject missing deliverables for DECOMPOSE tasks.
+      // The LLM reliably drops one or more named artifacts from decompose/extract requests.
+      // This repair is deterministic — it doesn't re-invoke the LLM.
+      if (/\b(decompose|extract|split|break out|pull out)\b/i.test(userRequest)) {
+        sortedSteps = this.injectMissingDeliverables(sortedSteps, userRequest);
+      }
+
       // POST-PROCESS: Drop noise READ steps.
       // A READ step is noise when the plan already has WRITE steps but this READ
       // has no downstream WRITE to the same path — these are LLM epilogues:
@@ -455,10 +462,12 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
-- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils)
-  WRONG: src/Routes.ts (contains JSX) → RIGHT: src/Routes.tsx
+- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils, config)
   WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
-  Routing files, app entry, layouts, pages, and wrappers almost always need .tsx
+  WRONG: src/components/Button.ts (returns JSX) → RIGHT: src/components/Button.tsx
+  EXCEPTION — route config files export arrays of route data (no JSX):
+    RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
+    WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
@@ -475,7 +484,41 @@ A step description that mentions a file is NOT the same as a WRITE step for that
   → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
   → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
 - "create a Button component with variants" → MUST have: WRITE src/components/Button.tsx
+- "decompose/extract/split App.tsx into Layout, Navigation, Routes"
+  → MUST have: READ App.tsx, WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
+  → Count the deliverables in the request — every named artifact needs its own WRITE step
+  → The final WRITE App.tsx step is MANDATORY — without it the original bloated file stays unchanged
 - Rule: if the deliverable is mentioned in a description but has no WRITE step — the plan is incomplete
+
+DECOMPOSE / EXTRACT PATTERN (applies when request says "decompose", "extract", "split", "break out", "pull out"):
+The source file MUST be updated in the plan. Steps:
+  1. READ the source file first (get full content)
+  2. WRITE EVERY extracted file named in the request — if the request says "Layout, Navigation, Routes" that is THREE separate WRITE steps
+  3. WRITE the source file again as a slim version that imports the new files
+WRONG: Plan ends after writing the extracted files — source file still has all the old code
+WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
+RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
+
+DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be specific):
+- Routes.ts: MUST name the exports: "ROUTES array", "RouteConfig interface", "getAccessibleRoutes()"
+  RIGHT: "Extract route config into Routes.ts — ROUTES array, RouteConfig interface, getAccessibleRoutes()"
+  WRONG: "Create the dedicated data file"  ← too vague
+- Navigation.tsx: MUST say it imports from Routes.ts and renders nav links
+  RIGHT: "Extract Navigation — reads accessible routes from Routes.ts, renders nav links + logout button"
+  WRONG: "Extract the navigation rendering logic"  ← missing data source
+- Layout.tsx: MUST say it OWNS <Routes>/<Route> rendering AND uses Navigation in sidebar
+  RIGHT: "Extract Layout — owns all <Routes>/<Route> rendering from ROUTES array, Navigation in sidebar"
+  WRONG: "Extract the main layout structure incorporating Navigation"  ← missing routing-owner responsibility
+- App.tsx slim: MUST say routing is delegated (App has no <Routes>, Layout does)
+  RIGHT: "Slim App.tsx — only <BrowserRouter><Layout .../></BrowserRouter>, routing delegated to Layout"
+  WRONG: "Update App.tsx to use new components"  ← doesn't state routing delegation
+
+FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
+- Route config files export arrays or objects of route definitions — they are DATA files, not components
+  RIGHT: src/routes/Routes.ts  (exports RouteConfig[], no JSX)
+  WRONG: src/routes/Routes.tsx  (.tsx implies JSX; a data config file has no JSX)
+- Use .tsx ONLY when the file renders JSX (returns <JSX />)
+- Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
 
 STEP DESCRIPTION VOCABULARY (MANDATORY):
 - In step descriptions, NEVER write "useForm", "react-hook-form", "register", "handleSubmit from useForm", or "FormProvider"
@@ -499,7 +542,7 @@ A protected route checks whether the user IS ALREADY AUTHENTICATED — it does N
   Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
-📌 ALL components must:
+📌 ALL NEW components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
@@ -507,6 +550,7 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
   - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
+📌 EXCEPTION — DECOMPOSITION TASKS: When the task is "decompose/extract/split" an EXISTING file, do NOT impose cn() on extracted components. Match the styling approach of the source file. If the source uses inline style={{}}, the extracted components must also use inline style={{}}. Never write "uses cn()" in a step description for a component being extracted from an inline-style source.
 
 ${contextSection}
 
@@ -556,10 +600,12 @@ RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
 ${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
-- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils)
-  WRONG: src/Routes.ts (contains JSX) → RIGHT: src/Routes.tsx
+- FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils, config)
   WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
-  Routing files, app entry, layouts, pages, and wrappers almost always need .tsx
+  WRONG: src/components/Button.ts (returns JSX) → RIGHT: src/components/Button.tsx
+  EXCEPTION — route config files export arrays of route data (no JSX):
+    RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
+    WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
@@ -582,6 +628,41 @@ A step description that mentions a file is NOT the same as a WRITE step for that
 
 - "refactor LoginForm to use Zustand"
   → MUST have: WRITE (or READ+WRITE) for the LoginForm file
+
+- "decompose/extract/split App.tsx into Layout, Navigation, Routes"
+  → MUST have: READ App.tsx (get source), WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
+  → Count the deliverables in the request — every named artifact needs its own WRITE step
+  → The final WRITE App.tsx step is MANDATORY — without it the original bloated file stays unchanged
+
+DECOMPOSE / EXTRACT PATTERN (applies when request says "decompose", "extract", "split", "break out", "pull out"):
+The source file MUST be updated in the plan. Steps:
+  1. READ the source file first (get full content)
+  2. WRITE EVERY extracted file named in the request — if the request says "Layout, Navigation, Routes" that is THREE separate WRITE steps
+  3. WRITE the source file again as a slim version that imports the new files
+WRONG: Plan ends after writing the extracted files — source file still has all the old code
+WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
+RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
+
+DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be specific):
+- Routes.ts: MUST name the exports: "ROUTES array", "RouteConfig interface", "getAccessibleRoutes()"
+  RIGHT: "Extract route config into Routes.ts — ROUTES array, RouteConfig interface, getAccessibleRoutes()"
+  WRONG: "Create the dedicated data file"  ← too vague
+- Navigation.tsx: MUST say it imports from Routes.ts and renders nav links
+  RIGHT: "Extract Navigation — reads accessible routes from Routes.ts, renders nav links + logout button"
+  WRONG: "Extract the navigation rendering logic"  ← missing data source
+- Layout.tsx: MUST say it OWNS <Routes>/<Route> rendering AND uses Navigation in sidebar
+  RIGHT: "Extract Layout — owns all <Routes>/<Route> rendering from ROUTES array, Navigation in sidebar"
+  WRONG: "Extract the main layout structure incorporating Navigation"  ← missing routing-owner responsibility
+- App.tsx slim: MUST say routing is delegated (App has no <Routes>, Layout does)
+  RIGHT: "Slim App.tsx — only <BrowserRouter><Layout .../></BrowserRouter>, routing delegated to Layout"
+  WRONG: "Update App.tsx to use new components"  ← doesn't state routing delegation
+
+FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
+- Route config files export arrays or objects of route definitions — they are DATA files, not components
+  RIGHT: src/routes/Routes.ts  (exports RouteConfig[], no JSX)
+  WRONG: src/routes/Routes.tsx  (.tsx implies JSX; a data config file has no JSX)
+- Use .tsx ONLY when the file renders JSX (returns <JSX />)
+- Use .ts for: hooks, services, utilities, config files, constants, type definitions, route arrays
 
 Rule: if the deliverable is described as a dependency ("which X will use", "that Y imports") but not as its own WRITE step — the plan is incomplete. Add the WRITE step.
 
@@ -614,7 +695,7 @@ A protected route checks whether the user IS ALREADY AUTHENTICATED — it does N
   Write this in the step description: "isAuthenticated() returns false by default to exercise the redirect path"
 
 COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
-📌 ALL components must:
+📌 ALL NEW components must:
   - Extend standard HTML attributes (type, disabled, aria-label, etc.)
   - Accept className?: string prop for style extensibility
   - Use cn() utility from src/utils/cn.ts to merge custom classes
@@ -622,12 +703,23 @@ COMPONENT PROP CONTRACT (MANDATORY FOR src/components/):
   - forwardRef components MUST set ComponentName.displayName = 'ComponentName' after definition
   - Example: interface ButtonProps { className?: string; children: React.ReactNode; }
   - Merge styles with: <button className={cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)}>
+📌 EXCEPTION — DECOMPOSITION TASKS: When the task is "decompose/extract/split" an EXISTING file, do NOT impose cn() on extracted components. Match the styling approach of the source file. If the source uses inline style={{}}, the extracted components must also use inline style={{}}. Never write "uses cn()" in a step description for a component being extracted from an inline-style source.
 
 ${contextSection}
 USER REQUEST: ${userRequest}
 
-🔴 CRITICAL: Output ONLY a valid JSON array of steps. 
-DO NOT include bold text, bullet points, markdown, code blocks, or conversational filler. 
+🔴 SELF-VERIFY BEFORE OUTPUTTING (mandatory — do this mentally before writing the JSON):
+1. List every artifact the user named in the request (e.g. "Layout, Navigation, Routes.ts" = 3 artifacts)
+2. Count your WRITE steps for NEW files — they must equal or exceed the artifact count
+3. If any named artifact has no WRITE step: ADD IT before outputting
+4. Check dependency order: if file A imports from file B, WRITE B must come before WRITE A
+   Example: Navigation.tsx imports ROUTES from Routes.ts → WRITE Routes.ts first, WRITE Navigation.tsx second
+   Example: Layout.tsx imports Navigation.tsx → WRITE Navigation.tsx BEFORE WRITE Layout.tsx
+   DECOMPOSITION ORDER (mandatory): Routes.ts → Navigation.tsx → Layout.tsx → App.tsx (each imports the previous)
+5. Check that the source file is updated: if decomposing a file, the final WRITE must slim it down
+
+🔴 CRITICAL: Output ONLY a valid JSON array of steps.
+DO NOT include bold text, bullet points, markdown, code blocks, or conversational filler.
 Your entire response must start with '[' and end with ']'.
 NOTHING ELSE. Not even triple backticks.
 
@@ -796,6 +888,52 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
         dependencies: undefined, // Deprecated - use dependsOn instead
         dependsOn: cleanDependsOn,
       };
+
+      // Drop manual/human verification steps — they cannot be executed autonomously.
+      // The planner prompt instructs the LLM to put these in the summary, not as steps,
+      // but the LLM occasionally emits them anyway. Filter here as a hard guard.
+      const descLower = step.description.toLowerCase();
+      const isManualStep =
+        descLower.includes('test in browser') ||
+        descLower.includes('verify visually') ||
+        descLower.includes('check browser') ||
+        (action === 'read' && (step.path ?? '').toLowerCase().includes('manual'));
+      if (isManualStep) {
+        console.warn(`[PARSER] Dropping manual/human verification step: "${step.description}"`);
+        continue;
+      }
+
+      // Drop redundant RUN/tsc steps — TypeScript compilation runs inline (Check 6)
+      // after every WRITE step. A trailing tsc step adds noise and always gets skipped.
+      const isTscStep =
+        action === 'run' &&
+        (descLower.includes('typescript') || descLower.includes('type check') ||
+         descLower.includes('type-check') || descLower.includes(' tsc') ||
+         descLower.startsWith('tsc') || descLower.includes('compilation')) &&
+        !step.command; // Only drop if no actual shell command — real test runners still pass through
+      if (isTscStep) {
+        console.warn(`[PARSER] Dropping redundant tsc step (Check 6 handles this inline): "${step.description}"`);
+        continue;
+      }
+
+      // Drop redundant test-runner RUN steps — no tests exist for decomposition tasks,
+      // so vitest/jest steps always pass vacuously and add noise to the plan score.
+      // Also drop steps where the command IS a test runner — the planner sometimes emits
+      // `command: "npm test"` which bypasses the `!step.command` guard.
+      const testRunnerCommand = step.command
+        ? /\b(vitest|jest|mocha|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test)\b/i.test(step.command)
+        : false;
+      const isRedundantTestStep =
+        action === 'run' &&
+        (descLower.includes('test suite') || descLower.includes('run tests') ||
+         descLower.includes('run test') || descLower.startsWith('vitest') ||
+         descLower.startsWith('jest') || descLower.includes('unit test') ||
+         descLower.includes('run vitest') || descLower.includes('run jest')) &&
+        !step.command;
+      if (isRedundantTestStep) {
+        console.warn(`[PARSER] Dropping redundant test-runner step (no tests in scope): "${step.description}"`);
+        continue;
+      }
 
       // Only add if step has a description
       if (step.description) {
@@ -1044,6 +1182,88 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
    * 3. Prepend WRITE steps for missing utilities
    * 4. Ensure components can use what they need
    */
+  /**
+   * Repair a DECOMPOSE plan by injecting WRITE steps for any deliverables named in
+   * the user request that the LLM dropped.
+   *
+   * The LLM reliably drops one or more artifacts from decompose/extract requests despite
+   * explicit prompt rules. This deterministic repair catches the gap without re-invoking the LLM.
+   *
+   * Strategy:
+   *   1. Extract component names ([A-Z][a-zA-Z]+ component) and .ts/.tsx filenames from the request
+   *   2. For each named artifact, check if a WRITE step exists for that name
+   *   3. If missing, synthesize a WRITE step and insert it after the last READ step
+   */
+  private injectMissingDeliverables(steps: ExecutionStep[], userRequest: string): ExecutionStep[] {
+    // Extract explicit .ts / .tsx filenames from request (e.g. "Routes.ts", "AppLayout.tsx")
+    const explicitFiles = [...userRequest.matchAll(/\b([A-Za-z][A-Za-z0-9]*\.[tj]sx?)\b/g)].map(m => m[1]);
+
+    // Extract component names from "X component" patterns (e.g. "Layout component")
+    const componentNames = [...userRequest.matchAll(/\b([A-Z][a-zA-Z]+)\s+component\b/gi)].map(m => m[1]);
+
+    const toInject: Array<{ name: string; path: string; description: string }> = [];
+
+    // Check each explicit file
+    for (const file of explicitFiles) {
+      const isTs = file.endsWith('.ts') && !file.endsWith('.tsx');
+      const alreadyPlanned = steps.some(s =>
+        s.action === 'write' && s.path && s.path.endsWith('/' + file)
+      );
+      if (!alreadyPlanned) {
+        const dir = isTs ? 'src/routes' : 'src/components';
+        toInject.push({
+          name: file,
+          path: `${dir}/${file}`,
+          description: `Extract ${file.replace(/\.[tj]sx?$/, '')} configuration from the source file into a dedicated ${isTs ? 'data config' : 'component'} file`,
+        });
+      }
+    }
+
+    // Check each component name
+    for (const name of componentNames) {
+      const alreadyPlanned = steps.some(s =>
+        s.action === 'write' && s.path && new RegExp(`/${name}\\.tsx?$`, 'i').test(s.path)
+      );
+      // Also skip if it appeared as an explicit file above
+      const alreadyQueued = toInject.some(t => t.path.includes(`/${name}.`));
+      if (!alreadyPlanned && !alreadyQueued) {
+        toInject.push({
+          name,
+          path: `src/components/${name}.tsx`,
+          description: `Extract ${name} component from the source file`,
+        });
+      }
+    }
+
+    if (toInject.length === 0) { return steps; }
+
+    console.log(`[Planner] Injecting ${toInject.length} missing deliverable(s): ${toInject.map(t => t.name).join(', ')}`);
+
+    // Insert after the last READ step (or at position 1 if no READ)
+    const lastReadIdx = steps.reduce((acc, s, i) => s.action === 'read' ? i : acc, -1);
+    const insertAt = lastReadIdx + 1;
+
+    const injected: ExecutionStep[] = toInject.map((item, offset) => {
+      const newStepId = 1000 + offset; // High IDs avoid collision with existing steps
+      return {
+        stepNumber: newStepId,
+        stepId: newStepId,
+        id: `step_${newStepId}`,
+        action: 'write' as ActionTypeString,
+        description: item.description,
+        path: item.path,
+        targetFile: item.path,
+        expectedOutcome: `${item.name} created`,
+        dependencies: undefined,
+        dependsOn: [],
+      };
+    });
+
+    const result = [...steps];
+    result.splice(insertAt, 0, ...injected);
+    return result;
+  }
+
   /**
    * Drop noise READ steps from a plan that contains WRITE steps.
    *

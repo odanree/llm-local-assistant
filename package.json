@@ -2,7 +2,7 @@
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
   "description": "Local LLM code generation, refactoring, and explanation",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "publisher": "odanree",
   "license": "MIT",
   "icon": "assets/icon.png",

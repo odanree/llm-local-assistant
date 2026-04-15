@@ -1,28 +1,29 @@
 # LLM Local Assistant - VS Code Extension
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.14.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.15.0-blue.svg)](CHANGELOG.md)
 [![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
-[![Tests](https://img.shields.io/badge/tests-2891%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
+[![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
 [![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
 [![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
-**Local AI Code Orchestrator** - Multi-step planning, architecture validation, RAG-powered codebase context, and Zustand/React Hook auditing. 2,891 tests. All running on your local LLM with zero cloud dependencies.
+**Local AI Code Orchestrator** - Multi-step planning, architecture validation, RAG-powered codebase context, and Zustand/React Hook auditing. 2,872 tests. All running on your local LLM with zero cloud dependencies.
 
-**🚀 v2.14.0: Lean Edition — 79KB vsix, 0 runtime dependencies**
+**🚀 v2.15.0: Pipeline Correctness — planner filters, architecture validator, and auto-correction hardened**
 
-> **Latest Release**: v2.14.0 - **Lean Edition**: Replaced Babel AST (995KB) with targeted regex, dropped 8,800+ lines of dead code, .vsix shrank from 1.06MB → 79KB (-93%). 2,891 tests passing.
+> **Latest Release**: v2.15.0 - **Pipeline Correctness**: Fixed four deterministic bugs in the planner step filters, architecture validator recommendation logic, and `isAutoFixable` classification. `isNonVisualWrapper` extracted to shared static method. 2,872 tests passing.
 > **Advanced Capabilities**: Real-time Streaming, Interactive Prompts, RAG Embeddings, Suspend/Resume State Machine, Three-Layer Self-Healing
-> **Status**: 2,891 tests passing. Production-ready with enterprise reliability.
+> **Status**: 2,872 tests passing. Production-ready with enterprise reliability.
 
 ## 📚 Release History
 
 For a complete history of releases and detailed changelogs, see [CHANGELOG.md](CHANGELOG.md).
 
 **Recent Releases:**
-- **v2.14.0** (Current) - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
+- **v2.15.0** (Current) - Pipeline Correctness: planner filter over-firing fixed, ArchitectureValidator skip/fix recommendation restored, isAutoFixable unclosed-brace classification fixed, isNonVisualWrapper shared static method
+- **v2.15.0** - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
 - **v2.13.1** - Reactive Orchestrator: marketplace bloat fix (18.06MB → 1.59MB)
 - **v2.13.0** - Reactive Orchestrator: 81.61% coverage, 3,637 tests, self-healing architecture with safety rails
 - **v2.12.0** - Infrastructure: Real-time streaming, interactive prompts, suspend/resume state machine
@@ -30,7 +31,7 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 - **v2.10.0** - Elite Tier: 74.68% coverage, 2453 tests, agent skills integration
 - **v2.9.0** - Performance: 45% test optimization, concurrent execution
 - **v2.8.x** - Foundation: 72% coverage, distribution optimization, root directory cleanup
-- **v2.7.0-v2.5.0** - Core features: Validation system, pattern detection, voice narration, Zustand support
+- **v2.7.0-v2.5.0** - Core features: Validation system, pattern detection, Zustand support
 
 ---
 
@@ -38,13 +39,13 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 
 ### 🏛️ Architecture & Validation System
 
-**6-Layer Multi-File Validation**
-- **Layer 1: Syntax Validation** - Valid TypeScript with proper structure
-- **Layer 2: Type Validation** - Correct type inference and safety
-- **Layer 3: Import Validation** - All imports resolve correctly
-- **Layer 4: Cross-File Validation** - Component-store alignment guaranteed
-- **Layer 5: Hook Usage Validation** - Proper React hook patterns
-- **Layer 6: Store Contract Validation** - Zustand property matching ✅
+**6-Check Sequential Validation**
+- **Check 1: Syntax** - Brace balance, no markdown-in-code, no `any` types
+- **Check 2: Patterns** - Bare classNames, JSX in `.ts` files, missing padding on interactive elements
+- **Check 3: Hook Usage** - Called not just imported, destructured properties used, no mixed state management
+- **Check 4: Cross-File Contract** - Every named import symbol exists as a named export in the source file
+- **Check 5: LLM Reviewer** - Structured YES/NO against pre-generated acceptance criteria
+- **Check 6: TypeScript Compiler** - `tsc --noEmit` post-write; ground-truth type errors in the file, with LLM correction loop
 
 **Code Analysis**
 - ✅ **`/refactor <file>`** - LLM-powered refactoring suggestions
@@ -63,7 +64,6 @@ For a complete history of releases and detailed changelogs, see [CHANGELOG.md](C
 **File Operations with Confidence**
 - ✅ **`/read <path>`** - Read and display file contents
 - ✅ **`/write <path> <prompt>`** - Generate file content with validation
-- ✅ **`/suggestwrite <path> <prompt>`** - Preview before writing
 - ✅ **`/explain <path>`** - Get detailed code explanations
 - ✅ **Markdown rendering** - Beautifully formatted output with h1-h6 headers, bold, italic, code blocks, lists, blockquotes
 
@@ -157,8 +157,6 @@ Step 3: Add validation logic
 
 Ready to execute with: /execute
 ```
-
-![Plan Command Example](./assets/plan-command-example.png)
 
 **What it does:**
 - Creates multi-step plans for code generation
@@ -261,21 +259,12 @@ Generate and write file content.
 /write src/utils/validators.ts generate validation functions for email and password
 ```
 
-#### `/suggestwrite <path> <prompt>`
-Preview changes before writing.
-
-```
-/suggestwrite src/App.tsx add dark mode support using context and localStorage
-```
-
 #### `/explain <path>`
-Get detailed code explanation with optional voice narration.
+Get a detailed explanation of any file in your workspace.
 
 ```
 /explain src/services/userService.ts
 ```
-
-![Explain Command Example](./assets/explain-command-example.png)
 
 ### Git Integration
 
@@ -466,18 +455,73 @@ See [docs/patterns/FORM_COMPONENT_PATTERNS.md](docs/patterns/FORM_COMPONENT_PATT
 ## 🏗️ Architecture & Design
 
 ```
-Your Code → [PLANNER] → Multi-step plan with validation
-               ↓
-          [EXECUTOR] → Step-by-step file generation
-               ↓
-          [VALIDATOR] → 6-layer semantic validation
-               ↓
-         Your Files  ← Retry on failure
+/plan <task>
+     │
+     ▼
+ [PLANNER]  ──── LLM call: natural language → PlanStep[]
+     │            Post-processed: inject missing deliverables,
+     │            topological sort by dependency
+     │
+     ▼
+ [ARCHITECT]  ── Per-file: generate 3-5 YES/NO acceptance criteria
+     │            Injected into generator AND used by reviewer
+     │            File-type guards prevent nonsensical criteria
+     │            (e.g. no "uses cn()" criterion for a .ts config file)
+     │
+     ▼
+ [GENERATOR]  ── Conditional constraint injection by file type:
+     │            hooks → no JSX / return contract rules
+     │            stores → flat state / no React imports
+     │            .ts data files → absolutely no JSX
+     │            structural layouts → copy all visual sections
+     │            interactive components → forwardRef required
+     │
+     ▼
+ [VALIDATOR]  ── 6 sequential checks (1-5 pre-write, 6 post-write):
+     │            1. Syntax — brace balance, markdown-in-code, any types
+     │            2. Patterns — bare classNames, JSX in .ts, missing padding
+     │            3. Hook usage — called? destructured? mixed state?
+     │            4. Cross-file contract — imported symbols exist in source
+     │            5. LLM reviewer — structured YES/NO vs acceptance criteria
+     │         ── file written to disk ──
+     │            6. tsc --noEmit — ground-truth compiler errors for this file
+     │
+     ▼
+ [CORRECTOR]  ── Two layers before giving up:
+     │            A. Deterministic (SmartAutoCorrection):
+     │               merge split React imports, remove cn from .ts files,
+     │               fix circular imports, template-literal→ternary in style objects
+     │            B. LLM correction: targeted error list + file-specific
+     │               instructions (e.g. "REMOVE ALL JSX" for .ts files,
+     │               not the default "keep existing JSX structure")
+     │            Loop detector: aborts if same error repeats twice
+     │
+     ▼
+  Your Files
 ```
+
+### Design Principle: Push Decisions Left
+
+Every constraint that can be expressed as a regex belongs in the **validator**, not the generator. Every constraint that can be deterministically fixed belongs in **SmartAutoCorrection**, not the LLM corrector. The LLM corrector is a last resort — it consumes context, produces non-deterministic output, and can introduce new errors while fixing old ones.
+
+The failure modes this architecture is designed to prevent:
+
+| Failure | Where it's caught | How |
+|---|---|---|
+| LLM imports hallucinated packages | Generator | `availablePackagesSection` injects exact `package.json` deps |
+| JSX generated in a `.ts` config file | Generator + Validator | `configTsConstraintSection` + extension check |
+| Sibling component imports sibling | Generator | `createdFilesSection` sibling rule + example |
+| Wrong step order (Layout before Routes) | Planner post-processor | Topological sort on description patterns |
+| Ghost symbol imports (`@/types/config`) | Validator Check 4 | Cross-file contract reads actual exports from disk |
+| Corrector loops on unfixable error | Corrector | Loop detector + `unfixablePatterns` early exit |
+| Architecture violation silently allowed | ArchitectureValidator | High-severity violations always produce `'skip'` regardless of strict mode |
+| Planner drops legitimate run/verify steps | Planner | Narrowed `isManualStep` and `isRedundantTestStep` guards to exact patterns |
+
+**A longer prompt is always cheaper than a failed correction attempt.** One hallucinated import triggers up to 9 correction calls (3 inner × 3 outer retries), each consuming context and producing a shorter, degraded file. Preventing the hallucination at generation time with an extra instruction line costs nothing.
 
 ## ✅ Quality & Testing
 
-- **2,891 tests** — 78 test files, 100% pass rate ✅
+- **2,872 tests** — 78 test files, 100% pass rate ✅
 - **TypeScript strict mode** — 0 compilation errors
 - **CI/CD** — Automatic quality checks on every PR
 
@@ -519,37 +563,22 @@ const { formData, errors, setFormData, setErrors, submitForm } = useLoginStore()
 3. **LLM context window:** By the time component is generated, LLM may have forgotten exact store interface
 4. **State evolution:** LLM might imagine properties the store doesn't actually export
 
-**How we detect it (v3.0):**
+**How it's detected:**
 
 - ✅ Store property extraction via regex parsing of TypeScript generics
 - ✅ Component destructuring pattern matching
 - ✅ Cross-file property validation (component properties must exist in store)
 - ✅ Detailed error messages showing actual vs expected
 
-**Workaround (Manual Verification Recommended):**
+**Workaround:**
 
 1. **Generate store first** - Use `/write` or `/plan` to create `useLoginStore.ts`
-2. **Verify store exports** - Open file, confirm properties match your design
-3. **Generate component second** - Reference the file when writing component
+2. **Verify store exports** - Open the file, confirm properties match your design
+3. **Generate component second** - The executor passes store content as context to downstream steps
 4. **Validate alignment** - Check component destructuring matches store exactly
 5. **Run tests** - TypeScript compiler catches mismatches immediately
 
-**Future Solutions (v3.1+):**
-
-- [ ] Persistent contract store during multi-step generation
-- [ ] Real-time contract validation across files
-- [ ] Automatic property sync for generated consumers
-- [ ] Semantic understanding of "store" pattern by LLM
-
-**For Production Use:**
-
-Until v3.1, **manual verification is recommended** for multi-file state migrations. The system will:
-
-- ✅ Catch contract drift during validation (report errors)
-- ✅ Prevent broken code from being written
-- ✅ Guide you to fix mismatches
-
-But it won't prevent the LLM from imagining properties that don't exist. Trust your eyes more than the AI for this pattern.
+The system will catch contract drift during validation and prevent broken code from being written — but it cannot prevent the LLM from imagining properties that don't exist. Trust your eyes more than the AI for this pattern.
 
 ## 🚀 Development
 
@@ -615,6 +644,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**v2.14.0** — Local AI Code Orchestrator | 🧪 2,891 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
+**v2.15.0** — Local AI Code Orchestrator | 🧪 2,872 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
 
 Created by [@odanree](https://github.com/odanree)
