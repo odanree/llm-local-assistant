@@ -411,16 +411,15 @@ export class ArchitectureValidator {
     }
 
     // Determine recommendation.
-    // In non-strict mode: violations are surfaced as warnings but never block a write.
-    // In strict mode (opt-in via lla.config.json): high-severity violations block the write.
+    // High-severity violations always block the write ('skip').
+    // In strict mode, any violation triggers a fix attempt ('fix').
+    // In non-strict mode (the default), low/medium violations are surfaced as warnings only ('allow').
     let recommendation: 'allow' | 'fix' | 'skip' = 'allow';
-    if (this.strict) {
-      const highSeverity = violations.some(v => v.severity === 'high');
-      if (highSeverity) {
-        recommendation = 'skip';
-      } else if (violations.length > 0) {
-        recommendation = 'fix';
-      }
+    const highSeverity = violations.some(v => v.severity === 'high');
+    if (highSeverity) {
+      recommendation = 'skip';
+    } else if (this.strict && violations.length > 0) {
+      recommendation = 'fix';
     }
 
     return {
@@ -2259,7 +2258,6 @@ export class SmartAutoCorrection {
       'imported but never called',  // Added: More specific pattern
       'Wrong import',  // Added: cn/UI import in a non-component .ts file
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
-      'unclosed brace',  // Deterministic tail-append fix for truncated output
       'bare string literal',        // Deterministic: className="foo" → className={cn('foo')}
       'manual string concatenation', // Deterministic: className={`foo ${bar}`} → className={cn('foo', bar)}
       'Config File Store Import',    // Deterministic: remove store imports from plain .ts config files
@@ -2274,6 +2272,7 @@ export class SmartAutoCorrection {
     // from the content (it doesn't need to rename the file; the file extension is what the
     // planner intended, but the LLM put JSX inside a .ts file by mistake).
     const unfixablePatterns = [
+      'unclosed brace',  // Deterministic fixer exists in fixCommonPatterns, but isAutoFixable must stay false
       'unmatched brace',
       'documentation instead of code',
       'multiple file',
