@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ROUTES } from '../config/Routes';
+import { getAccessibleRoutes } from '../routes/Routes';
 
 interface NavigationProps {
   isLoggedIn: boolean;
@@ -8,8 +8,8 @@ interface NavigationProps {
   onLogout: () => void;
 }
 
-const Navigation: React.FC<NavigationProps> = ({ isLoggedIn, theme, onLogout }) => {
-  const accessibleRoutes = ROUTES.filter((r) => !r.requiresAuth || isLoggedIn);
+export const Navigation = ({ isLoggedIn, theme, onLogout }: NavigationProps) => {
+  const accessibleRoutes = getAccessibleRoutes(isLoggedIn);
 
   return (
     <nav
@@ -80,5 +80,3 @@ const Navigation: React.FC<NavigationProps> = ({ isLoggedIn, theme, onLogout }) 
     </nav>
   );
 };
-
-export default Navigation;

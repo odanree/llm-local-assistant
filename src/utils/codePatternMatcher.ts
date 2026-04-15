@@ -448,13 +448,26 @@ export function findImportAndSyntaxIssuesPure(
       // because they either live in the source file being decomposed, or in a config file
       // that hasn't been created yet. The correct fix is to accept them as props.
       const isAllCapsConstant = /^[A-Z][A-Z0-9_]{2,}$/.test(namespace);
+      // Routes/config constants that are always created earlier in the decomposition order
+      const isRoutesConstant = namespace === 'ROUTES' || /^[A-Z][A-Z0-9_]*ROUTES?$/.test(namespace);
+      const routesImportPath = isRoutesConstant
+        ? (filePath.includes('/components/') || filePath.includes('\\components\\')
+            ? `'../routes/Routes'`
+            : `'./routes/Routes'`)
+        : null;
       const message = isAllCapsConstant
-        ? `Missing import: '${namespace}' is used but never defined or imported. ` +
-          `'${namespace}' appears to be a module-level constant (ALL_CAPS) from the source file being decomposed.\n` +
-          `  FIX 1 (simplest — do this first): Define it locally in this file:\n` +
-          `    export const ${namespace} = [...]; // copied from source file\n` +
-          `  FIX 2: Accept it as a prop: ({ ${namespace.toLowerCase()} }: { ${namespace.toLowerCase()}: SomeType[] })\n` +
-          `  DO NOT: import { ${namespace} } from '...' — that file may not exist yet`
+        ? isRoutesConstant
+          ? `Missing import: '${namespace}' is used but never imported.\n` +
+            `  CORRECT FIX: import { ${namespace} } from ${routesImportPath}\n` +
+            `  This constant is defined in the routes file, which is always created before component files\n` +
+            `  in the decomposition order. Import it — do NOT define it locally.`
+          : `Missing import: '${namespace}' is used but never defined or imported. ` +
+            `'${namespace}' appears to be a module-level constant (ALL_CAPS).\n` +
+            `  FIX 1: If this constant comes from a file already created in this task, import it:\n` +
+            `    import { ${namespace} } from '../path/to/source'\n` +
+            `  FIX 2 (if no source file exists): Define it locally in this file:\n` +
+            `    export const ${namespace} = [...]; // copied from source file\n` +
+            `  FIX 3: Accept it as a prop: ({ ${namespace.toLowerCase()} }: { ${namespace.toLowerCase()}: SomeType[] })`
         : `Missing import: '${namespace}' is used but never imported. Add: import { ${namespace} } from '...' or import * as ${namespace} from '...'`;
       issues.push({
         type: 'missing_import',

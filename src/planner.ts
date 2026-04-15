@@ -499,6 +499,20 @@ WRONG: Plan ends after writing the extracted files — source file still has all
 WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
 RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
 
+DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be specific):
+- Routes.ts: MUST name the exports: "ROUTES array", "RouteConfig interface", "getAccessibleRoutes()"
+  RIGHT: "Extract route config into Routes.ts — ROUTES array, RouteConfig interface, getAccessibleRoutes()"
+  WRONG: "Create the dedicated data file"  ← too vague
+- Navigation.tsx: MUST say it imports from Routes.ts and renders nav links
+  RIGHT: "Extract Navigation — reads accessible routes from Routes.ts, renders nav links + logout button"
+  WRONG: "Extract the navigation rendering logic"  ← missing data source
+- Layout.tsx: MUST say it OWNS <Routes>/<Route> rendering AND uses Navigation in sidebar
+  RIGHT: "Extract Layout — owns all <Routes>/<Route> rendering from ROUTES array, Navigation in sidebar"
+  WRONG: "Extract the main layout structure incorporating Navigation"  ← missing routing-owner responsibility
+- App.tsx slim: MUST say routing is delegated (App has no <Routes>, Layout does)
+  RIGHT: "Slim App.tsx — only <BrowserRouter><Layout .../></BrowserRouter>, routing delegated to Layout"
+  WRONG: "Update App.tsx to use new components"  ← doesn't state routing delegation
+
 FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
 - Route config files export arrays or objects of route definitions — they are DATA files, not components
   RIGHT: src/routes/Routes.ts  (exports RouteConfig[], no JSX)
@@ -628,6 +642,20 @@ The source file MUST be updated in the plan. Steps:
 WRONG: Plan ends after writing the extracted files — source file still has all the old code
 WRONG: Request names 3 files but plan only has 2 WRITE steps — one deliverable was silently dropped
 RIGHT: Final step is WRITE src/App.tsx with only imports + composition of the new components
+
+DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be specific):
+- Routes.ts: MUST name the exports: "ROUTES array", "RouteConfig interface", "getAccessibleRoutes()"
+  RIGHT: "Extract route config into Routes.ts — ROUTES array, RouteConfig interface, getAccessibleRoutes()"
+  WRONG: "Create the dedicated data file"  ← too vague
+- Navigation.tsx: MUST say it imports from Routes.ts and renders nav links
+  RIGHT: "Extract Navigation — reads accessible routes from Routes.ts, renders nav links + logout button"
+  WRONG: "Extract the navigation rendering logic"  ← missing data source
+- Layout.tsx: MUST say it OWNS <Routes>/<Route> rendering AND uses Navigation in sidebar
+  RIGHT: "Extract Layout — owns all <Routes>/<Route> rendering from ROUTES array, Navigation in sidebar"
+  WRONG: "Extract the main layout structure incorporating Navigation"  ← missing routing-owner responsibility
+- App.tsx slim: MUST say routing is delegated (App has no <Routes>, Layout does)
+  RIGHT: "Slim App.tsx — only <BrowserRouter><Layout .../></BrowserRouter>, routing delegated to Layout"
+  WRONG: "Update App.tsx to use new components"  ← doesn't state routing delegation
 
 FILE EXTENSION RULE FOR CONFIG/DATA FILES (mandatory):
 - Route config files export arrays or objects of route definitions — they are DATA files, not components
@@ -879,14 +907,33 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
 
       // Drop redundant RUN/tsc steps — TypeScript compilation runs inline (Check 6)
       // after every WRITE step. A trailing tsc step adds noise and always gets skipped.
-      const isRedundantTscStep =
+      const isTscStep =
         action === 'run' &&
         (descLower.includes('typescript') || descLower.includes('type check') ||
          descLower.includes('type-check') || descLower.includes(' tsc') ||
          descLower.startsWith('tsc') || descLower.includes('compilation')) &&
         !step.command; // Only drop if no actual shell command — real test runners still pass through
-      if (isRedundantTscStep) {
+      if (isTscStep) {
         console.warn(`[PARSER] Dropping redundant tsc step (Check 6 handles this inline): "${step.description}"`);
+        continue;
+      }
+
+      // Drop redundant test-runner RUN steps — no tests exist for decomposition tasks,
+      // so vitest/jest steps always pass vacuously and add noise to the plan score.
+      // Also drop steps where the command IS a test runner — the planner sometimes emits
+      // `command: "npm test"` which bypasses the `!step.command` guard.
+      const testRunnerCommand = step.command
+        ? /\b(vitest|jest|mocha|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test)\b/i.test(step.command)
+        : false;
+      const isRedundantTestStep =
+        action === 'run' &&
+        (descLower.includes('test suite') || descLower.includes('run tests') ||
+         descLower.includes('run test') || descLower.startsWith('vitest') ||
+         descLower.startsWith('jest') || descLower.includes('unit test') ||
+         descLower.includes('run vitest') || descLower.includes('run jest')) &&
+        (!step.command || testRunnerCommand);
+      if (isRedundantTestStep) {
+        console.warn(`[PARSER] Dropping redundant test-runner step (no tests in scope): "${step.description}"`);
         continue;
       }
 

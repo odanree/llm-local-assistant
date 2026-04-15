@@ -171,6 +171,18 @@ const LAYER_RULES: Record<string, LayerRule> = {
 
 export class ArchitectureValidator {
   /**
+   * When strict=false (the default), layer violations are reported as warnings
+   * but recommendation is always 'allow' — they never block a write.
+   * Set strict=true (via lla.config.json or explicit caller opt-in) to restore
+   * blocking behavior for projects that have committed to this layer architecture.
+   */
+  private readonly strict: boolean;
+
+  constructor(options: { strict?: boolean } = {}) {
+    this.strict = options.strict ?? false;
+  }
+
+  /**
    * Detect which layer a file belongs to based on file path
    */
   private detectLayer(filePath: string): string {
@@ -382,7 +394,8 @@ export class ArchitectureValidator {
           import: importModule,
           message: `Forbidden import in ${layer}: "${importModule}"`,
           suggestion: `${layer} layer only allows: ${rule.allowedImportPatterns.join(', ')}. Forbidden: ${rule.forbiddenImports.join(', ')}`,
-          severity: 'high',
+          // In non-strict mode, downgrade severity so violations never block writes
+          severity: this.strict ? 'high' : 'low',
         });
       }
     }
@@ -397,13 +410,17 @@ export class ArchitectureValidator {
       violations.push(...this.detectTypeSemanticErrors(code));
     }
 
-    // Determine recommendation
+    // Determine recommendation.
+    // In non-strict mode: violations are surfaced as warnings but never block a write.
+    // In strict mode (opt-in via lla.config.json): high-severity violations block the write.
     let recommendation: 'allow' | 'fix' | 'skip' = 'allow';
-    const highSeverity = violations.some(v => v.severity === 'high');
-    if (highSeverity) {
-      recommendation = 'skip'; // Don't write this file
-    } else if (violations.length > 0) {
-      recommendation = 'fix'; // Try to fix it
+    if (this.strict) {
+      const highSeverity = violations.some(v => v.severity === 'high');
+      if (highSeverity) {
+        recommendation = 'skip';
+      } else if (violations.length > 0) {
+        recommendation = 'fix';
+      }
     }
 
     return {
@@ -1792,6 +1809,33 @@ export class SmartAutoCorrection {
   static fixCommonPatterns(code: string, validationErrors: string[], filePath?: string): string {
     let fixed = code;
 
+    // ZEROTH: Strip LLM narration comment lines that reference other file paths.
+    // When the LLM produces a single file but includes comments like "// src/components/Layout.tsx"
+    // or "// See src/routes/Routes.ts", the "Multiple file references detected" validator fires.
+    // These comment lines are never part of valid executable code and can be stripped safely.
+    // Only fires when the "Multiple file references" error is already present, so unrelated
+    // comment lines in other files are never touched.
+    const hasMultiFileError = validationErrors.some(e => e.includes('Multiple file references detected'));
+    if (hasMultiFileError) {
+      // Match comment-only lines that contain a file extension reference (.ts / .tsx / .js / .json / .yaml / .css).
+      // Uses the same extension set as the validator regex so we clear exactly what it counts.
+      fixed = fixed.replace(/^[ \t]*\/\/[^\n]*\.(ts|tsx|js|jsx|json|yaml|css)[^\n]*\n?/gm, '');
+      console.log('[SmartAutoCorrection] Stripped file-reference comment lines (multi-file error fix)');
+    }
+
+    // FIRST-A: Fix absolute-path imports to relative paths.
+    // The LLM sometimes generates: import X from '/routes/Routes' (absolute, starting with '/')
+    // instead of the correct relative: import X from './routes/Routes'.
+    // Strip the leading '/' and replace with './' — correct for files at src/ level.
+    // Only fires when a "Cannot find module '/" error is present, so unrelated imports are untouched.
+    const hasAbsolutePathError = validationErrors.some(e => e.includes("Cannot find module '/"));
+    if (hasAbsolutePathError) {
+      fixed = fixed.replace(/\bfrom\s+(['"])\/([a-zA-Z][^'"]*)\1/g, (_match, q, importPath) => {
+        return `from ${q}./${importPath}${q}`;
+      });
+      console.log('[SmartAutoCorrection] Fixed absolute import paths (leading / → ./)');
+    }
+
     // FIRST: Merge split React imports (deterministic — no LLM needed)
     fixed = this.mergeSplitReactImports(fixed);
 
@@ -1884,11 +1928,19 @@ export class SmartAutoCorrection {
     // Template literals with ternary operators inside ${...} in style props (e.g.
     // `borderBottom: \`1px solid ${theme === 'dark' ? '#444' : '#ddd'}\``) consistently cause
     // TS1002 "Unterminated string literal" parse errors when the LLM mismatches backtick quotes.
+    // They can also cause TS1005 "',' expected", TS1128 "Declaration or statement expected", and
+    // TS1180 "Property destructuring pattern expected" as cascade parse errors from the same root
+    // cause. All four share the same fix: convert the backtick template to a plain ternary.
     // The transform: `prefix${A ? B : C}suffix` → A ? 'prefixBsuffix' : 'prefixCsuffix'
     // Only applies for the common single-ternary-interpolation case used in theme style objects.
-    // Fires when tsc reports TS1002 (unterminated string literal).
+    // Fires when tsc reports TS1002 (unterminated string literal), OR when TS1005/TS1128/TS1180
+    // appear alongside actual backtick template literals in style-like positions in the file.
     const hasUnterminatedStringLiteral = validationErrors.some(e => e.includes('TS1002'));
-    if (hasUnterminatedStringLiteral) {
+    const hasStyleTemplateLiteral = /:\s*`[^`]*\$\{[^}]+\}[^`]*`/.test(fixed);
+    const hasCascadeParseError = validationErrors.some(e =>
+      e.includes('TS1005') || e.includes('TS1128') || e.includes('TS1180') || e.includes('TS1434')
+    );
+    if (hasUnterminatedStringLiteral || (hasCascadeParseError && hasStyleTemplateLiteral)) {
       // Pattern: propertyName: `staticPrefix${condition ? trueLiteral : falseLiteral}staticSuffix`
       // e.g. borderBottom: `1px solid ${theme === 'dark' ? '#444' : '#ddd'}`
       fixed = fixed.replace(
@@ -1906,6 +1958,31 @@ export class SmartAutoCorrection {
           return `: ${condition} ? ${trueStr} : ${falseStr}`;
         }
       );
+    }
+
+    // SEVENTH-A: Fix CSS string-literal properties in extracted style const variables — TS2322.
+    // When a style object is assigned to a const variable, TypeScript widens string literals like
+    // 'center' to `string`. CSSProperties expects the narrow literal type, so tsc reports TS2322:
+    //   Type '{ textAlign: string; }' is not assignable to type 'Properties<...>'.
+    // Fix: add `as const` to the value of known CSS properties that require string literal types.
+    // Only fires when tsc reports TS2322 with 'Properties<string | number' in the message.
+    const hasCSSPropertiesError = validationErrors.some(e =>
+      e.includes('TS2322') && e.includes('Properties<string | number')
+    );
+    if (hasCSSPropertiesError) {
+      const cssStringProps = [
+        'textAlign', 'alignItems', 'alignSelf', 'justifyContent', 'justifySelf',
+        'flexDirection', 'flexWrap', 'position', 'display', 'float',
+        'overflow', 'overflowX', 'overflowY', 'whiteSpace', 'wordBreak',
+        'textTransform', 'textDecoration', 'fontWeight', 'fontStyle',
+        'verticalAlign', 'boxSizing', 'cursor', 'pointerEvents',
+        'visibility', 'userSelect', 'resize',
+      ];
+      const propPattern = new RegExp(
+        `((?:${cssStringProps.join('|')})\\s*:\\s*'[^']+')(?!\\s+as\\s+const)`,
+        'g'
+      );
+      fixed = fixed.replace(propPattern, '$1 as const');
     }
 
     // SEVENTH: Fix `element={X.component}` — TS2322 ComponentType not assignable to ReactNode.

@@ -1,8 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import Navigation from './Navigation';
-import { ROUTES } from '../config/Routes';
-import NotFoundPage from '../pages/NotFoundPage';
+import { Navigation } from './Navigation';
+import { ROUTES } from '../routes/Routes';
 
 interface LayoutProps {
   isLoggedIn: boolean;
@@ -12,97 +11,151 @@ interface LayoutProps {
   onToggleSidebar: () => void;
 }
 
-const Layout: React.FC<LayoutProps> = ({
-  isLoggedIn,
-  theme,
-  onLogout,
-  isSidebarOpen,
-  onToggleSidebar,
-}) => {
+export const Layout = ({ isLoggedIn, theme, onLogout, isSidebarOpen, onToggleSidebar }: LayoutProps) => {
   return (
     <div
-      className={`app-container ${theme}`}
-      style={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#ffffff' }}
+      style={{
+        display: 'flex',
+        minHeight: '100vh',
+        backgroundColor: theme === 'dark' ? '#1e1e1e' : '#f4f4f4',
+        color: theme === 'dark' ? '#fff' : '#333',
+      }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      {isSidebarOpen && (
+        <aside
+          style={{
+            width: '240px',
+            flexShrink: 0,
+            transition: 'width 0.2s ease-in-out',
+            background: theme === 'dark' ? '#2a2a2a' : '#ffffff',
+            borderRight: '1px solid #ddd',
+            padding: '1rem 0',
+          }}
+        >
+          <Navigation
+            isLoggedIn={isLoggedIn}
+            theme={theme}
+            onLogout={onLogout}
+          />
+        </aside>
+      )}
+
+      <div
+        style={{
+          flexGrow: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          transition: 'margin-left 0.2s ease-in-out',
+        }}
+      >
         {/* Header */}
         <header
           style={{
+            padding: '1rem 2rem',
+            background: theme === 'dark' ? '#222' : '#fafafa',
+            borderBottom: '1px solid #ddd',
             display: 'flex',
-            alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '0.75rem 1.5rem',
-            borderBottom: `1px solid ${theme === 'dark' ? '#444' : '#ddd'}`,
-            backgroundColor: theme === 'dark' ? '#2a2a2a' : '#f5f5f5',
+            alignItems: 'center',
+            flexShrink: 0,
           }}
         >
           <button
             onClick={onToggleSidebar}
-            aria-label="Toggle sidebar"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem' }}
-          >
-            ☰
-          </button>
-          <span style={{ fontWeight: 600, color: theme === 'dark' ? '#fff' : '#000' }}>
-            Dashboard
-          </span>
-        </header>
-
-        <div style={{ display: 'flex', flex: 1 }}>
-          {/* Sidebar */}
-          {isSidebarOpen && (
-            <Navigation isLoggedIn={isLoggedIn} theme={theme} onLogout={onLogout} />
-          )}
-
-          {/* Main content */}
-          <main
             style={{
-              flex: 1,
-              padding: '2rem',
-              backgroundColor: theme === 'dark' ? '#1a1a1a' : '#ffffff',
-              color: theme === 'dark' ? '#ffffff' : '#000000',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: theme === 'dark' ? '#fff' : '#333',
+              fontSize: '1.5rem',
+              padding: '0.5rem',
+              display: 'block',
             }}
           >
-            <Routes>
-              {ROUTES.map((route) => {
-                if (route.requiresAuth && !isLoggedIn) {
-                  return (
-                    <Route
-                      key={route.path}
-                      path={route.path}
-                      element={<Navigate to="/" replace />}
-                    />
-                  );
-                }
-                return (
-                  <Route
-                    key={route.path}
-                    path={route.path}
-                    element={<route.component />}
-                  />
-                );
-              })}
-              <Route path="*" element={<NotFoundPage />} />
-            </Routes>
-          </main>
-        </div>
+            0
+          </button>
+          <h1
+            style={{
+              fontSize: '1.5rem',
+              margin: 0,
+              fontWeight: 600,
+            }}
+          >
+            Application Dashboard
+          </h1>
+          <div
+            style={{
+              width: '150px',
+              display: 'flex',
+              gap: '1rem',
+            }}
+          >
+            <button
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid #ccc',
+                backgroundColor: theme === 'dark' ? '#3c3c3c' : '#eee',
+                color: theme === 'dark' ? '#fff' : '#333',
+                cursor: 'pointer',
+                borderRadius: '4px',
+              }}
+            >
+              Profile
+            </button>
+            <button
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid #ccc',
+                backgroundColor: theme === 'dark' ? '#3c3c3c' : '#eee',
+                color: theme === 'dark' ? '#fff' : '#333',
+                cursor: 'pointer',
+                borderRadius: '4px',
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        </header>
+
+        {/* Main Content Area */}
+        <main
+          style={{
+            flexGrow: 1,
+            padding: '2rem',
+            overflowY: 'auto',
+          }}
+        >
+          <Routes>
+            {ROUTES.map((route) => {
+              if (route.requiresAuth && !isLoggedIn) {
+                return <Navigate to="/" replace key={route.path} />;
+              }
+
+              return (
+                <Route
+                  path={route.path}
+                  element={React.createElement(route.component)}
+                  key={route.path}
+                />
+              );
+            })}
+          </Routes>
+        </main>
 
         {/* Footer */}
         <footer
           style={{
-            padding: '1rem',
-            borderTop: '1px solid #e0e0e0',
-            backgroundColor: theme === 'dark' ? '#2a2a2a' : '#f5f5f5',
-            textAlign: 'center',
-            fontSize: '0.9rem',
-            color: theme === 'dark' ? '#aaa' : '#666',
+            padding: '1rem 2rem',
+            background: theme === 'dark' ? '#222' : '#fafafa',
+            borderTop: '1px solid #ddd',
+            flexShrink: 0,
           }}
         >
-          <p>© 2024 LLM Assistant. All rights reserved.</p>
+          <p style={{ margin: 0, fontSize: '0.9rem', color: theme === 'dark' ? '#999' : '#666' }}>
+            � {new Date().getFullYear()} LLM Assistant. All rights reserved.
+          </p>
         </footer>
       </div>
     </div>
   );
 };
-
-export default Layout;
