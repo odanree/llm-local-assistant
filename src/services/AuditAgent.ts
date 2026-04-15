@@ -127,9 +127,10 @@ export const CN_MANDATE: AuditDefinition = {
     /\.test\.ts$/,
     /node_modules/,
     /\.d\.ts$/,
+    /services\/AuditAgent\.ts$/,  // exclude the audit tool itself — rubric string causes false positives
   ],
   rubric: CN_RUBRIC,
-  contextLines: 15,
+  contextLines: 7,  // 15 was too much — distant lines drowned the mandate signal
 };
 
 // ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ function parseClassification(raw: string): ClassificationResult {
 function makeDefaultClient(): LLMClient {
   const config: LLMConfig = {
     endpoint: 'http://localhost:11434',
-    model: 'mistral',
+    model: 'gemma4',
     temperature: 0.1,   // low temperature — classification should be deterministic
     maxTokens: 256,     // short response: CLASSIFICATION / REASON / ACTION only
     contextWindow: 8192,
