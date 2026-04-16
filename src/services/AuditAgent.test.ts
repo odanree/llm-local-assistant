@@ -110,7 +110,8 @@ describe('AuditAgent — cn-mandate definition', () => {
 // Known-answer classification cases
 // ---------------------------------------------------------------------------
 
-describe('AuditAgent — classifyMatch (known answers)', () => {
+// LLM classification tests require a local Ollama instance — skip in CI
+describe.skipIf(process.env.CI === 'true')('AuditAgent — classifyMatch (known answers)', () => {
   // LLM calls — each may take up to ~3s on local Ollama
   const TIMEOUT = 30_000;
 
