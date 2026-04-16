@@ -191,9 +191,9 @@ function parseClassification(raw: string): ClassificationResult {
 function makeDefaultClient(): LLMClient {
   const config: LLMConfig = {
     endpoint: 'http://localhost:11434',
-    model: 'gemma4',
+    model: 'gemma4:latest',
     temperature: 0.1,   // low temperature — classification should be deterministic
-    maxTokens: 256,     // short response: CLASSIFICATION / REASON / ACTION only
+    maxTokens: 1024,    // gemma4 uses thinking tokens before classification output
     contextWindow: 8192,
     timeout: 30_000,
   };
