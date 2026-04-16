@@ -1947,99 +1947,6 @@ export class Executor {
   private shouldAskForWrite(filePath: string): boolean { return shouldAskForWrite(filePath); }
 
   /**
-   * CRITICAL: Extract and store file contract after successful write
-   * This allows subsequent steps to use the ACTUAL API that was created,
-   * not a guessed API or calculated import paths
-   * 
-   * Runs AFTER file write succeeds, extracts real exports for validation/injection
-   */
-  private async extractAndStoreContract(
-    filePath: string,
-    content: string,
-    stepId: number,
-    workspace: vscode.Uri
-  ): Promise<void> {
-    try {
-      // Only extract contracts for code files
-      const ext = filePath.split('.').pop()?.toLowerCase();
-      if (!['ts', 'tsx', 'js', 'jsx'].includes(ext || '')) {
-        return;
-      }
-
-      // ZUSTAND STORES: Extract hook and state shape
-      const zustandMatch = content.match(/export\s+const\s+(use\w+)\s*=\s*create[<\(]/i);
-      if (zustandMatch) {
-        const [, hookName] = zustandMatch;
-        
-        // Extract state properties: look for patterns like "email: ...", "password: ...", etc
-        const propsMatch = content.match(/\{\s*([^}]+?(?::[^,}]+[,]?)*)\s*\}/);
-        const stateProps: string[] = [];
-        
-        if (propsMatch) {
-          // Split by comma and extract property names
-          const propLines = propsMatch[1].split(',');
-          for (const line of propLines) {
-            const match = line.match(/^\s*(\w+)\s*:/);
-            if (match) {
-              stateProps.push(match[1]);
-            }
-          }
-        }
-
-        // Store contract for later injection
-        const contract = {
-          type: 'zustand-store',
-          hookName,
-          filePath,
-          stateProps,
-          importStatement: `import { ${hookName} } from './${filePath.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '')}'`,
-          relativeImportExample: `import { ${hookName} } from '../stores/${filePath.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '')}';`,
-          usageExample: `const { ${stateProps.slice(0, 3).join(', ')}${stateProps.length > 3 ? ', ...' : ''} } = ${hookName}();`,
-          description: `**Zustand Store**: ${hookName}\n   Exports: ${stateProps.join(', ')}\n   Usage: const {...} = ${hookName}()`
-        };
-
-        // Store in plan results metadata
-        if (!this.plan) {return;}
-        if (!this.plan.results) {this.plan.results = new Map();}
-        
-        const stepResult = this.plan.results.get(stepId);
-        if (stepResult) {
-          (stepResult as any).contract = contract;
-          console.log(`[Executor] ✅ Stored Zustand contract for Step ${stepId}: ${hookName}`);
-          console.log(`  Exports: ${stateProps.join(', ')}`);
-        }
-        return;
-      }
-
-      // UTILITIES/HELPERS: Extract all exports
-      const exportMatches = content.match(/export\s+(?:const|function|interface|type)\s+(\w+)/g) || [];
-      if (exportMatches.length > 0) {
-        const exports = exportMatches.map(m => m.replace(/export\s+(?:const|function|interface|type)\s+/, ''));
-        
-        const contract = {
-          type: 'utility',
-          exports,
-          filePath,
-          description: `**Utility**: ${exports.join(', ')}`
-        };
-
-        // Store in plan results metadata
-        if (!this.plan) {return;}
-        if (!this.plan.results) {this.plan.results = new Map();}
-        
-        const stepResult = this.plan.results.get(stepId);
-        if (stepResult) {
-          (stepResult as any).contract = contract;
-          console.log(`[Executor] ✅ Stored utility contract for Step ${stepId}: ${exports.join(', ')}`);
-        }
-      }
-    } catch (error) {
-      // Don't fail the step if contract extraction fails
-      console.warn(`[Executor] Failed to extract contract for ${filePath}: ${error}`);
-    }
-  }
-
-  /**
    * Execute /write step: Generate content and write to file
    * Streams generated content back to callback
    */
@@ -2139,59 +2046,21 @@ export class Executor {
       }
 
       if (previouslyCreatedFiles.length > 0 || readStepContents.length > 0) {
-        // ✅ CRITICAL: Use STORED CONTRACTS from previous steps (actual APIs)
-        // NOT calculated/guessed paths
         const fileContracts: string[] = [];
         const requiredImports: string[] = [];
-        const storedContracts: any[] = [];
-        
-        for (let i = 1; i < step.stepId; i++) {
-          const prevResult = this.plan.results?.get(i);
-          if (prevResult && (prevResult as any).contract) {
-            storedContracts.push((prevResult as any).contract);
-          }
-        }
 
-        // ✅ If we have stored contracts, use them (actual APIs that were created)
-        if (storedContracts.length > 0) {
-          console.log(`[Executor] ✅ Using ${storedContracts.length} stored contract(s) from previous steps`);
-          
-          for (const contract of storedContracts) {
-            if (contract.type === 'zustand-store') {
-              // Zustand store contract
-              fileContracts.push(`📦 **Zustand Store** - \`${contract.filePath}\`
-   - Hook name: \`${contract.hookName}\`
-   - Exports: \`${contract.stateProps.join(', ')}\`
-   - Usage: \`const { ${contract.stateProps.slice(0, 3).join(', ')}${contract.stateProps.length > 3 ? ', ...' : ''} } = ${contract.hookName}()\`
-   - Example import: \`${contract.relativeImportExample}\``);
-              
-              // Add import statement (use relative import from target file's perspective)
-              requiredImports.push(contract.relativeImportExample);
-            } else if (contract.type === 'utility') {
-              // Utility/Helper export
-              fileContracts.push(`🛠️ **Utility** - \`${contract.filePath}\`
-   - Exports: \`${contract.exports.join(', ')}\``);
+        for (const filePath of previouslyCreatedFiles) {
+          try {
+            const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
+            fileContracts.push(contract);
+
+            // Calculate the import statement for this file from the current file's perspective
+            const importStmt = this.calculateImportStatement(step.path, filePath);
+            if (importStmt) {
+              requiredImports.push(importStmt);
             }
-          }
-        } else {
-          // Fallback: extract contracts dynamically (same as before)
-          console.log(`[Executor] ℹ️ No stored contracts found, extracting dynamically...`);
-          
-          for (const filePath of previouslyCreatedFiles) {
-            try {
-              const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
-              fileContracts.push(contract);
-              
-              // CRITICAL FIX: Generate exact relative import paths
-              // Calculate the import statement for this file from the current file's perspective
-              const importStmt = this.calculateImportStatement(step.path, filePath);
-              if (importStmt) {
-                requiredImports.push(importStmt);
-              }
-            } catch {
-              // Fallback if contract extraction fails
-              fileContracts.push(`📄 **File** - \`${filePath}\``);
-            }
+          } catch {
+            fileContracts.push(`📄 **File** - \`${filePath}\``);
           }
         }
 
@@ -2205,7 +2074,7 @@ You MUST start your file with these EXACT import statements (copy-paste):
 ${requiredImports.join('\n')}
 \`\`\`
 
-These are ${storedContracts.length > 0 ? 'extracted from files created in previous steps' : 'calculated based on actual file paths'}. Do NOT modify them.
+These are calculated based on actual file paths. Do NOT modify them.
 Do NOT create your own import paths - use EXACTLY what's shown above.
 
 `;
@@ -3113,90 +2982,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         this.config.onStepOutput(step.stepId, preview, false);
       }
 
-      // PRE-WRITE ARCHITECTURE VALIDATION (Phase 3.4.6)
-      // Check if code violates layer-based architecture rules before writing
-      const archValidator = new ArchitectureValidator();
-      const archValidation = archValidator.validateAgainstLayer(finalContent, step.path);
-
-      if (archValidation.hasViolations) {
-        const report = archValidator.generateErrorReport(archValidation);
-        this.config.onMessage?.(report, 'error');
-
-        if (archValidation.recommendation === 'skip') {
-          // High-severity violations - skip this file
-          this.config.onMessage?.(
-            `⏭️ Skipping ${step.path} due to architecture violations. Plan will continue with other files.`,
-            'info'
-          );
-          return {
-            stepId: step.stepId,
-            success: true, // Return success so plan continues
-            output: `Skipped (architecture violations): ${step.path}`,
-            duration: Date.now() - startTime,
-          };
-        } else if (archValidation.recommendation === 'fix') {
-          // Medium-severity violations - try to fix with LLM
-          this.config.onMessage?.(
-            `🔧 Attempting to fix architecture violations...`,
-            'info'
-          );
-
-          const violationDesc = archValidation.violations
-            .map(v => `- ${v.type}: ${v.message}\n  Suggestion: ${v.suggestion}`)
-            .join('\n');
-
-          const fixPrompt = `The code you generated has ARCHITECTURE VIOLATIONS in ${step.path}:\n\n${violationDesc}\n\nPlease FIX these violations and provide ONLY the corrected code. No explanations, no markdown.`;
-
-          const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-          if (fixResponse.success) {
-            let fixedContent = fixResponse.message || finalContent;
-            const codeBlockMatch = fixedContent.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-            if (codeBlockMatch) {
-              fixedContent = codeBlockMatch[1];
-            }
-
-            // Re-validate the fixed code
-            const revalidation = archValidator.validateAgainstLayer(fixedContent, step.path);
-            if (!revalidation.hasViolations || revalidation.recommendation === 'allow') {
-              this.config.onMessage?.(
-                `✅ Architecture violations fixed! Code now complies with layer rules.`,
-                'info'
-              );
-              // Use the fixed content
-              const fixedBytes = new Uint8Array(fixedContent.length);
-              for (let i = 0; i < fixedContent.length; i++) {
-                fixedBytes[i] = fixedContent.charCodeAt(i);
-              }
-              await vscode.workspace.fs.writeFile(filePath, fixedBytes);
-
-              if (this.config.codebaseIndex) {
-                this.config.codebaseIndex.addFile(filePath.fsPath, fixedContent);
-              }
-
-              return {
-                stepId: step.stepId,
-                success: true,
-                output: `Wrote ${step.path} (${fixedContent.length} bytes, after architecture fixes)`,
-                duration: Date.now() - startTime,
-              };
-            }
-          }
-
-          // If LLM fix didn't work, skip this file
-          this.config.onMessage?.(
-            `⏭️ Could not auto-fix architecture violations. Skipping ${step.path}.`,
-            'info'
-          );
-          return {
-            stepId: step.stepId,
-            success: true,
-            output: `Skipped (could not fix architecture violations): ${step.path}`,
-            duration: Date.now() - startTime,
-          };
-        }
-      }
-
-      // NOW safe to write (only reached if validation passed or non-code file)
+      // Write file
       const bytes = new Uint8Array(finalContent.length);
       for (let i = 0; i < finalContent.length; i++) {
         bytes[i] = finalContent.charCodeAt(i);
@@ -3352,11 +3138,6 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           this.config.onMessage?.(`✅ Check 6: TypeScript clean.`, 'info');
         }
       }
-
-      // ✅ CRITICAL: Post-step contract extraction
-      // After writing, immediately extract what was created (actual APIs, exports, etc)
-      // This allows next steps to use the REAL contract, not calculated/guessed paths
-      await this.extractAndStoreContract(step.path, finalContent, step.stepId, workspaceUri);
 
       // Phase 3.3.2: Track file in CodebaseIndex for next steps
       if (this.config.codebaseIndex) {
