@@ -13,6 +13,7 @@ import { WorkspaceDetector } from './utils';
 import { ContextBuilder } from './utils/contextBuilder';  // CONTEXT-AWARE PLANNING
 import { registerDiagnostics } from './diagnostics';
 import * as path from 'path';
+import { run as auditRun, CN_MANDATE } from './services/AuditAgent';
 
 let llmClient: LLMClient;
 let executor: Executor;
@@ -20,6 +21,7 @@ let codebaseIndex: CodebaseIndex;
 let embeddingClient: EmbeddingClient;
 let projectProfile: ProjectProfile;
 let chatPanel: vscode.WebviewPanel | undefined;
+let extensionSrcPath: string;  // extension's own src/ — set during activate()
 let chatHistory: Array<{ role: string; content: string; type?: string }> = []; // Persist chat messages
 let helpShown = false; // Track if help message was shown on first open
 let messageHandlerAttached = false; // Track if message handler is already attached
@@ -159,6 +161,7 @@ function openLLMChat(context: vscode.ExtensionContext): void {
           `- /refactor <file> → Suggest improvements\n\n` +
           `📝 **Files:**\n` +
           `- /read <path> → Read a file\n` +
+          `- /audit → Audit codebase for legacy cn() mandate patterns\n` +
           `- /write <path> <prompt> → Generate and write file content\n\n` +
           `📚 **Git:**\n` +
           `- /git-commit-msg → Generate commit message from staged changes\n` +
@@ -1484,6 +1487,62 @@ ${fileContent}
               return;
             }
 
+            // AGENT MODE: /audit → audit codebase for legacy cn() mandate patterns
+            if (/^\/audit\b/.test(text)) {
+              const srcDir = extensionSrcPath;
+
+              chatPanel?.webview.postMessage({
+                command: 'status',
+                text: '🔍 Scanning codebase for cn() references...',
+                type: 'info',
+              });
+
+              try {
+                // Use AuditAgent's own isolated client — never the shared chat client.
+                // Passing the chat client here caused its history to fill up across
+                // all classify calls, flooding the context window indicator.
+                const report = await auditRun(CN_MANDATE, srcDir);
+
+                const summaryLines = [
+                  `## Audit Report: ${report.definition}`,
+                  ``,
+                  `Scanned **${report.scannedFiles}** files — **${report.totalMatches}** matches found.`,
+                  ``,
+                  `| Classification | Count |`,
+                  `|---|---|`,
+                  `| prescriptive (remove) | ${report.summary.prescriptive} |`,
+                  `| reactive (keep) | ${report.summary.reactive} |`,
+                  `| incidental (keep) | ${report.summary.incidental} |`,
+                  ``,
+                ];
+
+                if (report.results.length > 0) {
+                  summaryLines.push(`### Matches`);
+                  summaryLines.push(`| File | Line | Classification | Action | Reason |`);
+                  summaryLines.push(`|---|---|---|---|---|`);
+                  for (const r of report.results) {
+                    const rel = path.relative(srcDir, r.match.file).replace(/\\/g, '/');
+                    const escaped = r.reason.replace(/\|/g, '\\|');
+                    summaryLines.push(`| ${rel} | ${r.match.line} | ${r.classification} | ${r.action} | ${escaped} |`);
+                  }
+                }
+
+                postChatMessage({
+                  command: 'addMessage',
+                  text: summaryLines.join('\n'),
+                  isMarkdown: true,
+                  success: true,
+                });
+              } catch (err) {
+                postChatMessage({
+                  command: 'addMessage',
+                  error: `Audit failed: ${err instanceof Error ? err.message : String(err)}`,
+                  success: false,
+                });
+              }
+              return;
+            }
+
             // Normal LLM chat
             chatPanel?.webview.postMessage({
               command: 'status',
@@ -1855,6 +1914,9 @@ export async function activate(context: vscode.ExtensionContext) {
   console.log('');
   console.log('  LLM Local Assistant Activating...     ');
   console.log('');
+
+  // Capture the extension's own src/ path for /audit (independent of open workspace)
+  extensionSrcPath = path.join(context.extensionPath, 'src');
 
   // Initialize LLM client with config
   const config = getLLMConfig();
