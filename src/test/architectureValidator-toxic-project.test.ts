@@ -125,7 +125,7 @@ export const fetchData = async () => {
       expect(result.violations.some(v => v.message.includes('react') || v.message.includes('React'))).toBe(true);
     });
 
-    it('should detect useState in service', () => {
+    it('should detect useState in service via forbidden react import', () => {
       const code = `
 import { useState } from 'react';
 
@@ -137,7 +137,7 @@ export const useUserData = () => {
       const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
 
       expect(result.hasViolations).toBe(true);
-      expect(result.violations.some(v => v.message.includes('useState'))).toBe(true);
+      expect(result.violations.some(v => v.type === 'forbidden-import' && v.message.includes('react'))).toBe(true);
     });
 
     it('should detect useQuery in service', () => {

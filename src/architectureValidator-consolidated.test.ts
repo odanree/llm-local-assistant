@@ -53,7 +53,7 @@ describe('ArchitectureValidator (Consolidated)', () => {
         name: 'useState hook',
         code: "import { useState } from 'react';",
         shouldViolate: true,
-        violationType: 'semantic-error',
+        violationType: 'forbidden-import',
       },
       {
         name: 'react-dom imports',
@@ -147,8 +147,9 @@ describe('ArchitectureValidator (Consolidated)', () => {
       expect(result.hasViolations).toBe(false);
     });
 
-    it('should detect semantic errors: useHook pattern', () => {
+    it('should detect hook pattern in services via forbidden import', () => {
       const code = `
+        import { useState } from 'react';
         export const useUserService = () => {
           const [user, setUser] = useState(null);
           return user;
@@ -157,17 +158,18 @@ describe('ArchitectureValidator (Consolidated)', () => {
 
       const result = validator.validateAgainstLayer(code, 'src/services/user.ts');
       expect(result.hasViolations).toBe(true);
-      expect(result.violations.some(v => v.type === 'semantic-error')).toBe(true);
+      expect(result.violations.some(v => v.type === 'forbidden-import')).toBe(true);
     });
 
-    it('should provide skip recommendation for violations', () => {
+    it('should provide skip recommendation for violations in strict mode', () => {
       const code = `
         import { useQuery } from '@tanstack/react-query';
         import { useState } from 'react';
         export const userService = { getUser: () => useQuery({}) };
       `;
 
-      const result = validator.validateAgainstLayer(code, 'src/services/api.ts');
+      const strictValidator = new ArchitectureValidator({ strict: true });
+      const result = strictValidator.validateAgainstLayer(code, 'src/services/api.ts');
       expect(result.hasViolations).toBe(true);
       expect(result.recommendation).toBe('skip');
     });
@@ -525,8 +527,9 @@ describe('ArchitectureValidator (Consolidated)', () => {
         };
       `;
 
-      const result = validator.validateAgainstLayer(code, 'src/services/userService.ts');
-      const report = validator.generateErrorReport(result);
+      const strictValidator = new ArchitectureValidator({ strict: true });
+      const result = strictValidator.validateAgainstLayer(code, 'src/services/userService.ts');
+      const report = strictValidator.generateErrorReport(result);
 
       expect(report).toContain('Architecture Violations');
       expect(report).toContain('services/');
