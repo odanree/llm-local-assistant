@@ -38,12 +38,30 @@ import { LLMClient } from '../llmClient';
  */
 function createExecutorForValidation(): Executor {
   const mockLLM = {
-    generate: vi.fn().mockResolvedValue('{}'),
-    getModel: vi.fn().mockReturnValue('test-model'),
-    getConfig: vi.fn().mockReturnValue({ model: 'test-model', baseURL: 'http://localhost' }),
+    sendMessage: vi.fn().mockResolvedValue(''),
+    sendMessageStream: vi.fn(),
+    isServerHealthy: vi.fn().mockResolvedValue(true),
+    clearHistory: vi.fn(),
+    getConfig: vi.fn().mockReturnValue({
+      endpoint: 'http://localhost:11434',
+      model: 'test-model',
+      temperature: 0.1,
+      maxTokens: 1024,
+      contextWindow: 8192,
+      timeout: 30000,
+    }),
   } as unknown as LLMClient;
 
-  return new Executor(mockLLM);
+  return new Executor({
+    extension: {} as any,
+    llmClient: mockLLM,
+    workspace: { fsPath: '/test/workspace' } as any,
+    maxRetries: 3,
+    timeout: 30000,
+    onProgress: vi.fn(),
+    onMessage: vi.fn(),
+    onStepOutput: vi.fn(),
+  });
 }
 
 describe('Executor Validation Consolidated - Phase 5 Wave 1 Migration', () => {

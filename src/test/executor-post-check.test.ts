@@ -42,6 +42,14 @@ describe('Phase 11: Executor Post-Check & Lifecycle (Lines 2579-2883)', () => {
     mockLLMClient = {
       sendMessage: vi.fn(),
       clearHistory: vi.fn(),
+      getConfig: vi.fn().mockReturnValue({
+        endpoint: 'http://localhost:11434',
+        model: 'test-model',
+        temperature: 0.1,
+        maxTokens: 1024,
+        contextWindow: 8192,
+        timeout: 30000,
+      }),
     };
 
     mockConfig = {

@@ -51,6 +51,14 @@ describe('Executor Foundations - Core Integration Tests (v2.0)', () => {
     mockLLMClient = {
       sendMessage: vi.fn(),
       clearHistory: vi.fn(),
+      getConfig: vi.fn().mockReturnValue({
+        endpoint: 'http://localhost:11434',
+        model: 'test-model',
+        temperature: 0.1,
+        maxTokens: 1024,
+        contextWindow: 8192,
+        timeout: 30000,
+      }),
     };
 
     // Setup executor config with workspace

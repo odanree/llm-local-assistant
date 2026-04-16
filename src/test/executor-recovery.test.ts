@@ -48,6 +48,14 @@ describe('Phase 11: Executor Validation Loop Recovery (Lines 2354-2562)', () => 
     mockLLMClient = {
       sendMessage: vi.fn(),
       clearHistory: vi.fn(),
+      getConfig: vi.fn().mockReturnValue({
+        endpoint: 'http://localhost:11434',
+        model: 'test-model',
+        temperature: 0.1,
+        maxTokens: 1024,
+        contextWindow: 8192,
+        timeout: 30000,
+      }),
     };
 
     // Create executor with mocked LLM
