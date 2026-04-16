@@ -295,79 +295,6 @@ export class ArchitectureValidator {
   }
 
   /**
-   * Detect semantic errors specific to services layer
-   */
-  private detectServiceSemanticErrors(code: string): LayerViolation[] {
-    const violations: LayerViolation[] = [];
-
-    // Pattern: React hooks in service
-    const useHooks = code.match(/use[A-Z]\w+\s*=\s*\(\s*\)\s*=>\s*(useQuery|useMutation|useState|useEffect|useContext)/gm);
-    if (useHooks) {
-      violations.push({
-        type: 'semantic-error',
-        message: `Service file contains React hooks: ${useHooks.join(', ')}`,
-        suggestion: 'Move hook definitions to src/hooks/ layer. Services should be pure functions only.',
-        severity: 'high',
-      });
-    }
-
-    // Pattern: useQuery directly in export
-    if (code.includes('useQuery') && code.includes('export')) {
-      const useQueryExport = code.match(/export\s+(const|function)\s+\w+\s*=\s*\(\s*\)\s*=>\s*useQuery/m);
-      if (useQueryExport) {
-        violations.push({
-          type: 'semantic-error',
-          message: 'Service exports a React hook (useQuery)',
-          suggestion: 'Services should export pure functions. Move useQuery usage to a custom hook in src/hooks/.',
-          severity: 'high',
-        });
-      }
-    }
-
-    // Pattern: useState in service
-    if (code.includes('useState')) {
-      violations.push({
-        type: 'semantic-error',
-        message: 'Service file uses useState',
-        suggestion: 'Services are not React components. Move state management to hooks or components.',
-        severity: 'high',
-      });
-    }
-
-    return violations;
-  }
-
-  /**
-   * Detect semantic errors specific to types layer
-   */
-  private detectTypeSemanticErrors(code: string): LayerViolation[] {
-    const violations: LayerViolation[] = [];
-
-    // Pattern: Runtime code in types layer
-    if (code.includes('export const') && !code.includes('as const') && !code.includes('Zod')) {
-      // Check if it's actual runtime code (not just type definition)
-      const lines = code.split('\n');
-      for (const line of lines) {
-        if (line.includes('export const') && !line.includes('=')) {
-          // This is a type definition (no value)
-          continue;
-        }
-        if (line.includes('export const') && line.includes('=') && !line.includes('z.')) {
-          // Potential runtime code
-          violations.push({
-            type: 'semantic-error',
-            message: `Runtime code in types layer: "${line.trim()}"`,
-            suggestion: 'Types layer should only contain type definitions. Move runtime logic to utils or services.',
-            severity: 'medium',
-          });
-        }
-      }
-    }
-
-    return violations;
-  }
-
-  /**
    * Main validation method: Check if code violates layer rules
    */
   public validateAgainstLayer(code: string, filePath: string): LayerValidationResult {
@@ -402,13 +329,6 @@ export class ArchitectureValidator {
 
     // Check exports
     violations.push(...this.checkExports(code, rule));
-
-    // Check semantic errors (layer-specific)
-    if (layer === 'services/') {
-      violations.push(...this.detectServiceSemanticErrors(code));
-    } else if (layer === 'types/') {
-      violations.push(...this.detectTypeSemanticErrors(code));
-    }
 
     // Determine recommendation.
     // High-severity violations always block the write ('skip').
@@ -837,7 +757,7 @@ export class ArchitectureValidator {
       const names = importList
         .split(',')
         .map(s => s.trim())
-        .filter(s => s.startsWith('use'));
+        .filter(s => /^use[A-Z]/.test(s));  // React hook convention: use + uppercase (excludes userService, usecase, etc.)
       if (names.length > 0) {
         importedHooks.push({ names, source });
       }

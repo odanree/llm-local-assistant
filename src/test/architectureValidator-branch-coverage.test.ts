@@ -317,7 +317,7 @@ describe('Phase 8A: ArchitectureValidator Branch Coverage - Decision Logic', () 
       expect(result.violations.filter(v => v.type === 'forbidden-import')).toHaveLength(0);
     });
 
-    it('should detect semantic violations even with allowed imports', () => {
+    it('should detect forbidden import even when the import looks like a hook', () => {
       const code = `
         import { useState } from 'react';
         export function useBad() {
@@ -326,7 +326,7 @@ describe('Phase 8A: ArchitectureValidator Branch Coverage - Decision Logic', () 
         }
       `;
       const result = validator.validateAgainstLayer(code, 'src/services/bad.ts');
-      expect(result.violations.filter(v => v.type === 'semantic-error').length).toBeGreaterThan(0);
+      expect(result.violations.filter(v => v.type === 'forbidden-import').length).toBeGreaterThan(0);
     });
   });
 
@@ -431,14 +431,14 @@ describe('Phase 8A: ArchitectureValidator Branch Coverage - Decision Logic', () 
     });
   });
 
-  describe('Service Semantic Error Detection', () => {
-    it('should detect useQuery in service exports', () => {
+  describe('Service Import Violation Detection', () => {
+    it('should detect useQuery import in service exports via forbidden-import', () => {
       const code = `
         import { useQuery } from '@tanstack/react-query';
         export const useGetUser = () => useQuery(['user'], () => null);
       `;
       const result = validator.validateAgainstLayer(code, 'src/services/user.ts');
-      expect(result.violations.filter(v => v.type === 'semantic-error').length).toBeGreaterThan(0);
+      expect(result.violations.filter(v => v.type === 'forbidden-import').length).toBeGreaterThan(0);
     });
 
     it('should allow useQuery in hooks', () => {
@@ -447,16 +447,16 @@ describe('Phase 8A: ArchitectureValidator Branch Coverage - Decision Logic', () 
         export const useGetUser = () => useQuery(['user'], () => null);
       `;
       const result = validator.validateAgainstLayer(code, 'src/hooks/useGetUser.ts');
-      expect(result.violations.filter(v => v.type === 'semantic-error')).toHaveLength(0);
+      expect(result.violations.filter(v => v.type === 'forbidden-import')).toHaveLength(0);
     });
 
-    it('should detect useState in services', () => {
+    it('should detect useState import in services via forbidden-import', () => {
       const code = `
         import { useState } from 'react';
         export function useState_bad() { return useState(null); }
       `;
       const result = validator.validateAgainstLayer(code, 'src/services/state.ts');
-      expect(result.violations.filter(v => v.type === 'semantic-error').length).toBeGreaterThan(0);
+      expect(result.violations.filter(v => v.type === 'forbidden-import').length).toBeGreaterThan(0);
     });
   });
 
