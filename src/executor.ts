@@ -20,6 +20,19 @@ import { GOLDEN_TEMPLATES } from './constants/templates';
 import { ProjectProfile } from './projectProfile';
 import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 import { matchFormPatterns, findImportAndSyntaxIssuesPure } from './utils/codePatternMatcher';
+import {
+  isNonVisualWrapper,
+  isStructuralLayout,
+  isDecomposedNavigation,
+  extractPageImports,
+  extractStoreFields,
+  extractPropsInterface,
+  extractRouteConfig,
+  extractCallbackHandlers,
+  collectCallbackErrors,
+  extractFullCallbackDeclaration,
+  spliceCallbackHandlers,
+} from './executor-code-classifier';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -78,302 +91,22 @@ export class Executor {
   /** Packages available in the workspace (populated from package.json at execution start) */
   private availablePackages: string[] = [];
 
-  /**
-   * Returns true when a file is a pure logic redirector: no styled HTML, no cn(), just
-   * conditional navigation or context provision.
-   * Route/Guard/Provider/Context/HOC/Outlet — these redirect or forward children with zero visual output.
-   * Layout is intentionally excluded: Layout components ARE visual (structural HTML + cn for class merging).
-   */
-  private static isNonVisualWrapper(filePath: string): boolean {
-    if (!filePath.endsWith('.tsx')) { return false; }
-    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-    return /Route|Guard|Provider|Context|HOC|Outlet/i.test(name);
-  }
-
-  /**
-   * Returns true when a file is a structural layout wrapper:
-   * Layout components render HTML structure (header/main/footer) around children.
-   * They ARE visual, use cn(), but still require a children prop.
-   */
-  private static isStructuralLayout(filePath: string, stepDescription?: string): boolean {
-    if (!filePath.endsWith('.tsx')) { return false; }
-    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-    // Filename-based: any file with "Layout" in the name (e.g. Layout.tsx, AppLayout.tsx, PageLayout.tsx)
-    if (/Layout/i.test(name)) { return true; }
-    // Description-based fallback: catches custom names like "AppShell", "PageWrapper", "MainFrame"
-    if (stepDescription && /\b(layout\s+component|app\s+shell|page\s+wrapper|main\s+frame|shell\s+component)\b/i.test(stepDescription)) {
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Returns true when a file is a pure presentation navigation component:
-   * Navigation, Navbar, Sidebar, Header — these receive ALL state as props,
-   * they do NOT import from stores directly.
-   */
-  private static isDecomposedNavigation(filePath: string, stepDescription?: string): boolean {
-    if (!filePath.endsWith('.tsx')) { return false; }
-    const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
-    // Filename-based: common navigation component names
-    if (/^(Navigation|Navbar|NavBar|Nav|Sidebar|SideNav|Header|TopBar|AppBar|MenuBar)$/i.test(name)) {
-      return true;
-    }
-    // Description-based fallback: catches custom names like "AppMenu", "LeftPanel", etc.
-    if (stepDescription && /\b(navigation|navbar|sidebar|nav\s+component|menu\s+component|side\s+panel)\b/i.test(stepDescription)) {
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Extract page component imports from a source file.
-   * Finds: import X from '...pages/...' or '...screens/...' or '...views/...'
-   * Returns [{name, from}] so callers can reconstruct import lines or list names.
-   */
-  private static extractPageImports(code: string): Array<{ name: string; from: string }> {
-    const results: Array<{ name: string; from: string }> = [];
-    // Default import: import HomePage from '../pages/HomePage'
-    const pattern = /import\s+(\w+)\s+from\s+['"]([^'"]*\/(?:pages|screens|views)\/[^'"]+)['"]/g;
-    let match;
-    while ((match = pattern.exec(code)) !== null) {
-      results.push({ name: match[1], from: match[2] });
-    }
-    return results;
-  }
-
-  /**
-   * Extract what fields an app destructures from store hooks in a source file.
-   * Finds: const { a, b } = useSomeStore()
-   * Returns a map of storeName → field list so callers know the actual store API in use.
-   */
-  private static extractStoreFields(code: string): Map<string, string[]> {
-    const map = new Map<string, string[]>();
-    const pattern = /const\s+\{\s*([^}]+)\s*\}\s*=\s*(use\w+Store)\s*\(\)/g;
-    let match;
-    while ((match = pattern.exec(code)) !== null) {
-      const fields = match[1].split(',').map(f => f.trim()).filter(Boolean);
-      const hook = match[2];
-      map.set(hook, [...(map.get(hook) ?? []), ...fields]);
-    }
-    return map;
-  }
-
-  /**
-   * Extract a props interface body from source code.
-   * Tries <ComponentName>Props and App<ComponentName>Props patterns.
-   * Returns the raw body text (the part inside the braces) or null if not found.
-   */
-  private static extractPropsInterface(code: string, componentName?: string): string | null {
-    const candidates = componentName
-      ? [`${componentName}Props`, `App${componentName}Props`]
-      : ['\\w+Props'];
-    for (const name of candidates) {
-      const m = code.match(new RegExp(`interface\\s+${name}\\s*\\{([^}]+)\\}`));
-      if (m) { return m[1].trim(); }
-    }
-    return null;
-  }
-
-  /**
-   * Extract the RouteConfig interface text and export names from a source file.
-   * Returns what the source actually defined so the prompt can mirror it exactly.
-   */
-  private static extractRouteConfig(code: string): {
-    interfaceBody: string | null;
-    constName: string;
-    filterFnName: string | null;
-  } {
-    // Interface body: interface RouteConfig { ... }
-    const ifaceMatch = code.match(/(?:export\s+)?interface\s+RouteConfig\s*\{([^}]+)\}/);
-    const interfaceBody = ifaceMatch ? ifaceMatch[1].trim() : null;
-    // Const name: export const ROUTES: RouteConfig[]
-    const constMatch = code.match(/export\s+const\s+([A-Z][A-Z0-9_]+)\s*:\s*RouteConfig/);
-    const constName = constMatch ? constMatch[1] : 'ROUTES';
-    // Filter function: export function getAccessibleRoutes(...)
-    const fnMatch = code.match(/export\s+function\s+(\w+)\s*\(/);
-    const filterFnName = fnMatch ? fnMatch[1] : null;
-    return { interfaceBody, constName, filterFnName };
-  }
-
-  /**
-   * Extract all useCallback handler bodies from a source file.
-   * Returns a Map of handlerName → normalized body string (trimmed lines joined by \n).
-   * Uses a paren-depth counter to correctly handle nested function calls.
-   */
-  private static extractCallbackHandlers(code: string): Map<string, string> {
-    const handlers = new Map<string, string>();
-    const startPattern = /const\s+(\w+)\s*=\s*useCallback\s*\(/g;
-    let match;
-    while ((match = startPattern.exec(code)) !== null) {
-      const name = match[1];
-      let depth = 1;
-      let i = match.index + match[0].length;
-      while (i < code.length && depth > 0) {
-        if (code[i] === '(') { depth++; }
-        else if (code[i] === ')') { depth--; }
-        i++;
-      }
-      // The body is everything between the outer parens of useCallback(...)
-      const body = code.slice(match.index + match[0].length, i - 1).trim();
-      // Normalize: split into lines, trim each, drop blank lines
-      const normalized = body.split('\n').map(l => l.trim()).filter(Boolean).join('\n');
-      handlers.set(name, normalized);
-    }
-    return handlers;
-  }
-
-  /**
-   * Compare generated code against source code for useCallback handler violations.
-   * Returns ❌-prefixed error strings for: missing handlers and added lines.
-   * Called both on the initial generation and inside every correction-loop iteration.
-   *
-   * "Added" line detection uses identifier-based matching, not exact string comparison.
-   * A generated line is only flagged if its primary identifier (the first word token) is
-   * NOT present anywhere in the source body. This allows the LLM to reformat arrow function
-   * params (`(prev) => f(prev)` → `prev => f(prev)`) or rename local variables without
-   * triggering false positives, while still catching genuinely new calls like
-   * `window.location.href = '/login'` (where `window` is absent from the source).
-   */
-  private static collectCallbackErrors(generatedCode: string, sourceCode: string): string[] {
-    // Tokens that are JS syntax/keywords — never treated as "new" identifiers even if
-    // absent from the source body (e.g. `return null;` is harmless structural code).
-    const HARMLESS_TOKENS = new Set([
-      'return', 'if', 'else', 'true', 'false', 'null', 'undefined',
-      'const', 'let', 'var', 'typeof', 'instanceof', 'new', 'this',
-    ]);
-
-    const errors: string[] = [];
-    const sourceHandlers = Executor.extractCallbackHandlers(sourceCode);
-    const generatedHandlers = Executor.extractCallbackHandlers(generatedCode);
-    for (const [name, sourceBody] of sourceHandlers) {
-      if (!generatedHandlers.has(name)) {
-        errors.push(
-          `❌ Callback Preservation: handler \`${name}\` exists in the source file but is missing from the generated output. Preserve all handlers from the source.`
-        );
-      } else {
-        const genBody = generatedHandlers.get(name)!;
-        const sourceLines = new Set(sourceBody.split('\n').map(l => l.trim()).filter(Boolean));
-        // All word tokens that appear anywhere in the source handler body.
-        // A generated line whose primary token is absent here is genuinely new.
-        const sourceIdents = new Set<string>(sourceBody.match(/\b[a-zA-Z_]\w*\b/g) ?? []);
-
-        const addedLines = genBody.split('\n').map(l => l.trim()).filter(Boolean)
-          .filter(line => {
-            if (sourceLines.has(line)) { return false; }        // exact match
-            if (line.startsWith('//')) { return false; }         // comment
-            // Structural lines: arrow fn header `() => {`, closing `}, []`, etc.
-            if (/^[()[\]{}]|^},\s*[\[{]/.test(line)) { return false; }
-            // A line is "added" only if its first meaningful identifier is not in source.
-            const primaryIdent = (line.match(/\b([a-zA-Z_]\w*)\b/) ?? [])[1];
-            if (!primaryIdent) { return false; }
-            if (HARMLESS_TOKENS.has(primaryIdent)) { return false; }
-            return !sourceIdents.has(primaryIdent);
-          });
-
-        if (addedLines.length > 0) {
-          errors.push(
-            `❌ Callback Preservation: handler \`${name}\` has ${addedLines.length} line(s) not in the source:\n` +
-            addedLines.map(l => `  + ${l}`).join('\n') +
-            `\n  Remove these lines — they were not in the original.`
-          );
-        }
-      }
-    }
-    return errors;
-  }
-
-  /**
-   * Extract the full `const handlerName = useCallback(...)` declaration text from source.
-   * Uses paren-depth tracking to correctly handle nested calls inside the callback body.
-   * Returns the declaration INCLUDING the trailing semicolon, or null if not found.
-   */
-  private static extractFullCallbackDeclaration(source: string, handlerName: string): string | null {
-    const startPattern = new RegExp(`\\bconst\\s+${handlerName}\\s*=\\s*useCallback\\s*\\(`);
-    const startMatch = startPattern.exec(source);
-    if (!startMatch) { return null; }
-
-    let depth = 1;
-    let i = startMatch.index + startMatch[0].length; // position right after the opening '('
-    while (i < source.length && depth > 0) {
-      if (source[i] === '(') { depth++; }
-      else if (source[i] === ')') { depth--; }
-      i++;
-    }
-    // i now points one past the closing ')'
-    // Consume optional whitespace + semicolon
-    while (i < source.length && (source[i] === ' ' || source[i] === '\t')) { i++; }
-    if (i < source.length && source[i] === ';') { i++; }
-
-    return source.slice(startMatch.index, i).trim();
-  }
-
-  /**
-   * Deterministic callback splicer: inject missing useCallback handler declarations
-   * (and any associated useState declarations) from source into the generated file.
-   *
-   * Used when the LLM drops handlers on "slim" rewrites even with preservation prompts.
-   * Inserts before the component's `return (` statement and patches the React import to
-   * include `useState` / `useCallback` if they are not already present.
-   */
-  private static spliceCallbackHandlers(
-    generated: string,
-    source: string,
-    missingHandlerNames: string[]
-  ): string {
-    if (missingHandlerNames.length === 0) { return generated; }
-
-    // 1. Extract full handler declarations from source
-    const handlerDecls: string[] = [];
-    for (const name of missingHandlerNames) {
-      const decl = Executor.extractFullCallbackDeclaration(source, name);
-      if (decl) { handlerDecls.push(decl); }
-    }
-    if (handlerDecls.length === 0) { return generated; }
-
-    // 2. Find which setState setters the missing handlers reference
-    const setterNames = new Set<string>();
-    for (const decl of handlerDecls) {
-      const setters = decl.match(/\bset[A-Z]\w*\b/g) ?? [];
-      setters.forEach(s => setterNames.add(s));
-    }
-
-    // 3. Extract useState declarations from source for setters absent from generated
-    const useStateDecls: string[] = [];
-    for (const setter of setterNames) {
-      if (generated.includes(setter)) { continue; } // already present
-      // Match: const [stateName, setter] = useState<...>(...)
-      // [^;]* matches everything up to (but not including) the first semicolon
-      const re = new RegExp(`const\\s+\\[\\w+,\\s*${setter}\\]\\s*=\\s*useState[^;]*;`, 'g');
-      const hits = source.match(re) ?? [];
-      useStateDecls.push(...hits);
-    }
-
-    // 4. Find insertion point: before the last `return (` in the component body
-    //    Two common patterns: `\n  return (` (arrow component) and `\n  return <` (implicit parens)
-    let insertPoint = generated.lastIndexOf('\n  return (');
-    if (insertPoint === -1) { insertPoint = generated.lastIndexOf('\n  return <'); }
-    if (insertPoint === -1) { return generated; } // can't locate return; bail
-
-    // 5. Build insertion block
-    const insertBlock = '\n' + [...useStateDecls, ...handlerDecls].join('\n') + '\n';
-    let result = generated.slice(0, insertPoint) + insertBlock + generated.slice(insertPoint);
-
-    // 6. Ensure hooks are in the React import line
-    const reactImportMatch = result.match(/^import\s+React(?:,\s*\{([^}]*)\})?\s+from\s+['"]react['"]/m);
-    if (reactImportMatch) {
-      const existing = (reactImportMatch[1] ?? '').split(',').map(h => h.trim()).filter(Boolean);
-      const needed: string[] = [];
-      if (useStateDecls.length > 0 && !existing.includes('useState')) { needed.push('useState'); }
-      if (handlerDecls.length > 0 && !existing.includes('useCallback')) { needed.push('useCallback'); }
-      if (needed.length > 0) {
-        const all = [...existing, ...needed].join(', ');
-        result = result.replace(reactImportMatch[0], `import React, { ${all} } from 'react'`);
-      }
-    }
-
-    return result;
-  }
+  // -------------------------------------------------------------------------
+  // Delegation wrappers — logic lives in executor-code-classifier.ts.
+  // These thin statics keep existing call sites (including private-method tests
+  // that access via executor['methodName']) working without any changes.
+  // -------------------------------------------------------------------------
+  private static isNonVisualWrapper(fp: string) { return isNonVisualWrapper(fp); }
+  private static isStructuralLayout(fp: string, d?: string) { return isStructuralLayout(fp, d); }
+  private static isDecomposedNavigation(fp: string, d?: string) { return isDecomposedNavigation(fp, d); }
+  private static extractPageImports(code: string) { return extractPageImports(code); }
+  private static extractStoreFields(code: string) { return extractStoreFields(code); }
+  private static extractPropsInterface(code: string, n?: string) { return extractPropsInterface(code, n); }
+  private static extractRouteConfig(code: string) { return extractRouteConfig(code); }
+  private static extractCallbackHandlers(code: string) { return extractCallbackHandlers(code); }
+  private static collectCallbackErrors(gen: string, src: string) { return collectCallbackErrors(gen, src); }
+  private static extractFullCallbackDeclaration(src: string, name: string) { return extractFullCallbackDeclaration(src, name); }
+  private static spliceCallbackHandlers(gen: string, src: string, names: string[]) { return spliceCallbackHandlers(gen, src, names); }
 
   // Phase 3A: Dependency Injection for side effects
   private fs: IFileSystem;
