@@ -16,7 +16,7 @@
 import { vi } from 'vitest';
 import { Executor, type ExecutorConfig } from '../../executor';
 import { Planner, type PlannerConfig, type ExecutionStep } from '../../planner';
-import type { LLMClient } from '../../llmClient';
+import type { LLMClient, LLMConfig } from '../../llmClient';
 
 // ============================================================
 // EXECUTOR MOCK FACTORY
@@ -74,11 +74,21 @@ export const createMockExecutor = (options: ExecutorMockOptions = {}) => {
   const isServerHealthySpy = vi.fn().mockResolvedValue(true);
   const clearHistorySpy = vi.fn();
 
+  const mockLLMConfig: LLMConfig = {
+    endpoint: 'http://localhost:11434',
+    model: 'test-model',
+    temperature: 0.1,
+    maxTokens: 1024,
+    contextWindow: 8192,
+    timeout: 30000,
+  };
+
   const mockLLM = {
     sendMessage: sendMessageSpy,
     sendMessageStream: sendMessageStreamSpy,
     isServerHealthy: isServerHealthySpy,
     clearHistory: clearHistorySpy,
+    getConfig: vi.fn().mockReturnValue(mockLLMConfig),
   } as unknown as LLMClient;
 
   // 2. Create executor config with minimal setup
