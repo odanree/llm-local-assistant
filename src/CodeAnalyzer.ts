@@ -837,7 +837,7 @@ export class ArchitectureValidator {
       const names = importList
         .split(',')
         .map(s => s.trim())
-        .filter(s => s.startsWith('use'));
+        .filter(s => /^use[A-Z]/.test(s));  // React hook convention: use + uppercase (excludes userService, usecase, etc.)
       if (names.length > 0) {
         importedHooks.push({ names, source });
       }
