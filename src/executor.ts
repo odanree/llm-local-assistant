@@ -3217,7 +3217,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           this.config.onMessage?.(
             `⚠️ ${tscErrors.length} TypeScript error(s) in ${step.path}:\n` +
             tscErrors.map(e => `  ${e}`).join('\n'),
-            'warning'
+            'info'
           );
 
           // Pass 0: deterministic fixes (TS1005 semicolons, split imports, etc.) before LLM
@@ -3343,7 +3343,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             this.config.onMessage?.(
               `⚠️ ${tscErrors.length} TypeScript error(s) persist after correction. ` +
               `File written — the final tsc RUN step will surface any remaining issues.`,
-              'warning'
+              'info'
             );
           } else {
             this.config.onMessage?.(`✅ Check 6: TypeScript errors resolved.`, 'info');
