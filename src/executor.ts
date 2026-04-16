@@ -144,9 +144,6 @@ export class Executor {
   private commandRunner: ICommandRunner;
   private codebaseIndex: CodebaseIndex;
 
-  // v2.12.0 M2: StreamingIO for prompt detection
-  private streamingIO: any; // Type: StreamingIO from types/StreamingIO.ts
-
   constructor(config: ExecutorConfig) {
     this.config = {
       maxRetries: 2,
@@ -159,74 +156,21 @@ export class Executor {
     this.fs = config.fs || new FileSystemProvider();
     this.commandRunner = config.commandRunner || new CommandRunnerProvider();
     this.codebaseIndex = config.codebaseIndex || new CodebaseIndex();
-
-    // v2.12.0 M2: Initialize StreamingIO for prompt detection
-    // This enables the Circuit Breaker pattern for interactive commands
-    try {
-      const { DEFAULT_PROMPT_PATTERNS, detectPrompt, getSuggestedInputs } = require('./types/StreamingIO');
-      this.streamingIO = {
-        detectPrompt,
-        getSuggestedInputs,
-        patterns: DEFAULT_PROMPT_PATTERNS,
-      };
-    } catch (error) {
-      console.warn('[Executor] StreamingIO not available, prompt detection disabled');
-      this.streamingIO = null;
-    }
   }
 
   /**
-   * Extract contract information from a previously created file
-   * Detects what the file exports (stores, components, utilities, etc.)
-   * Returns a human-readable description for LLM consumption
+   * Return the actual source of a previously-written file as a typed code block.
+   * Showing real code is more reliable than regex-derived summaries: the LLM sees
+   * the exact export names, hook signatures, and prop types it needs to integrate with.
    */
   private async extractFileContract(filePath: string, workspace: vscode.Uri): Promise<string> {
     try {
       const fileUri = vscode.Uri.joinPath(workspace, filePath);
-      const fileContent = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
-
-      // ZUSTAND STORES: Detect useXXXStore patterns
-      const zustandMatch = fileContent.match(/export\s+const\s+(use\w+Store)\s*=\s*create<(\w+)>\(\(set\)\s*=>\s*\({([^}]*?)}\n\s*\}\)/s);
-      if (zustandMatch) {
-        const [, hookName, stateType, stateBody] = zustandMatch;
-        // Extract state properties from store
-        const stateProps = stateBody.match(/(\w+):\s*[^,}]+/g) || [];
-        const propList = stateProps.map(p => p.split(':')[0].trim()).join(', ');
-        return `📦 **Zustand Store** - \`${filePath}\`
-   - Export: \`const ${hookName} = create<${stateType}>()\`
-   - Hook name: \`${hookName}\`
-   - State object has: ${propList}
-   - Usage: \`const { ${propList} } = ${hookName}()\`
-   - ⚠️ State is structured - check field nesting. Example: if state is \`{ formState: { email, password } }\`, access as \`state.formState.email\`, NOT \`state.email\``;
-      }
-
-      // REACT COMPONENTS: Detect export function/const XXX components
-      const componentMatch = fileContent.match(/export\s+(?:const|function)\s+(\w+)\s*(?::|=|\()/);
-      const propsMatch = fileContent.match(/interface\s+(\w+Props)\s*{([^}]*)}/);
-      if (componentMatch) {
-        const [, componentName] = componentMatch;
-        const [, propsName, propsBody] = propsMatch || [null, 'Props', ''];
-        return `⚛️ **React Component** - \`${filePath}\`
-   - Export: \`export const ${componentName}: React.FC<${propsName || 'Props'}>\`
-   - Component name: \`${componentName}\`
-   - Props available: ${propsBody ? propsBody.split(';').map(l => l.trim()).filter(l => l).join(', ') : 'See component definition'}
-   - Usage: \`<${componentName} ... />\` or \`import { ${componentName} } from '...'\``;
-      }
-
-      // UTILITY EXPORTS: Detect exported functions or constants
-      const utilMatches = fileContent.match(/export\s+(?:const|function|interface|type)\s+(\w+)/g) || [];
-      if (utilMatches.length > 0) {
-        const exports = utilMatches.map(m => m.replace(/export\s+(?:const|function|interface|type)\s+/, ''));
-        return `🛠️ **Utility/Helper** - \`${filePath}\`
-   - Exports: ${exports.join(', ')}
-   - Usage: \`import { ${exports[0]} } from '...'\` or use as needed`;
-      }
-
-      // DEFAULT: Generic description
-      return `📄 **File** - \`${filePath}\` (use as reference for context)`;
-    } catch (error) {
-      // If file can't be read, just return generic description
-      return `📄 **File** - \`${filePath}\` (couldn't extract contract, use as reference)`;
+      const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(fileUri));
+      const preview = content.length > 2000 ? content.slice(0, 2000) + '\n// … (truncated)' : content;
+      return `### ${filePath}\n\`\`\`typescript\n${preview}\n\`\`\``;
+    } catch {
+      return `### ${filePath}\n_(could not be read — use path as reference)_`;
     }
   }
 
@@ -1117,7 +1061,7 @@ export class Executor {
     return generateAcceptanceCriteria(
       step,
       sourceContent,
-      this.config.llmClient.getConfig(),
+      this.config.llmClient,
       this.config.projectProfile?.getGenerationConstraints() ?? '',
       this.config.onMessage
     );
@@ -1133,7 +1077,7 @@ export class Executor {
       content,
       step,
       criteria,
-      this.config.llmClient.getConfig(),
+      this.config.llmClient,
       this.buildValidationConstraints(filePath, step)
     );
   }
@@ -2123,15 +2067,15 @@ Rules:
           : '';
 
         const createdFilesSection = fileContracts.length > 0
-          ? `## CONTEXT: Related Files Already Created
-The following files were created in previous steps. Use their exported APIs as shown below.
+          ? `## CONTEXT: Files Already Created in This Plan
+Use the EXACT export names, hook signatures, and prop types shown below — do not guess.
 
 ${fileContracts.join('\n\n')}
 
 CRITICAL INTEGRATION RULES:
 1. Start with the REQUIRED IMPORTS shown above (copy them exactly)
-2. Use ONLY the APIs and exports documented above - do NOT invent new API calls
-3. For Zustand stores: Use ONLY the methods/properties exported (do NOT guess at other properties)
+2. Use ONLY the exports visible in the source above — do NOT invent new API calls
+3. For Zustand stores: destructure only fields that appear in the store definition
 4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
 6. ⚠️ SIBLING COMPONENT RULE: These files are for API reference only. Do NOT import sibling components
