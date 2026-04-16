@@ -1117,7 +1117,7 @@ export class Executor {
     return generateAcceptanceCriteria(
       step,
       sourceContent,
-      this.config.llmClient.getConfig(),
+      this.config.llmClient,
       this.config.projectProfile?.getGenerationConstraints() ?? '',
       this.config.onMessage
     );
@@ -1133,7 +1133,7 @@ export class Executor {
       content,
       step,
       criteria,
-      this.config.llmClient.getConfig(),
+      this.config.llmClient,
       this.buildValidationConstraints(filePath, step)
     );
   }

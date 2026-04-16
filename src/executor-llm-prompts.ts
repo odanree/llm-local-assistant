@@ -8,7 +8,7 @@
  */
 
 import { PlanStep } from './planner';
-import { LLMConfig } from './llmClient';
+import { LLMClient } from './llmClient';
 import {
   isNonVisualWrapper,
   isStructuralLayout,
@@ -31,7 +31,7 @@ import {
 export async function generateAcceptanceCriteria(
   step: PlanStep,
   sourceContent: string | undefined,
-  llmConfig: LLMConfig,
+  llmClient: LLMClient,
   profileConstraints: string,
   onMessage?: (msg: string, type: 'info' | 'error') => void
 ): Promise<string[]> {
@@ -136,38 +136,12 @@ export async function generateAcceptanceCriteria(
     const childrenReminder = isTsxComponent && !step.description.toLowerCase().includes('children')
       ? ' If this component wraps or displays content (text, icons, slots), include a criterion for "Accepts children: React.ReactNode". Omit it only for self-contained display components like icons or spinners.'
       : '';
-    const prompt = `Task: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
+    const prompt = `You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.\n\nTask: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
 
-    const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const llmResponse = await llmClient.sendMessage(prompt);
+    if (!llmResponse.success || !llmResponse.message) { return []; }
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: llmConfig.model.trim(),
-        messages: [
-          { role: 'system', content: 'You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.' },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.0,
-        max_tokens: 150,
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      console.warn(`[Acceptance Criteria] Server returned ${response.status} — skipping pre-flight`);
-      return [];
-    }
-
-    const data = await response.json() as any;
-    const raw: string = data?.choices?.[0]?.message?.content || '[]';
-    const match = raw.match(/\[[\s\S]*\]/);
+    const match = llmResponse.message.match(/\[[\s\S]*\]/);
     if (!match) { return []; }
 
     let criteria: string[];
@@ -208,7 +182,7 @@ export async function llmValidate(
   content: string,
   step: PlanStep,
   criteria: string[],
-  llmConfig: LLMConfig,
+  llmClient: LLMClient,
   constraints: string
 ): Promise<string[]> {
   try {
@@ -266,34 +240,13 @@ If no issues, respond with: []
 JSON array only. No explanation.`;
     }
 
-    const endpoint = `${llmConfig.endpoint}/v1/chat/completions`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: llmConfig.model.trim(),
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.0,
-        max_tokens: 300,
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      console.warn(`[LLM Validator] Server returned ${response.status} — skipping semantic check`);
+    const llmResponse = await llmClient.sendMessage(prompt);
+    if (!llmResponse.success || !llmResponse.message) {
+      console.warn(`[LLM Validator] LLM call failed — skipping semantic check`);
       return [];
     }
 
-    const data = await response.json() as any;
-    const raw: string = data?.choices?.[0]?.message?.content ?? '[]';
-
-    const match = raw.match(/\[[\s\S]*\]/);
+    const match = llmResponse.message.match(/\[[\s\S]*\]/);
     if (!match) {
       console.warn('[LLM Validator] Response not a JSON array — skipping');
       return [];
@@ -331,6 +284,11 @@ export function computeRelativeImportPath(
   const normCurrent = currentFilePath.replace(/\\/g, '/');
   const normSource  = sourceFilePath.replace(/\\/g, '/');
   const normImport  = sourceImportPath.replace(/\\/g, '/');
+
+  // Bare package specifiers (e.g. 'react', 'lodash') need no adjustment.
+  if (!normImport.startsWith('./') && !normImport.startsWith('../') && !normImport.startsWith('/')) {
+    return normImport;
+  }
 
   const sourceDir = normSource.replace(/\/[^/]+$/, '');
   let resolved: string;
