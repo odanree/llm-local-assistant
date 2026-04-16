@@ -51,6 +51,19 @@ import {
   filterCriticalErrors,
   buildValidationConstraints,
 } from './executor-validator';
+import {
+  getFileBaseName,
+  sanitizePath,
+  calculateImportStatement,
+  stepsAreEqual,
+  reorderStepsByDependencies,
+  validateDependencies,
+  preFlightCheck,
+  validateStepContract,
+  attemptStrategySwitch,
+  shouldAskForWrite,
+  classifyStderr,
+} from './executor-step-utils';
 
 /**
  * Executor module for Phase 2: Agent Loop Foundation
@@ -224,64 +237,9 @@ export class Executor {
    * @param targetPath File being imported (e.g., "src/stores/useLoginFormStore.ts")
    * @returns Import statement (e.g., "import { useLoginFormStore } from '../stores/useLoginFormStore';")
    */
+  /** Delegates to executor-step-utils.ts. */
   private calculateImportStatement(sourcePath: string, targetPath: string): string | null {
-    try {
-      // Get directories
-      const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
-      const targetDir = targetPath.substring(0, targetPath.lastIndexOf('/'));
-      const targetFileName = targetPath.substring(targetPath.lastIndexOf('/') + 1);
-      
-      // Remove extension for import (import useLoginFormStore from '...' , not '.ts')
-      const importName = targetFileName.replace(/\.(ts|tsx|js|jsx)$/, '');
-      
-      // Calculate relative path
-      const sourceParts = sourceDir.split('/').filter(p => p);
-      const targetParts = targetDir.split('/').filter(p => p);
-      
-      // Find common prefix length
-      let commonLength = 0;
-      for (let i = 0; i < Math.min(sourceParts.length, targetParts.length); i++) {
-        if (sourceParts[i] === targetParts[i]) {
-          commonLength = i + 1;
-        } else {
-          break;
-        }
-      }
-      
-      // Calculate up path (..)
-      const upCount = sourceParts.length - commonLength;
-      const upPath = upCount > 0 ? '../'.repeat(upCount) : './';
-      
-      // Calculate down path
-      const downPath = targetParts.slice(commonLength).join('/');
-      
-      // Combine to get relative path
-      let relativePath = upPath + downPath;
-      if (downPath) {
-        relativePath = upPath + downPath + '/' + importName;
-      } else {
-        relativePath = upPath + importName;
-      }
-      
-      // Detect if it's a Zustand store (starts with 'use' and ends with 'Store')
-      const isZustandStore = importName.startsWith('use') && importName.endsWith('Store');
-      
-      // Generate import statement
-      if (isZustandStore) {
-        return `import { ${importName} } from '${relativePath}';`;
-      }
-      
-      // For utilities and helpers, use named imports
-      if (targetFileName === 'cn.ts' || targetFileName === 'cn.js') {
-        return `import { cn } from '${relativePath}';`;
-      }
-      
-      // Default: assume named export with same name as file
-      return `import { ${importName} } from '${relativePath}';`;
-    } catch (error) {
-      console.warn(`[Executor] Failed to calculate import for ${targetPath}: ${error}`);
-      return null;
-    }
+    return calculateImportStatement(sourcePath, targetPath);
   }
 
   /**
@@ -1688,300 +1646,38 @@ export class Executor {
    * - Action mismatches with workspace state
    */
 
-  /**
-   * Reorder steps based on file import dependencies (topological sort)
-   * 
-   * Problem: Planner generates steps in logical order, not dependency order.
-   * Example: LoginForm.tsx (Step 1) imports useLoginStore (Step 3)
-   * This causes validation failures because the dependency doesn't exist yet.
-   *
-   * Solution: Analyze import statements and reorder WRITE steps so:
-   * - Store files (containing exports) are written FIRST
-   * - Components (importing stores) are written AFTER  
-   * - Interface files are written when first needed
-   *
-   * Algorithm:
-   * 1. Extract all import patterns from each step's description/path
-   * 2. Build dependency graph (which files import which others)
-   * 3. Topological sort: dependencies first
-   * 4. Return reordered steps
-   */
+
+  /** Delegates to executor-step-utils.ts. */
   private reorderStepsByDependencies(steps: PlanStep[]): PlanStep[] {
-    // Only reorder WRITE steps (READ/DELETE don't create dependencies)
-    const writeSteps = steps.filter(s => s.action === 'write');
-    const nonWriteSteps = steps.filter(s => s.action !== 'write');
-
-    if (writeSteps.length <= 1) {
-      return steps; // No reordering needed
-    }
-
-    // Build dependency map: for each write step, what other write steps does it depend on?
-    const dependencies = new Map<number, Set<number>>();
-
-    writeSteps.forEach((step, idx) => {
-      dependencies.set(idx, new Set());
-    });
-
-    // Build an id→index lookup for dependsOn resolution
-    const stepIdToWriteIdx = new Map<string, number>();
-    writeSteps.forEach((step, idx) => {
-      if (step.id) { stepIdToWriteIdx.set(step.id, idx); }
-    });
-
-    // Pass 1: Use planner-declared dependsOn (structural, not linguistic — always preferred)
-    writeSteps.forEach((step, currentIdx) => {
-      if (step.dependsOn && step.dependsOn.length > 0) {
-        for (const depId of step.dependsOn) {
-          const depWriteIdx = stepIdToWriteIdx.get(depId);
-          if (depWriteIdx !== undefined && depWriteIdx !== currentIdx) {
-            dependencies.get(currentIdx)?.add(depWriteIdx);
-          }
-        }
-      }
-    });
-
-    // Pass 2: Text analysis fallback — runs for steps that declared no dependsOn, OR
-    // for steps whose dependsOn refs all pointed to non-WRITE steps (READ/RUN) and therefore
-    // produced zero write-step edges in Pass 1. Without this, steps like Layout.tsx that
-    // declare `dependsOn: ["step_1_READ"]` get zero edges and sort before Routes.ts.
-    writeSteps.forEach((step, currentIdx) => {
-      const hasWriteEdges = (dependencies.get(currentIdx)?.size ?? 0) > 0;
-      if (step.dependsOn && step.dependsOn.length > 0 && hasWriteEdges) {
-        return; // planner declared write-step dependencies — trust them, skip text analysis
-      }
-
-      const pathLower = (step.path || '').toLowerCase();
-      const descLower = (step.description || '').toLowerCase();
-      const fullText = `${pathLower} ${descLower}`;
-
-      writeSteps.forEach((otherStep, otherIdx) => {
-        if (currentIdx === otherIdx) { return; }
-        const basename = this.getFileBaseName((otherStep.path || '').toLowerCase());
-        // Filename appears anywhere in the description → likely a dependency
-        if (basename && new RegExp(`\\b${basename}\\b`, 'i').test(fullText)) {
-          dependencies.get(currentIdx)?.add(otherIdx);
-        }
-        // Store → component heuristic (layout-independent of vocabulary)
-        const otherPathLower = (otherStep.path || '').toLowerCase();
-        if (
-          otherPathLower.includes('store') && !pathLower.includes('store') &&
-          (pathLower.includes('component') || pathLower.includes('form'))
-        ) {
-          dependencies.get(currentIdx)?.add(otherIdx);
-        }
-      });
-    });
-
-    // Pass 3: Path-based structural ordering — description-independent.
-    // Vague step descriptions (e.g. "Extract Layout component") don't mention their
-    // dependency on Routes.ts, so Pass 2 text analysis misses the edge. This pass
-    // enforces well-known decomposition conventions based purely on file path patterns:
-    //   routes/       → priority 0 (config, no local imports)
-    //   navigation/navbar/nav/sidebar → priority 1 (imports routes)
-    //   layout        → priority 2 (imports Navigation + routes)
-    //   other components/pages → priority 3
-    //   App.tsx       → priority 4 (root, imports everything)
-    // Any step with a lower priority number must come BEFORE steps with higher numbers.
-    const getStructuralPriority = (path: string): number => {
-      const p = (path || '').toLowerCase();
-      if (/[\\/]routes?[\\/]|[\\/]routes?\.[tj]s$|routes?\.ts$/i.test(p)) { return 0; }
-      if (/[\\/](navigation|navbar|nav|sidebar)\.[tj]sx?$/i.test(p)) { return 1; }
-      if (/[\\/]layout\.[tj]sx?$/i.test(p)) { return 2; }
-      if (/(?:^|[\\/])app\.[tj]sx?$/i.test(p)) { return 4; }
-      return 3;
-    };
-    writeSteps.forEach((step, currentIdx) => {
-      const myPriority = getStructuralPriority(step.path || '');
-      writeSteps.forEach((otherStep, otherIdx) => {
-        if (currentIdx === otherIdx) { return; }
-        const otherPriority = getStructuralPriority(otherStep.path || '');
-        if (otherPriority < myPriority) {
-          // otherStep has a lower priority number → it must come before this step
-          dependencies.get(currentIdx)?.add(otherIdx);
-        }
-      });
-    });
-
-    // Topological sort: Kahn's algorithm
-    // inDegree[i] = number of prerequisites step i has (steps that must run before it)
-    const inDegree = new Map<number, number>();
-    writeSteps.forEach((_, idx) => {
-      inDegree.set(idx, dependencies.get(idx)?.size ?? 0);
-    });
-
-    // Build reverse map: dependents[i] = set of steps that depend on step i
-    const dependents = new Map<number, Set<number>>();
-    writeSteps.forEach((_, idx) => { dependents.set(idx, new Set()); });
-    dependencies.forEach((deps, idx) => {
-      deps.forEach(prereq => { dependents.get(prereq)?.add(idx); });
-    });
-
-    const queue: number[] = [];
-    inDegree.forEach((degree, idx) => {
-      if (degree === 0) {queue.push(idx);}
-    });
-
-    const sorted: number[] = [];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      sorted.push(current);
-
-      // Decrement in-degree for everything that depended on current
-      dependents.get(current)?.forEach(dep => {
-        inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
-        if (inDegree.get(dep) === 0) {
-          queue.push(dep);
-        }
-      });
-    }
-
-    // If we couldn't sort all (cycle detected), return original order
-    if (sorted.length !== writeSteps.length) {
-      console.warn('[Executor] Circular dependency detected in plan steps, keeping original order');
-      return steps;
-    }
-
-    // Rebuild: [sorted writes] + [non-writes in original positions where possible]
-    const result: PlanStep[] = [];
-    const sortedWriteSteps = sorted.map(idx => writeSteps[idx]);
-    const writeIndices = new Set(steps.map((s, i) => s.action === 'write' ? i : -1).filter(i => i >= 0));
-    
-    let writeIdx = 0;
-    for (let i = 0; i < steps.length; i++) {
-      if (writeIndices.has(i)) {
-        result.push(sortedWriteSteps[writeIdx++]);
-      } else {
-        result.push(steps[i]);
-      }
-    }
-
-    return result;
+    return reorderStepsByDependencies(steps);
   }
 
   // ---------------------------------------------------------------------------
-  // Surgical correction helpers
-  // ---------------------------------------------------------------------------
-
-  // -------------------------------------------------------------------------
   // Delegation wrappers — logic lives in executor-llm-prompts.ts.
-  // -------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   private computeRelativeImportPath(c: string, s: string, i: string) { return computeRelativeImportPath(c, s, i); }
   private buildSurgicalTscPrompt(content: string, errors: string[], fp: string) { return buildSurgicalTscPrompt(content, errors, fp); }
   private applySurgicalTscPatches(content: string, patch: string) { return applySurgicalTscPatches(content, patch); }
   private buildSurgicalValidatorPrompt(content: string, errors: string[], fp: string) { return buildSurgicalValidatorPrompt(content, errors, fp); }
   private applySurgicalValidatorPatches(content: string, patch: string) { return applySurgicalValidatorPatches(content, patch); }
 
-  /** Helper: Get base filename without path or extension */
-  private getFileBaseName(filePath: string): string {
-    const withoutExt = filePath.replace(/\.[^.]+$/, '');
-    const parts = withoutExt.split('/');
-    return parts[parts.length - 1];
-  }
+  /** Delegates to executor-step-utils.ts. */
+  private getFileBaseName(filePath: string): string { return getFileBaseName(filePath); }
 
-  /** Helper: Check if step order changed (for logging) */
-  private stepsAreEqual(steps1: PlanStep[], steps2: PlanStep[]): boolean {
-    if (steps1.length !== steps2.length) {return false;}
-    return steps1.every((s, i) => s.stepId === steps2[i].stepId && s.path === steps2[i].path);
-  }
+  /** Delegates to executor-step-utils.ts. */
+  private stepsAreEqual(steps1: PlanStep[], steps2: PlanStep[]): boolean { return stepsAreEqual(steps1, steps2); }
 
-  /**
-   * Validate step dependencies (DAG: Directed Acyclic Graph)
-   *
-   * NEW: Dependency-Linked Schema
-   * Forces LLM to explicitly state what each step depends on.
-   * Prevents "smushed" steps and ensures proper sequencing.
-   *
-   * If Step B depends on Step A, and Step A hasn't been completed yet,
-   * this throws an error to block Step B's execution.
-   */
+  /** Delegates to executor-step-utils.ts. */
   private validateDependencies(
     step: PlanStep,
     completedStepIds: Set<string>,
     planStepIds?: Set<string>,
     planStepOrder?: string[]
-  ): void {
-    // Only validate if step has dependencies
-    if (!step.dependsOn || step.dependsOn.length === 0) {
-      return;
-    }
+  ): void { return validateDependencies(step, completedStepIds, planStepIds, planStepOrder); }
 
-    const currentIndex = planStepOrder ? planStepOrder.indexOf(step.id ?? '') : -1;
-
-    // Check each dependency
-    for (const depId of step.dependsOn) {
-      // Skip dependencies that were filtered out of the plan before execution.
-      // stripStaleDependencies in the planner should remove these, but this is the
-      // executor-side safety net for any that slip through.
-      if (planStepIds && !planStepIds.has(depId)) {
-        console.log(`[Executor] Skipping stale dep "${depId}" on step "${step.id}" — not in current plan`);
-        continue;
-      }
-      if (!completedStepIds.has(depId)) {
-        // If we know the plan order, check whether the dep precedes this step.
-        // If the dep appears AFTER this step in plan order, the topo sort failed —
-        // warn and skip rather than aborting the whole plan.
-        if (planStepOrder && currentIndex >= 0) {
-          const depIndex = planStepOrder.indexOf(depId);
-          if (depIndex > currentIndex) {
-            console.warn(`[Executor] Dep "${depId}" appears after "${step.id}" in plan order — topo sort anomaly, skipping`);
-            continue;
-          }
-        }
-        throw new Error(
-          `DEPENDENCY_VIOLATION: Step "${step.id}" depends on "${depId}" which hasn't been completed yet. ` +
-          `Steps must be executed in dependency order. ` +
-          `Check that all dependencies are satisfied before this step.`
-        );
-      }
-    }
-  }
-
+  /** Delegates to executor-step-utils.ts. */
   private preFlightCheck(step: PlanStep, workspaceExists: boolean): void {
-    // ✅ GREENFIELD GUARD: No READ on empty workspace without prior WRITE
-    if (!workspaceExists && step.action === 'read') {
-      throw new Error(
-        `GREENFIELD_VIOLATION: Cannot READ from "${step.path}" in empty workspace. ` +
-        `First step must WRITE or INIT files. Are you missing a WRITE step?`
-      );
-    }
-
-    // ✅ FIX 1: STRICT "NO-SPACE" RULE (Danh's Senior Fix)
-    // Multiple spaces indicate sentence/description, not a valid path
-    if (step.path) {
-      const spaceCount = (step.path.match(/ /g) || []).length;
-      if (spaceCount > 1) {
-        throw new Error(
-          `PATH_VIOLATION: Path "${step.path}" contains ${spaceCount} spaces. ` +
-          `This looks like a sentence, not a file path. ` +
-          `Use kebab-case or camelCase instead: src/components/my-component.tsx`
-        );
-      }
-    }
-
-    // ✅ FIX 2: STRICT EXTENSION REQUIREMENT (Danh's Senior Fix)
-    // Web project paths MUST have file extensions
-    if (step.path && !step.path.includes('.')) {
-      throw new Error(
-        `PATH_VIOLATION: Path "${step.path}" has no file extension. ` +
-        `Web project paths MUST include extension (.tsx, .ts, .js, .json, etc.).`
-      );
-    }
-
-    // ✅ PATH VIOLATION: Paths with ellipses are malformed
-    if (step.path && step.path.includes('...')) {
-      throw new Error(
-        `PATH_VIOLATION: Step path contains ellipses "...": "${step.path}". ` +
-        `Provide complete filename. Remove trailing prose.`
-      );
-    }
-
-    // ✅ ACTION MISMATCH: If path looks like a description, reject READ
-    if (step.action === 'read' && step.path && step.path.length > 80) {
-      throw new Error(
-        `ACTION_MISMATCH: READ action path looks like a description (too long): "${step.path.substring(0, 60)}...". ` +
-        `Provide a valid file path, not a description.`
-      );
-    }
+    return preFlightCheck(step, workspaceExists);
   }
 
   /**
@@ -2028,130 +1724,19 @@ export class Executor {
     }
   }
 
-  /**
-   * ✅ SURGICAL REFACTOR: Intelligent Strategy Switching
-   *
-   * When READ fails with ENOENT (file not found), suggests alternative actions:
-   * - If file doesn't exist → WRITE (create it)
-   * - If path looks like template → init with template
-   * - Otherwise → null (can't fix)
-   *
-   * Returns correction signal for Executor to use in retry
-   */
+  /** Delegates to executor-step-utils.ts. */
   private attemptStrategySwitch(
     step: PlanStep,
     error: string
   ): { message: string; suggestedAction: string; suggestedPath?: string } | null {
-    // Only handle file not found errors
-    if (!error.includes('ENOENT') && !error.includes('not found')) {
-      return null;
-    }
-
-    // Heuristic: If trying to read a config file that doesn't exist, suggest init
-    const configPatterns = ['tsconfig', 'package.json', '.eslintrc', 'jest.config', 'babel.config'];
-    const isConfigFile = configPatterns.some(pattern => step.path?.includes(pattern));
-
-    if (isConfigFile) {
-      return {
-        message: `Config file "${step.path}" doesn't exist. Would you like to WRITE it?`,
-        suggestedAction: 'write',
-        suggestedPath: step.path,
-      };
-    }
-
-    // Heuristic: If trying to read a component/source file, suggest write
-    const sourcePatterns = ['.tsx', '.ts', '.jsx', '.js', '.vue', '.svelte'];
-    const isSourceFile = sourcePatterns.some(ext => step.path?.endsWith(ext));
-
-    if (isSourceFile) {
-      return {
-        message: `Source file "${step.path}" doesn't exist. Creating it...`,
-        suggestedAction: 'write',
-        suggestedPath: step.path,
-      };
-    }
-
-    // Can't determine recovery strategy
-    return null;
+    return attemptStrategySwitch(step, error);
   }
 
-  /**
-   * Validate Step Contract (Danh's Fix B: Pre-Flight Check)
-   *
-   * Purpose: Catch interface violations BEFORE execution:
-   * - "Manual" value in path or command fields (hallucination)
-   * - Missing path for file-based actions
-   * - Missing command for run actions
-   *
-   * Returns error message if contract violated, undefined if valid
-   */
-  private validateStepContract(step: PlanStep): void {
-    // Check for "manual" hallucination in path
-    if (step.path && typeof step.path === 'string') {
-      if (step.path.toLowerCase().includes('manual')) {
-        throw new Error(
-          `CONTRACT_VIOLATION: Step "${step.description}" has path="${step.path}". ` +
-          `Manual verification is not a valid executor action. ` +
-          `Use action='manual' instead, or describe verification in summary.`
-        );
-      }
-    }
+  /** Delegates to executor-step-utils.ts. */
+  private validateStepContract(step: PlanStep): void { return validateStepContract(step); }
 
-    // Check for "manual" hallucination in command — clear the command so the step falls through
-    // to the isManualVerification skip in executeStep rather than throwing a fatal error.
-    if ((step as any).command && typeof (step as any).command === 'string') {
-      if (/^manual\s*(verification|verify|test)/i.test(((step as any).command as string).trim())) {
-        // Nullify the command so executeStep's isEmptyRunStep check will catch it as human verification
-        (step as any).command = '';
-      }
-    }
-
-    // Check for missing path on file-based actions
-    if (['read', 'write', 'delete'].includes(step.action)) {
-      if (!step.path || step.path.trim().length === 0) {
-        throw new Error(
-          `CONTRACT_VIOLATION: Action '${step.action}' requires a valid file path, but none was provided. ` +
-          `Step: "${step.description}"`
-        );
-      }
-    }
-
-    // Contract validated - no error thrown
-  }
-
-  /**
-   * ✅ LIBERAL PATH SANITIZER (Danh's Fix B)
-   * Strips common Qwen 7b artifacts from LLM-generated paths:
-   * - Trailing ellipses (..., ..)
-   * - Accidental quotes and backticks
-   * - Trailing commas and semicolons
-   * - Placeholder paths (/path/to/ → src/)
-   */
-  private sanitizePath(path: string): string {
-    if (!path || typeof path !== 'string') {return path;}
-
-    // Remove trailing ellipses
-    let cleaned = path.replace(/\.{2,}$/, '');
-
-    // Remove accidental quotes and backticks
-    cleaned = cleaned.replace(/^[`'"]|[`'"]$/g, '');
-
-    // Remove trailing commas and semicolons
-    cleaned = cleaned.replace(/[,;]$/, '');
-
-    // Normalize placeholder paths
-    // Convert /path/to/filename.tsx → src/filename.tsx
-    cleaned = cleaned.replace(/^\/path\/to\//, 'src/');
-
-    // Trim whitespace
-    cleaned = cleaned.trim();
-
-    if (cleaned !== path) {
-      console.log(`[Executor] Path sanitized: "${path}" → "${cleaned}"`);
-    }
-
-    return cleaned;
-  }
+  /** Delegates to executor-step-utils.ts. */
+  private sanitizePath(path: string): string { return sanitizePath(path); }
 
   /**
    * Execute /read step: Read file from workspace
@@ -2358,68 +1943,8 @@ export class Executor {
     }
   }
 
-  /**
-   * Detect if a write operation should trigger a user question
-   * Returns true for risky operations like config files, large files, or critical data files
-   */
-  private shouldAskForWrite(filePath: string): boolean {
-    const fileName = filePath.split('/').pop() || '';
-
-    // Files that warrant confirmation
-    const riskPatterns = [
-      // Core config files
-      /package\.json$/,
-      /package-lock\.json$/,
-      /yarn\.lock$/,
-      /pnpm-lock\.yaml$/,
-      /tsconfig\.json$/,
-      /jsconfig\.json$/,
-
-      // Build configs
-      /webpack\.config/,
-      /vite\.config/,
-      /rollup\.config/,
-      /next\.config/,
-      /nuxt\.config/,
-      /gatsby\.config/,
-
-      // Linter/Formatter configs
-      /\.eslintrc/,
-      /\.prettierrc/,
-      /\.stylelintrc/,
-      /\.editorconfig/,
-
-      // CI/CD configs
-      /\.github\/workflows\//,
-      /\.gitlab-ci\.yml/,
-      /\.travis\.yml/,
-      /Jenkinsfile/,
-
-      // Environment and secrets
-      /\.env/,
-      /\.secrets/,
-      /credentials/,
-
-      // Critical data files
-      /database\.json/,
-      /config\.json/,
-      /settings\.json/,
-      /\.gitignore$/,
-      /\.dockerignore$/,
-      /Dockerfile$/,
-      /docker-compose\.ya?ml$/,
-
-      // Root-level files that are typically important
-      /^README\.md$/,
-      /^LICENSE$/,
-      /^Makefile$/,
-    ];
-
-    // Check if file matches any risk pattern
-    const isRisky = riskPatterns.some(pattern => pattern.test(fileName));
-
-    return isRisky;
-  }
+  /** Delegates to executor-step-utils.ts. */
+  private shouldAskForWrite(filePath: string): boolean { return shouldAskForWrite(filePath); }
 
   /**
    * CRITICAL: Extract and store file contract after successful write
@@ -4060,53 +3585,8 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
    * Handles type conversion, null filtering, and pattern matching
    * Prevents {} serialization and filters npm noise
    */
-  private classifyStderr(data: any): { isWarning: boolean; message: string } {
-    // 1. TYPE GUARD: Ensure we have a string
-    // This is the key fix for preventing {} serialization
-    let message: string;
-    if (typeof data === 'string') {
-      message = data;
-    } else if (data?.chunk) {
-      message = String(data.chunk);
-    } else if (data?.message) {
-      message = String(data.message);
-    } else if (typeof data === 'object') {
-      // Don't stringify - return empty to skip this chunk
-      return { isWarning: true, message: '' };
-    } else {
-      message = String(data);
-    }
-
-    // 2. NULL FILTER: Skip empty messages to prevent blank lines and {}
-    if (!message || message.trim() === '' || message === '{}') {
-      return { isWarning: true, message: '' };
-    }
-
-    // 3. REGEX PATTERNS: Comprehensive warning detection
-    const warningPatterns = [
-      /^npm\s+(warn|notice|deprecated)/i,  // npm WARN, npm notice, npm deprecated
-      /deprecated/i,
-      /vulnerabilities/i,
-      /looking for funding/i,               // npm funding message
-      /peer\s?dependency/i,
-      /optional\s+dependency/i,
-      /will\s+not\s+be\s+installed/i,
-      /(\d+)\s+(moderate|low|high)\s+severity/i,  // Audit summary
-      /run\s+`npm\s+audit\s+fix`/i,         // Audit fix suggestion
-      /WARN/i,
-    ];
-
-    // Check if this is a known non-fatal warning
-    const isWarning = warningPatterns.some(pattern => pattern.test(message));
-
-    // Clean up the message
-    const cleanMessage = message
-      .replace(/^\s*[❌✔️⚠️]+\s*/, '')  // Remove emoji prefix
-      .replace(/^Error:\s*/i, '')        // Remove 'Error:' prefix
-      .trim();
-
-    return { isWarning, message: cleanMessage };
-  }
+  /** Delegates to executor-step-utils.ts. */
+  private classifyStderr(data: any): { isWarning: boolean; message: string } { return classifyStderr(data); }
 
   /**
    * Pause execution (can be resumed)
