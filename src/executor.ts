@@ -1906,112 +1906,159 @@ export class Executor {
     // CRITICAL FIX: Use workspace from plan, not just this.config.workspace
     const workspaceUri = workspace || this.config.workspace;
 
-    // Check if this is a risky write operation that warrants confirmation
-    if (this.shouldAskForWrite(step.path)) {
-      console.log(`[Executor] Detected risky write to: ${step.path}`);
-      console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
+    // Stage 1: Guard (user confirmation for risky files)
+    const guardResult = await this.runWriteGuard(step, startTime);
+    if (guardResult) return guardResult;
 
-      const answer = await this.config.onQuestion?.(
-        `About to write to important file: \`${step.path}\`\n\nThis is a critical configuration or data file. Should I proceed with writing?`,
-        ['Yes, write the file', 'No, skip this step', 'Cancel execution'],
-        30000 // Standard timeout for write confirmation
+    try {
+      // Stage 2: Multi-step context (previously created files, READ contents, dependency scan)
+      const { multiStepContext, sourceReadContents } = await this.buildMultiStepContext(step, workspaceUri);
+
+      // Stage 3: Prompt assembly + acceptance criteria generation
+      const { prompt, acceptanceCriteria } = await this.buildWritePromptWithCriteria(step, multiStepContext, sourceReadContents);
+
+      // Stage 4: LLM code generation + markdown cleanup
+      this.config.onStepOutput?.(step.stepId, `📝 Generating ${step.path}...`, false);
+      const content = await this.generateAndCleanContent(prompt, step);
+
+      // Stage 5: Pre-write validation + auto-correction loop
+      const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
+      const matchingSource = sourceReadContents.find(
+        r => (r.path.split(/[\\/]/).pop() ?? '') === (step.path.split(/[\\/]/).pop() ?? '')
       );
-      console.log(`[Executor] User answered for write: ${answer}`);
+      const finalContent = await this.validateAndAutoCorrect(step, content, matchingSource, acceptanceCriteria);
 
-      if (answer === 'No, skip this step') {
-        return {
-          stepId: step.stepId,
-          success: true,
-          output: `Skipped: ${step.description}`,
-          duration: Date.now() - startTime,
-        };
-      } else if (answer === 'Cancel execution') {
-        throw new Error('User cancelled execution');
+      // Stage 6: Write to disk + post-write tsc check (Check 6)
+      const resolvedContent = await this.writeAndVerify(step, filePath, finalContent, sourceReadContents, matchingSource, workspaceUri);
+
+      // Stage 7: Update CodebaseIndex
+      if (this.config.codebaseIndex) {
+        this.config.codebaseIndex.addFile(filePath.fsPath, resolvedContent);
       }
-      // If 'Yes, write the file' or no answer, continue with write
+
+      const result: any = {
+        stepId: step.stepId,
+        success: true,
+        output: `Wrote ${step.path} (${resolvedContent.length} bytes)`,
+        duration: Date.now() - startTime,
+        content: resolvedContent,  // ✅ CRITICAL: Store the actual content for next steps
+      };
+      return result;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const suggestion = this.suggestErrorFix('write', step.path, errorMsg);
+      throw new Error(
+        `Failed to write ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
+      );
+    }
+  }
+
+
+  // ── executeWrite pipeline stages ───────────────────────────────────────────
+
+  /**
+   * Stage 1 — Guard: prompt user before writing to risky/important files.
+   * Returns a skip StepResult when the user declines, throws on cancel,
+   * returns null when it is safe to proceed.
+   */
+  private async runWriteGuard(step: PlanStep, startTime: number): Promise<StepResult | null> {
+    if (!this.shouldAskForWrite(step.path!)) return null;
+
+    console.log(`[Executor] Detected risky write to: ${step.path}`);
+    console.log(`[Executor] onQuestion callback exists: ${!!this.config.onQuestion}`);
+
+    const answer = await this.config.onQuestion?.(
+      `About to write to important file: \`${step.path}\`\n\nThis is a critical configuration or data file. Should I proceed with writing?`,
+      ['Yes, write the file', 'No, skip this step', 'Cancel execution'],
+      30000
+    );
+    console.log(`[Executor] User answered for write: ${answer}`);
+
+    if (answer === 'No, skip this step') {
+      return {
+        stepId: step.stepId,
+        success: true,
+        output: `Skipped: ${step.description}`,
+        duration: Date.now() - startTime,
+      };
+    }
+    if (answer === 'Cancel execution') {
+      throw new Error('User cancelled execution');
+    }
+    return null; // 'Yes, write the file' or no answer — proceed
+  }
+
+  /**
+   * Stage 2 — Context: collect previously-written files, READ step contents,
+   * and auto-scanned workspace dependencies into a multiStepContext string.
+   */
+  private async buildMultiStepContext(
+    step: PlanStep,
+    workspaceUri: vscode.Uri
+  ): Promise<{ multiStepContext: string; sourceReadContents: { path: string; content: string }[] }> {
+    let multiStepContext = '';
+    let sourceReadContents: { path: string; content: string }[] = [];
+
+    if (!this.plan || step.stepId <= 1) {
+      return { multiStepContext, sourceReadContents };
     }
 
-    // Build a detailed prompt that asks for code-only output
-    // CONTRACT INJECTION: Inject step description as source of truth for intent
-    let prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
+    const completedSteps = new Map(this.plan.results || new Map());
 
-    // CRITICAL: Use step.description as primary requirement (intent preservation)
-    // This bridges the planning → execution gap by injecting the actual requirement
-    const intentRequirement = step.description
-      ? `REQUIREMENT: ${step.description}\n\n`
-      : '';
-
-    // MULTI-STEP CONTEXT INJECTION WITH FILE CONTRACTS
-    // This prevents duplicate stores, unused imports, and pseudo-refactoring
-    // KEY ENHANCEMENT: Include actual exported APIs from previous files
-    let multiStepContext = '';
-    // Hoisted outside the plan-context block so the callback-preservation validator
-    // (which runs after generation) can access the source READ contents.
-    let sourceReadContents: { path: string; content: string }[] = [];
-    if (this.plan && step.stepId > 1) {
-      const previouslyCreatedFiles: string[] = [];
-      const completedSteps = new Map(this.plan.results || new Map());
-
-      // Collect prior READ step content so the LLM knows the exact API of existing files.
-      // This prevents guessing import paths (e.g. store/ vs stores/) and export names.
-      const readStepContents: { path: string; content: string }[] = [];
-      for (let i = 1; i < step.stepId; i++) {
-        const prevStep = this.plan.steps.find(s => s.stepId === i);
-        const prevResult = completedSteps.get(i);
-        if (prevStep && prevResult?.success && prevStep.action === 'read' && prevResult.output) {
-          // output now stores actual file content (not just the summary message)
-          const isSummary = prevResult.output.startsWith('Read ') && prevResult.output.includes(' bytes)');
-          if (!isSummary && prevResult.output.length > 0) {
-            readStepContents.push({ path: prevStep.path, content: prevResult.output });
-          }
+    // Collect content from prior READ steps
+    const readStepContents: { path: string; content: string }[] = [];
+    for (let i = 1; i < step.stepId; i++) {
+      const prevStep = this.plan.steps.find(s => s.stepId === i);
+      const prevResult = completedSteps.get(i);
+      if (prevStep && prevResult?.success && prevStep.action === 'read' && prevResult.output) {
+        const isSummary = prevResult.output.startsWith('Read ') && prevResult.output.includes(' bytes)');
+        if (!isSummary && prevResult.output.length > 0) {
+          readStepContents.push({ path: prevStep.path, content: prevResult.output });
         }
       }
+    }
 
-      // Auto-scan workspace for dependency files mentioned in step description.
-      // Handles the case where the planner forgot to add a READ step for a dependency
-      // (e.g., "using the existing authStore" without a READ step for authStore.ts).
-      const workspaceDeps = await this.scanWorkspaceForDependencies(
-        step,
-        workspaceUri,
-        new Set(readStepContents.map(r => r.path))
-      );
-      if (workspaceDeps.length > 0) {
-        readStepContents.push(...workspaceDeps);
+    // Auto-scan workspace for dependency files the planner forgot to READ
+    const workspaceDeps = await this.scanWorkspaceForDependencies(
+      step,
+      workspaceUri,
+      new Set(readStepContents.map(r => r.path))
+    );
+    if (workspaceDeps.length > 0) {
+      readStepContents.push(...workspaceDeps);
+    }
+
+    // Collect files written in prior steps
+    const previouslyCreatedFiles: string[] = [];
+    for (let i = 1; i < step.stepId; i++) {
+      const prevStep = this.plan.steps.find(s => s.stepId === i);
+      const prevResult = completedSteps.get(i);
+      if (prevStep && prevResult?.success && prevStep.action === 'write') {
+        previouslyCreatedFiles.push(prevStep.path);
       }
+    }
 
-      // Collect files created in previous steps
-      for (let i = 1; i < step.stepId; i++) {
-        const prevStep = this.plan.steps.find(s => s.stepId === i);
-        const prevResult = completedSteps.get(i);
+    if (previouslyCreatedFiles.length === 0 && readStepContents.length === 0) {
+      return { multiStepContext, sourceReadContents };
+    }
 
-        if (prevStep && prevResult && prevResult.success && prevStep.action === 'write') {
-          previouslyCreatedFiles.push(prevStep.path);
-        }
+    const fileContracts: string[] = [];
+    const requiredImports: string[] = [];
+
+    for (const filePath of previouslyCreatedFiles) {
+      try {
+        const contract = await this.extractFileContract(filePath, workspaceUri);
+        fileContracts.push(contract);
+        const importStmt = this.calculateImportStatement(step.path!, filePath);
+        if (importStmt) requiredImports.push(importStmt);
+      } catch {
+        fileContracts.push(`📄 **File** - \`${filePath}\``);
       }
+    }
 
-      if (previouslyCreatedFiles.length > 0 || readStepContents.length > 0) {
-        const fileContracts: string[] = [];
-        const requiredImports: string[] = [];
-
-        for (const filePath of previouslyCreatedFiles) {
-          try {
-            const contract = await this.extractFileContract(filePath, workspace || this.config.workspace);
-            fileContracts.push(contract);
-
-            // Calculate the import statement for this file from the current file's perspective
-            const importStmt = this.calculateImportStatement(step.path, filePath);
-            if (importStmt) {
-              requiredImports.push(importStmt);
-            }
-          } catch {
-            fileContracts.push(`📄 **File** - \`${filePath}\``);
-          }
-        }
-
-        // Build the multiStepContext with both contracts and required imports
-        let importSection = '';
-        if (requiredImports.length > 0) {
-          importSection = `## REQUIRED IMPORTS
+    let importSection = '';
+    if (requiredImports.length > 0) {
+      importSection = `## REQUIRED IMPORTS
 You MUST start your file with these EXACT import statements (copy-paste):
 
 \`\`\`typescript
@@ -2022,33 +2069,28 @@ These are calculated based on actual file paths. Do NOT modify them.
 Do NOT create your own import paths - use EXACTLY what's shown above.
 
 `;
-        }
+    }
 
-        // Include content from prior READ steps so the LLM sees the actual API of existing files
-        // Also compute path offset: if this WRITE target is in a subdirectory relative to
-        // a READ source, the model must adjust relative import paths (e.g. ./pages/ → ../pages/).
-        let pathOffsetNote = '';
-        if (readStepContents.length > 0 && step.path) {
-          const targetDir = step.path.includes('/') ? step.path.substring(0, step.path.lastIndexOf('/')) : '';
-          for (const r of readStepContents) {
-            const sourceDir = r.path.includes('/') ? r.path.substring(0, r.path.lastIndexOf('/')) : '';
-            if (targetDir !== sourceDir && targetDir.startsWith(sourceDir + '/')) {
-              // Target is one or more levels deeper than source.
-              // Count the extra levels so we know how many '../' to prepend.
-              const extra = targetDir.slice(sourceDir.length + 1).split('/').length;
-              const prefix = '../'.repeat(extra);
-              pathOffsetNote = `\n⚠️ PATH ADJUSTMENT REQUIRED: You are writing to \`${step.path}\` (directory: \`${targetDir}/\`). ` +
-                `The source file \`${r.path}\` is at \`${sourceDir}/\`. ` +
-                `Its relative imports (e.g. \`./pages/X\`) resolve from \`${sourceDir}/\`, ` +
-                `but from \`${targetDir}/\` you must add \`${'../'.repeat(extra)}\` prefix: ` +
-                `WRONG: \`./pages/X\`  RIGHT: \`${prefix}pages/X\`\n`;
-              break;
-            }
-          }
+    let pathOffsetNote = '';
+    if (readStepContents.length > 0 && step.path) {
+      const targetDir = step.path.includes('/') ? step.path.substring(0, step.path.lastIndexOf('/')) : '';
+      for (const r of readStepContents) {
+        const sourceDir = r.path.includes('/') ? r.path.substring(0, r.path.lastIndexOf('/')) : '';
+        if (targetDir !== sourceDir && targetDir.startsWith(sourceDir + '/')) {
+          const extra = targetDir.slice(sourceDir.length + 1).split('/').length;
+          const prefix = '../'.repeat(extra);
+          pathOffsetNote = `\n⚠️ PATH ADJUSTMENT REQUIRED: You are writing to \`${step.path}\` (directory: \`${targetDir}/\`). ` +
+            `The source file \`${r.path}\` is at \`${sourceDir}/\`. ` +
+            `Its relative imports (e.g. \`./pages/X\`) resolve from \`${sourceDir}/\`, ` +
+            `but from \`${targetDir}/\` you must add \`${'../'.repeat(extra)}\` prefix: ` +
+            `WRONG: \`./pages/X\`  RIGHT: \`${prefix}pages/X\`\n`;
+          break;
         }
+      }
+    }
 
-        const readContextSection = readStepContents.length > 0
-          ? `## EXISTING CODEBASE (files read in prior steps — use their EXACT APIs)
+    const readContextSection = readStepContents.length > 0
+      ? `## EXISTING CODEBASE (files read in prior steps — use their EXACT APIs)
 ${pathOffsetNote}
 ${readStepContents.map(r => `### ${r.path}\n\`\`\`typescript\n${r.content.slice(0, 4000)}\n\`\`\``).join('\n\n')}
 
@@ -2064,10 +2106,10 @@ Rules:
 - Do NOT drop any handler that exists in the source and belongs in this file
 
 `
-          : '';
+      : '';
 
-        const createdFilesSection = fileContracts.length > 0
-          ? `## CONTEXT: Files Already Created in This Plan
+    const createdFilesSection = fileContracts.length > 0
+      ? `## CONTEXT: Files Already Created in This Plan
 Use the EXACT export names, hook signatures, and prop types shown below — do not guess.
 
 ${fileContracts.join('\n\n')}
@@ -2084,18 +2126,33 @@ CRITICAL INTEGRATION RULES:
    Only the top-level App or the parent that owns both should import both.
 
 `
-          : '';
+      : '';
 
-        multiStepContext = `${readContextSection}${importSection}${createdFilesSection}`;
-        console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s), ${readStepContents.length} read file(s)`);
-        // Hoist for post-generation callback-preservation validator
-        sourceReadContents = readStepContents;
-      }
-    }
+    multiStepContext = `${readContextSection}${importSection}${createdFilesSection}`;
+    sourceReadContents = readStepContents;
+    console.log(`[Executor] ℹ️ Injecting multi-step context: ${fileContracts.length} file contract(s), ${requiredImports.length} import(s), ${readStepContents.length} read file(s)`);
+
+    return { multiStepContext, sourceReadContents };
+  }
+
+  /**
+   * Stage 3 — Prompt: assemble all constraint sections, build the final
+   * generation prompt, generate acceptance criteria, and append them.
+   */
+  private async buildWritePromptWithCriteria(
+    step: PlanStep,
+    multiStepContext: string,
+    sourceReadContents: { path: string; content: string }[]
+  ): Promise<{ prompt: string; acceptanceCriteria: string[] }> {
+    let prompt = step.prompt || `Generate appropriate content for ${step.path} based on its name.`;
+
+    const intentRequirement = step.description
+      ? `REQUIREMENT: ${step.description}\n\n`
+      : '';
 
     // GOLDEN TEMPLATE INJECTION: For known files, inject exact template to copy
     let goldenTemplateSection = '';
-    const fileName = step.path.split('/').pop() || '';
+    const fileName = step.path!.split('/').pop() || '';
     if (fileName === 'cn.ts' || fileName === 'cn.js') {
       goldenTemplateSection = `GOLDEN TEMPLATE (copy this exactly - do NOT modify):
 \`\`\`typescript
@@ -2108,13 +2165,10 @@ Your ONLY job: Output this code exactly. Do NOT modify it.
       console.log(`[Executor] ✅ Injecting golden template for ${fileName}`);
     }
 
-    // REACT IMPORTS INJECTION: For single-step React components, explicitly require React imports
-    // This prevents the LLM from generating hooks without importing them
+    // REACT IMPORTS INJECTION: single-step React components only
     let reactImportsSection = '';
-    const isReactComponent = step.path.endsWith('.tsx') || step.path.endsWith('.jsx');
+    const isReactComponent = step.path!.endsWith('.tsx') || step.path!.endsWith('.jsx');
     if (isReactComponent && !multiStepContext) {
-      // Only inject if this is a single-step plan (no multiStepContext already added)
-      // Multi-step plans handle imports differently
       reactImportsSection = `## REQUIRED REACT IMPORTS
 
 RULE: All React imports MUST be in a SINGLE combined import statement. NEVER split across multiple lines.
@@ -2176,7 +2230,7 @@ STRICTLY FORBIDDEN (these will be rejected):
 `;
     }
 
-    // PROJECT PROFILE CONSTRAINTS: Inject detected project conventions as hard rules
+    // PROJECT PROFILE CONSTRAINTS
     let profileConstraintsSection = '';
     if (this.config.projectProfile) {
       const constraints = this.config.projectProfile.getGenerationConstraints();
@@ -2186,11 +2240,10 @@ STRICTLY FORBIDDEN (these will be rejected):
       }
     }
 
-    // Interactive component constraint block: injected for Button, Input, Select, etc.
+    // INTERACTIVE COMPONENT RULES (Button, Input, Select, etc.)
     const interactiveComponentPattern = /\/(Button|Input|Select|Textarea|Checkbox|Radio|Toggle|Switch|Slider)\.[tj]sx?$/i;
-    const isInteractiveComponent = interactiveComponentPattern.test(step.path);
-    const componentName = step.path.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component';
-    // Map component name to the correct HTML element type for forwardRef generics
+    const isInteractiveComponent = interactiveComponentPattern.test(step.path!);
+    const componentName = step.path!.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Component';
     const htmlElementType = /input/i.test(componentName) ? 'HTMLInputElement'
       : /select/i.test(componentName) ? 'HTMLSelectElement'
       : /textarea/i.test(componentName) ? 'HTMLTextAreaElement'
@@ -2207,11 +2260,10 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER use an internal alias: do NOT write \`const ${componentName}Inner = ...\` then \`export const ${componentName} = ${componentName}Inner\` or \`export const ${componentName} = ${componentName}\`. Export forwardRef directly.\n\n`
       : '';
 
-    // Non-interactive component guard: injected for .tsx files that are NOT interactive controls.
-    // Prevents the LLM from hallucinating forwardRef on form/page/layout components.
-    const isNonInteractiveTsx = step.path.endsWith('.tsx') && !isInteractiveComponent;
-    const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path);
-    const isStructuralLayoutTsx = isNonInteractiveTsx && Executor.isStructuralLayout(step.path, step.description);
+    // NON-INTERACTIVE TSX RULES (form/page/layout components)
+    const isNonInteractiveTsx = step.path!.endsWith('.tsx') && !isInteractiveComponent;
+    const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path!);
+    const isStructuralLayoutTsx = isNonInteractiveTsx && Executor.isStructuralLayout(step.path!, step.description);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
         `- NEVER use React.forwardRef or forwardRef — this is not a ref-forwarding component.\n` +
@@ -2263,8 +2315,8 @@ STRICTLY FORBIDDEN (these will be rejected):
         `\n`
       : '';
 
-    // Hook-specific constraint block: injected when the target file is a hook (.ts in hooks/)
-    const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+    // HOOK FILE RULES
+    const isHookTarget = /[\\/]hooks[\\/][^/]+\.ts$/.test(step.path!) && !step.path!.endsWith('.tsx');
     const hookConstraintSection = isHookTarget
       ? `\nHOOK FILE RULES (mandatory — hooks are pure logic, no styling):\n` +
         `- NEVER import cn, clsx, classnames, or any CSS/style utility — hooks have no className\n` +
@@ -2281,8 +2333,8 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- TIMER LOOPS: NEVER use setInterval or setTimeout to update auth state — auth does not change on a timer\n\n`
       : '';
 
-    // Zustand store constraint block: injected when the target file is in store/ or stores/
-    const isStoreTarget = /[\\/]store[s]?[\\/][^/]+\.ts$/.test(step.path) && !step.path.endsWith('.tsx');
+    // ZUSTAND STORE RULES
+    const isStoreTarget = /[\\/]store[s]?[\\/][^/]+\.ts$/.test(step.path!) && !step.path!.endsWith('.tsx');
     const storeConstraintSection = isStoreTarget
       ? `\nZUSTAND STORE RULES (mandatory — stores are plain state objects, NOT React components):\n` +
         `- ONLY import: { create } from 'zustand' and TypeScript type definitions\n` +
@@ -2297,12 +2349,10 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER use export default — use named exports only\n\n`
       : '';
 
-    // Config/data file constraint: injected for plain .ts files that are NOT hooks or stores.
-    // Routes.ts, config.ts, types.ts, constants.ts — these are data-only with zero JSX.
-    const isConfigOrDataTsTarget = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') && !isHookTarget && !isStoreTarget;
-    // Pre-compute the source-derived "correct format" example for config/data .ts files.
+    // CONFIG/DATA FILE RULES (.ts non-hook, non-store)
+    const isConfigOrDataTsTarget = step.path!.endsWith('.ts') && !step.path!.endsWith('.tsx') && !isHookTarget && !isStoreTarget;
     const configTsFormatExample = (() => {
-      if (!isConfigOrDataTsTarget) { return ''; }
+      if (!isConfigOrDataTsTarget) return '';
       const sourceCode = sourceReadContents[0]?.content ?? '';
       const pageImports = Executor.extractPageImports(sourceCode);
       const routeConfig = Executor.extractRouteConfig(sourceCode);
@@ -2338,11 +2388,10 @@ STRICTLY FORBIDDEN (these will be rejected):
         configTsFormatExample
       : '';
 
-    // App root constraint: injected for App.tsx to prevent useNavigate in the BrowserRouter wrapper.
-    const isAppRoot = /(?:^|\/)App\.tsx$/.test(step.path);
-    // Pre-compute source-derived state/routing rules so they can be spliced into the constraint string.
+    // APP ROOT RULES
+    const isAppRoot = /(?:^|\/)App\.tsx$/.test(step.path!);
     const appRootSourceRules = (() => {
-      if (!isAppRoot) { return ''; }
+      if (!isAppRoot) return '';
       const sourceCode = sourceReadContents[0]?.content ?? '';
       const storeFieldMap = Executor.extractStoreFields(sourceCode);
       const pageImports = Executor.extractPageImports(sourceCode);
@@ -2371,8 +2420,6 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- Only import BrowserRouter from react-router-dom — do NOT import Routes, Route, Navigate, or Link.\n` +
         `  Those belong in Layout. Importing them in App.tsx duplicates routing and breaks the architecture.\n\n`;
 
-      // Derive the list of useCallback handlers that must be preserved.
-      // This prevents the LLM from "slimming" App.tsx by silently dropping handlers.
       const callbackHandlerNames = [...Executor.extractCallbackHandlers(sourceCode).keys()];
       const callbackRules = callbackHandlerNames.length > 0
         ? `HANDLER PRESERVATION RULES (all handlers from the source App component are required):\n` +
@@ -2394,9 +2441,8 @@ STRICTLY FORBIDDEN (these will be rejected):
         `  DO NOT import cn, clsx, or any CSS-class utility.\n\n`
       : '';
 
-    // Navigation/Sidebar/Header constraint: injected for pure presentation components that
-    // are extracted/decomposed from a parent. They receive ALL state as props — never from stores.
-    const isDecomposedNavigationTsx = isNonInteractiveTsx && Executor.isDecomposedNavigation(step.path, step.description);
+    // NAVIGATION/SIDEBAR COMPONENT RULES (pure presentation, props-only)
+    const isDecomposedNavigationTsx = isNonInteractiveTsx && Executor.isDecomposedNavigation(step.path!, step.description);
     const navigationConstraintSection = isDecomposedNavigationTsx
       ? `\nNAVIGATION COMPONENT RULES (mandatory — this is a PURE PRESENTATION component):\n` +
         `- DO NOT import from any store files (useAuthStore, useThemeStore, useXxxStore, etc.)\n` +
@@ -2421,10 +2467,8 @@ STRICTLY FORBIDDEN (these will be rejected):
         `  WRONG:   const Navigation = ...; export default Navigation;\n\n`
       : '';
 
-    // AVAILABLE PACKAGES: Tell the LLM which packages are actually installed so it
-    // doesn't import from packages that don't exist in this project.
-    // Only injected for TS/TSX files; no-op when package.json wasn't found.
-    const isTypescriptFile = (step.path.endsWith('.ts') || step.path.endsWith('.tsx'));
+    // AVAILABLE PACKAGES
+    const isTypescriptFile = step.path!.endsWith('.ts') || step.path!.endsWith('.tsx');
     const availablePackagesSection = (isTypescriptFile && this.availablePackages.length > 0)
       ? `\nINSTALLED PACKAGES (ONLY import from these — do NOT import from packages not on this list):\n` +
         `${this.availablePackages.join(', ')}\n` +
@@ -2432,9 +2476,8 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- react, react-dom, typescript are always available even if not listed\n\n`
       : '';
 
-    // Add instruction to output ONLY code, no explanations
-    // Detect file type from extension
-    const fileExtension = step.path.split('.').pop()?.toLowerCase();
+    // FINAL PROMPT ASSEMBLY
+    const fileExtension = step.path!.split('.').pop()?.toLowerCase();
     const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
 
     if (isCodeFile) {
@@ -2480,12 +2523,8 @@ export const MyComponent = ({ className }: { className?: string }) => {
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }
 
-    // Architect pre-flight: generate task-specific acceptance criteria before code generation.
-    // Criteria are injected into the Executor prompt (so the generator knows what will be checked)
-    // AND passed to the Reviewer (llmValidate) for structured YES/NO validation after generation.
+    // Acceptance criteria: generated by architect pre-flight, injected into prompt
     const acceptanceCriteria = await this.generateAcceptanceCriteria(step, sourceReadContents[0]?.content);
-
-    // Inject criteria into the generation prompt so the Executor satisfies them upfront
     if (acceptanceCriteria.length > 0) {
       const criteriaBlock =
         '\nACCEPTANCE CRITERIA (Reviewer will check each — your code MUST satisfy all):\n' +
@@ -2493,618 +2532,500 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       prompt += criteriaBlock;
     }
 
-    // Emit that we're generating content
-    this.config.onStepOutput?.(step.stepId, `📝 Generating ${step.path}...`, false);
+    return { prompt, acceptanceCriteria };
+  }
 
+  /**
+   * Stage 4 — Generate: call the LLM and strip markdown wrappers from the response.
+   */
+  private async generateAndCleanContent(prompt: string, step: PlanStep): Promise<string> {
     const response = await this.config.llmClient.sendMessage(prompt);
     if (!response.success) {
       throw new Error(response.error || 'LLM request failed');
     }
 
-    const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
+    const fileExtension = step.path!.split('.').pop()?.toLowerCase();
+    const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
 
-    try {
-      // Extract content and clean up if it's code
-      let content = response.message || '';
+    let content = response.message || '';
 
-      // DETECTION: Check if LLM ignored instructions and provided markdown/documentation
-      const hasMarkdownBackticks = content.includes('```');
-      const hasExcessiveComments = (content.match(/^\/\//gm) || []).length > 5; // More than 5 comment lines at start
-      const hasMultipleFileInstructions = (content.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
-      const hasYAMLOrConfigMarkers = content.includes('---') || content.includes('package.json') || content.includes('tsconfig');
+    const hasMarkdownBackticks = content.includes('```');
+    const hasExcessiveComments = (content.match(/^\/\//gm) || []).length > 5;
+    const hasMultipleFileInstructions = (content.match(/\/\/\s*(Create|Setup|In|Step|First|Then|Next|Install)/gi) || []).length > 2;
+    const hasYAMLOrConfigMarkers = content.includes('---') || content.includes('package.json') || content.includes('tsconfig');
 
-      if (hasMarkdownBackticks) {
-        // LLM wrapped code in markdown - extract it
-        const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-        if (codeBlockMatch) {
-          content = codeBlockMatch[1];
-        }
-      }
+    if (hasMarkdownBackticks) {
+      const codeBlockMatch = content.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+      if (codeBlockMatch) content = codeBlockMatch[1];
+    }
 
-      if (isCodeFile && (hasExcessiveComments || hasMultipleFileInstructions || hasYAMLOrConfigMarkers)) {
-        // LLM provided documentation/setup instructions instead of just code
-        // This will be caught by validation as unparseable, triggering auto-fix
-        this.config.onMessage?.(
-          `⚠️ Warning: LLM provided documentation/setup instructions instead of executable code. Validation will catch this.`,
-          'info'
-        );
-      }
-
-      // For code files, try to extract just the code portion
-      if (isCodeFile && !hasMarkdownBackticks) {
-        // Remove common explanation patterns (but preserve code)
-        content = content
-          .replace(/^[\s\S]*?(?=^import|^export|^const|^function|^class|^interface|^type|^\/\/)/m, '') // Remove text before first code line
-          .replace(/\n\n\n[#\-\*\s]*Installation[\s\S]*?(?=\n\n|$)/i, '') // Remove Installation sections
-          .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '') // Remove Setup sections
-          .trim();
-      }
-
-      // ============================================================================
-      // GATEKEEPER: Validate code BEFORE writing to disk
-      // LLM output is a PROPOSAL, not final. Must pass validation gates before committing.
-      // ============================================================================
-
-      let finalContent = content;
-
-      // Hoist matchingSource above the validation block so it's accessible in both
-      // the custom validation section and the post-write tsc correction section (line ~5182).
-      // const inside the validation if-block would go out of scope before tsc runs.
-      const targetFileName = step.path.split(/[\\/]/).pop() ?? '';
-      const matchingSource = sourceReadContents.find(r =>
-        (r.path.split(/[\\/]/).pop() ?? '') === targetFileName
-      );
-
-      if (['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
-        this.config.onMessage?.(
-          `🔍 Validating ${step.path}...`,
-          'info'
-        );
-
-        const validationResult = await this.validateGeneratedCode(step.path, content, step, acceptanceCriteria);
-
-        // CALLBACK PRESERVATION CHECK: when this WRITE targets the same file that was READ
-        // in a prior step, ensure all useCallback handlers are preserved intact.
-        // Uses collectCallbackErrors (also called in the correction loop below) so the
-        // check runs on EVERY validation attempt, not just the first generation.
-        if (matchingSource) {
-          const cbErrors = Executor.collectCallbackErrors(content, matchingSource.content);
-          if (cbErrors.length > 0) {
-            validationResult.errors = validationResult.errors ?? [];
-            validationResult.errors.push(...cbErrors);
-          }
-        }
-
-        // ✅ FIX: Separate critical errors from soft suggestions
-        const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
-          validationResult.errors,
-          true // verbose: log suggestions as warnings
-        );
-
-        if (criticalErrors.length === 0) {
-          // ✅ No critical errors - validation passed!
-          // Apply smart cleanup for actionable suggestions (e.g. dead cn import in .tsx)
-          const actionableSuggestions = softSuggestions.filter(
-            s => s.includes('Dead import') && s.includes('cn')
-          );
-          if (actionableSuggestions.length > 0) {
-            const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
-              ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
-              : () => Promise.resolve(null);
-            content = await SmartAutoCorrection.fixCommonPatternsAsync(
-              content, actionableSuggestions, ragResolver, step.path
-            );
-          }
-          this.config.onMessage?.(
-            `✅ Validation passed for ${step.path}`,
-            'info'
-          );
-          finalContent = content;
-        } else {
-          // ❌ CRITICAL ERRORS FOUND - Try auto-correction up to MAX_VALIDATION_ITERATIONS
-          let validationAttempt = 1;
-          let currentContent = content;
-          let lastCriticalErrors = criticalErrors;
-          let loopDetected = false;
-          // Loop detection: catch both consecutive-same (A→A) and oscillation (A→B→A) cycles.
-          let previousAttemptErrors: string[] = [];
-          let consecutiveSameErrors = 0;
-          // Sliding window of error fingerprints — detect repeated sets within 3 attempts
-          const recentErrorFingerprints: string[] = [];
-
-          while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
-            const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
-
-            this.config.onMessage?.(
-              `❌ Critical validation errors (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
-              'error'
-            );
-
-            const currentFingerprint = JSON.stringify([...lastCriticalErrors].sort());
-
-            // LOOP DETECTION 1: same errors on consecutive attempts (A→A)
-            if (
-              previousAttemptErrors.length > 0 &&
-              currentFingerprint === JSON.stringify([...previousAttemptErrors].sort())
-            ) {
-              consecutiveSameErrors++;
-            } else {
-              consecutiveSameErrors = 0;
-            }
-            previousAttemptErrors = [...lastCriticalErrors];
-
-            // LOOP DETECTION 2: oscillation within a window of 3 (A→B→A)
-            recentErrorFingerprints.push(currentFingerprint);
-            if (recentErrorFingerprints.length > 3) recentErrorFingerprints.shift();
-            const isOscillating =
-              recentErrorFingerprints.length === 3 &&
-              recentErrorFingerprints[0] === recentErrorFingerprints[2] &&
-              recentErrorFingerprints[0] !== recentErrorFingerprints[1];
-
-            if (consecutiveSameErrors >= 2 || isOscillating) {
-              this.config.onMessage?.(
-                `🔄 LOOP DETECTED: Validation errors oscillating — stopping auto-correction to prevent infinite loop`,
-                'error'
-              );
-              loopDetected = true;
-              break;
-            }
-
-            // DETERMINISTIC CALLBACK SPLICER: when handlers are missing from the generated
-            // file, extract their full declarations from source and inject them directly.
-            // The LLM consistently drops handlers on "slim" rewrites; splicing from source
-            // is reliable and avoids an extra LLM round-trip for this specific failure mode.
-            if (matchingSource) {
-              const missingCbErrors = lastCriticalErrors.filter(e =>
-                e.includes('Callback Preservation') && e.includes('missing from the generated output')
-              );
-              if (missingCbErrors.length > 0) {
-                const missingNames = missingCbErrors
-                  .map(e => { const m = e.match(/handler `(\w+)`/); return m?.[1] ?? ''; })
-                  .filter(Boolean);
-                const spliced = Executor.spliceCallbackHandlers(currentContent, matchingSource.content, missingNames);
-                if (spliced !== currentContent) {
-                  // Re-run callback check on spliced content to see which errors are resolved
-                  const splicedCbErrors = Executor.collectCallbackErrors(spliced, matchingSource.content);
-                  const resolvedCount = missingCbErrors.length - splicedCbErrors.filter(
-                    e => e.includes('missing from the generated output')
-                  ).length;
-                  if (resolvedCount > 0) {
-                    console.log(`[Executor] Spliced ${resolvedCount} missing callback handler(s): ${missingNames.join(', ')}`);
-                    // Apply the splice and update the error list
-                    currentContent = spliced;
-                    lastCriticalErrors = [
-                      ...lastCriticalErrors.filter(e => !missingCbErrors.includes(e)),
-                      ...splicedCbErrors,
-                    ];
-                    // If all critical errors are now resolved, exit the loop immediately
-                    if (lastCriticalErrors.length === 0) {
-                      finalContent = spliced;
-                      this.config.onMessage?.(`✅ Deterministic callback splice resolved all errors.`, 'info');
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-
-            // If last attempt, give up
-            if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
-              const remainingErrors = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
-              this.config.onMessage?.(
-                `❌ Max validation attempts (${this.MAX_VALIDATION_ITERATIONS}) reached. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
-                'error'
-              );
-              throw new Error(`Validation failed after ${this.MAX_VALIDATION_ITERATIONS} attempts.\n${remainingErrors}`);
-            }
-
-            // Attempt auto-correction
-            this.config.onMessage?.(
-              `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
-              'info'
-            );
-
-            // Fast-path: forwardRef missing displayName is a pure append — no LLM needed.
-            // Pattern: last non-whitespace line is `});` or `});` and component name is known.
-            const displayNameError = lastCriticalErrors.find(e => e.includes('forwardRef missing displayName'));
-            if (displayNameError && lastCriticalErrors.length === 1) {
-              const compNameMatch = displayNameError.match(/Add `(\w+)\.displayName/);
-              if (compNameMatch) {
-                const compName = compNameMatch[1];
-                const patched = currentContent.trimEnd() + `\n${compName}.displayName = '${compName}';\n`;
-                const patchValidation = await this.validateGeneratedCode(step.path, patched, step, acceptanceCriteria);
-                const { critical: patchCritical } = this.filterCriticalErrors(patchValidation.errors, false);
-                if (patchCritical.length === 0) {
-                  currentContent = patched;
-                  lastCriticalErrors = [];
-                  break;
-                }
-              }
-            }
-
-            // ✅ FIX: Only pass CRITICAL errors to auto-correction, not soft suggestions
-            const canAutoFix = SmartAutoCorrection.isAutoFixable(lastCriticalErrors);
-            let correctedContent: string;
-
-            if (canAutoFix) {
-              // Try smart auto-correction first
-              this.config.onMessage?.(
-                `🧠 Attempting smart auto-correction (circular imports, missing/unused imports, etc.)...`,
-                'info'
-              );
-              const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
-                ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
-                : () => Promise.resolve(null);
-              const smartFixed = await SmartAutoCorrection.fixCommonPatternsAsync(
-                currentContent, lastCriticalErrors, ragResolver, step.path
-              );
-
-              // Validate the fixed code - only check CRITICAL errors
-              const smartValidation = await this.validateGeneratedCode(step.path, smartFixed, step, acceptanceCriteria);
-              const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
-                smartValidation.errors,
-                false // Don't spam logs during auto-correction
-              );
-
-              if (criticalAfterFix.length === 0) {
-                // ✅ Smart fix worked! (No more critical errors)
-                this.config.onMessage?.(
-                  `✅ Smart auto-correction successful! Fixed: ${lastCriticalErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastCriticalErrors.length > 2 ? ', ...' : ''}`,
-                  'info'
-                );
-                // Log any remaining suggestions
-                if (suggestionsAfterFix.length > 0) {
-                  this.config.onMessage?.(
-                    `⚠️ Remaining suggestions: ${suggestionsAfterFix.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
-                    'info'
-                  );
-                }
-                correctedContent = smartFixed;
-              } else {
-                // ❌ Smart fix didn't fully work, fall back to LLM with ONLY CRITICAL ERRORS
-                this.config.onMessage?.(
-                  `⚠️ Smart fix incomplete, using LLM for context-aware correction...`,
-                  'info'
-                );
-                // ✅ FIX: Only send CRITICAL errors to LLM, not soft suggestions
-                // Format errors with context and specific guidance for the LLM
-                const formattedErrors = lastCriticalErrors.map((e, i) => {
-                  // For hook errors, add specific guidance
-                  if (e.includes('Hook') && e.includes('imported but never called')) {
-                    const hookMatch = e.match(/Hook '(\w+)'/);
-                    const hookName = hookMatch ? hookMatch[1] : 'hook';
-                    // Zustand stores return objects (destructure), not [state, setter] tuples
-                    const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
-                      ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
-                      : `const value = ${hookName}();`;
-                    return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
-                  }
-                  return `${i + 1}. ${e}`;
-                }).join('\n');
-
-                const hasJsxInTsError1 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
-                  lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
-
-                let correctedContent1: string;
-                if (hasJsxInTsError1) {
-                  // JSX-in-.ts: must gut the file — whole-file rewrite is unavoidable
-                  const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
-                  const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-                  if (!fixResponse.success) {
-                    throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
-                  }
-                  correctedContent1 = fixResponse.message || '';
-                  const fence = correctedContent1.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                  if (fence) { correctedContent1 = fence[1]; }
-                } else {
-                  // Surgical: SEARCH/REPLACE blocks — LLM edits only what the error requires
-                  const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path);
-                  const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
-                  if (!surgicalResponse.success) {
-                    throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
-                  }
-                  const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
-                  correctedContent1 = patched ?? (surgicalResponse.message || '');
-                  if (!patched) {
-                    // Patch parsing failed — strip fences and treat as whole-file fallback
-                    const fence = correctedContent1.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                    if (fence) { correctedContent1 = fence[1]; }
-                  }
-                }
-                correctedContent = correctedContent1;
-              }
-            } else {
-              // Complex errors that need LLM
-              this.config.onMessage?.(
-                `🤖 Using LLM for context-aware correction (complex errors detected)...`,
-                'info'
-              );
-              // ✅ FIX: Only send CRITICAL errors to LLM
-              // Format errors with context and specific guidance for the LLM
-              const formattedErrors = lastCriticalErrors.map((e, i) => {
-                // For hook errors, add specific guidance
-                if (e.includes('Hook') && e.includes('imported but never called')) {
-                  const hookMatch = e.match(/Hook '(\w+)'/);
-                  const hookName = hookMatch ? hookMatch[1] : 'hook';
-                  // Zustand stores return objects (destructure), not [state, setter] tuples
-                  const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
-                    ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
-                    : `const value = ${hookName}();`;
-                  return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
-                }
-                return `${i + 1}. ${e}`;
-              }).join('\n');
-
-              const hasJsxInTsError2 = step.path.endsWith('.ts') && !step.path.endsWith('.tsx') &&
-                lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
-
-              let correctedContent2: string;
-              if (hasJsxInTsError2) {
-                // JSX-in-.ts: whole-file rewrite required
-                const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
-                const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-                if (!fixResponse.success) {
-                  throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
-                }
-                correctedContent2 = fixResponse.message || '';
-                const fence = correctedContent2.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                if (fence) { correctedContent2 = fence[1]; }
-              } else {
-                // Surgical: SEARCH/REPLACE blocks
-                const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path);
-                const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
-                if (!surgicalResponse.success) {
-                  throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
-                }
-                const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
-                correctedContent2 = patched ?? (surgicalResponse.message || '');
-                if (!patched) {
-                  const fence = correctedContent2.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-                  if (fence) { correctedContent2 = fence[1]; }
-                }
-              }
-              correctedContent = correctedContent2;
-            }
-
-            // Re-validate the corrected code - only check CRITICAL errors
-            const nextValidation = await this.validateGeneratedCode(step.path, correctedContent, step, acceptanceCriteria);
-            // Re-run callback preservation on the corrected content — same check as initial pass.
-            // Without this, SmartAutoCorrection can fix TypeScript errors while leaving callback
-            // violations intact, causing nextValidation to pass even though handlers are wrong.
-            if (matchingSource) {
-              const cbErrors = Executor.collectCallbackErrors(correctedContent, matchingSource.content);
-              if (cbErrors.length > 0) {
-                nextValidation.errors = nextValidation.errors ?? [];
-                nextValidation.errors.push(...cbErrors);
-              }
-            }
-            const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
-              nextValidation.errors,
-              false // Don't spam logs during loops
-            );
-
-            if (nextCritical.length === 0) {
-              // ✅ Auto-correction succeeded
-              this.config.onMessage?.(
-                `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all critical validation checks.`,
-                'info'
-              );
-              if (nextSuggestions.length > 0) {
-                this.config.onMessage?.(
-                  `⚠️ Remaining suggestions: ${nextSuggestions.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
-                  'info'
-                );
-              }
-              finalContent = correctedContent;
-              break;
-            }
-
-            // Validation still failing - prepare for next iteration
-            currentContent = correctedContent;
-            lastCriticalErrors = nextCritical;
-            validationAttempt++;
-          }
-
-          if (loopDetected) {
-            throw new Error(`Validation loop detected - infinite correction cycle prevented. Please fix manually.`);
-          }
-        }
-      } else {
-        // ✅ Non-code files (JSON, YAML, etc) - skip validation for now
-        this.config.onMessage?.(
-          `✅ Skipping validation for non-code file ${step.path}`,
-          'info'
-        );
-        finalContent = content;
-      }
-
-      // Show preview of final (validated) content
-      if (this.config.onStepOutput && finalContent.length > 0) {
-        const preview = finalContent.length > 200
-          ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
-          : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
-        this.config.onStepOutput(step.stepId, preview, false);
-      }
-
-      // Write file
-      const bytes = new Uint8Array(finalContent.length);
-      for (let i = 0; i < finalContent.length; i++) {
-        bytes[i] = finalContent.charCodeAt(i);
-      }
-
-      await vscode.workspace.fs.writeFile(filePath, bytes);
-
-      // Check 6: TypeScript compiler (ground truth — runs post-write so tsc sees the file)
-      // Only for .ts/.tsx files where a tsconfig.json exists in the workspace root.
-      // Cascading errors in OTHER files (e.g. App.tsx importing a renamed export) are
-      // intentionally ignored here — the plan's final RUN/tsc step is the hard gate.
-      const isTsFile = step.path.endsWith('.ts') || step.path.endsWith('.tsx');
-      if (isTsFile && workspaceUri) {
-        this.config.onMessage?.(`🔎 Check 6: TypeScript compiler...`, 'info');
-        let tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
-
-        if (tscErrors.length > 0) {
-          this.config.onMessage?.(
-            `⚠️ ${tscErrors.length} TypeScript error(s) in ${step.path}:\n` +
-            tscErrors.map(e => `  ${e}`).join('\n'),
-            'info'
-          );
-
-          // Pass 0: deterministic fixes (TS1005 semicolons, split imports, etc.) before LLM
-          const deterministicFixed = SmartAutoCorrection.fixCommonPatterns(finalContent, tscErrors, step.path);
-          if (deterministicFixed !== finalContent) {
-            this.config.onMessage?.(`🔧 Applying deterministic TypeScript fixes...`, 'info');
-            finalContent = deterministicFixed;
-            const detBytes = Buffer.from(finalContent, 'utf8');
-            await vscode.workspace.fs.writeFile(filePath, detBytes);
-            tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
-          }
-
-          // Pass 0.5: deterministic import resolver for TS2304 "Cannot find name 'X'" errors.
-          // When the generator forgets to import a symbol that appears in a previously-read
-          // source file (e.g. NotFoundPage used by Layout but only imported in App.tsx),
-          // extract the import from the source file and add it with the correct relative path.
-          // This fires before LLM correction so the 2 LLM passes focus on other errors.
-          const ts2304Names = tscErrors
-            .filter(e => e.includes('TS2304'))
-            .map(e => { const m = e.match(/Cannot find name '(\w+)'/); return m?.[1] ?? ''; })
-            .filter(Boolean);
-
-          if (ts2304Names.length > 0) {
-            let resolvedContent = finalContent;
-            // Check all source files we have: the matching source + any others we read
-            const allSources: { path: string; content: string }[] = [...sourceReadContents];
-            if (matchingSource && !allSources.find(s => s.path === matchingSource.path)) {
-              allSources.unshift(matchingSource);
-            }
-
-            for (const unknownName of ts2304Names) {
-              // Skip if already present in import lines
-              const importLines = resolvedContent.split('\n').filter(l => l.trimStart().startsWith('import'));
-              if (new RegExp(`\\b${unknownName}\\b`).test(importLines.join('\n'))) { continue; }
-
-              // Search source files for default or named import of this symbol
-              for (const src of allSources) {
-                const defaultRe = new RegExp(`import\\s+${unknownName}\\s+from\\s+(['"])([^'"]+)\\1`);
-                const namedRe = new RegExp(`import\\s+\\{[^}]*\\b${unknownName}\\b[^}]*\\}\\s+from\\s+(['"])([^'"]+)\\1`);
-                const defaultMatch = src.content.match(defaultRe);
-                const namedMatch = src.content.match(namedRe);
-
-                let importStatement: string | null = null;
-                if (defaultMatch) {
-                  const relPath = this.computeRelativeImportPath(step.path, src.path, defaultMatch[2]);
-                  importStatement = `import ${unknownName} from '${relPath}';`;
-                } else if (namedMatch) {
-                  const relPath = this.computeRelativeImportPath(step.path, src.path, namedMatch[2]);
-                  importStatement = `import { ${unknownName} } from '${relPath}';`;
-                }
-
-                if (importStatement && !resolvedContent.includes(importStatement)) {
-                  // Insert after the last import line in the file
-                  const importLineMatches = [...resolvedContent.matchAll(/^import[^\n]*\n/gm)];
-                  if (importLineMatches.length > 0) {
-                    const last = importLineMatches[importLineMatches.length - 1];
-                    const insertPos = last.index! + last[0].length;
-                    resolvedContent = resolvedContent.slice(0, insertPos) + importStatement + '\n' + resolvedContent.slice(insertPos);
-                  } else {
-                    resolvedContent = importStatement + '\n' + resolvedContent;
-                  }
-                  break; // Found and added — move to next unknown name
-                }
-              }
-            }
-
-            if (resolvedContent !== finalContent) {
-              this.config.onMessage?.(`🔧 Resolving missing imports deterministically (TS2304)...`, 'info');
-              finalContent = resolvedContent;
-              await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
-              tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
-            }
-          }
-
-          // Attempt up to 2 LLM correction passes if errors remain
-          for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
-            this.config.onMessage?.(
-              `🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info'
-            );
-
-            // Surgical first: build a per-line JSON-patch prompt if errors have line numbers.
-            // This avoids handing the whole file to the LLM (which tends to rewrite everything
-            // and introduce new errors in unrelated parts like template literals).
-            const surgicalPrompt = this.buildSurgicalTscPrompt(finalContent, tscErrors, step.path);
-            let corrected: string | null = null;
-
-            if (surgicalPrompt) {
-              const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
-              if (surgicalResponse.success && surgicalResponse.message?.trim()) {
-                corrected = this.applySurgicalTscPatches(finalContent, surgicalResponse.message);
-              }
-            }
-
-            if (corrected === null) {
-              // Fallback: whole-file correction when no line numbers or patch parsing failed
-              const fixPrompt =
-                `The following TypeScript file has compiler errors reported by tsc.\n\n` +
-                `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
-                `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
-                `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
-                `NEVER add 'any' type — use specific types or 'unknown'. ` +
-                `Provide ONLY the corrected code. No explanations, no markdown fences.`;
-              const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
-              if (!fixResponse.success || !fixResponse.message?.trim()) { break; }
-              let raw = fixResponse.message;
-              const fenceMatch = raw.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
-              if (fenceMatch) { raw = fenceMatch[1]; }
-              corrected = raw;
-            }
-
-            finalContent = corrected;
-
-            // Overwrite file with correction
-            const fixedBytes = Buffer.from(finalContent, 'utf8');
-            await vscode.workspace.fs.writeFile(filePath, fixedBytes);
-
-            // Re-check — break early if clean
-            tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path);
-          }
-
-          if (tscErrors.length > 0) {
-            if (step.path) { this.filesWithPersistentTscErrors.add(step.path); }
-            this.config.onMessage?.(
-              `⚠️ ${tscErrors.length} TypeScript error(s) persist after correction. ` +
-              `File written — the final tsc RUN step will surface any remaining issues.`,
-              'info'
-            );
-          } else {
-            this.config.onMessage?.(`✅ Check 6: TypeScript errors resolved.`, 'info');
-          }
-        } else {
-          this.config.onMessage?.(`✅ Check 6: TypeScript clean.`, 'info');
-        }
-      }
-
-      // Phase 3.3.2: Track file in CodebaseIndex for next steps
-      if (this.config.codebaseIndex) {
-        this.config.codebaseIndex.addFile(filePath.fsPath, finalContent);
-      }
-
-      const result: any = {
-        stepId: step.stepId,
-        success: true,
-        output: `Wrote ${step.path} (${finalContent.length} bytes)`,
-        duration: Date.now() - startTime,
-        content: finalContent,  // ✅ CRITICAL: Store the actual content for next steps
-      };
-
-      return result;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const suggestion = this.suggestErrorFix('write', step.path, errorMsg);
-      throw new Error(
-        `Failed to write ${step.path}: ${errorMsg}${suggestion ? `\n💡 Suggestion: ${suggestion}` : ''}`
+    if (isCodeFile && (hasExcessiveComments || hasMultipleFileInstructions || hasYAMLOrConfigMarkers)) {
+      this.config.onMessage?.(
+        `⚠️ Warning: LLM provided documentation/setup instructions instead of executable code. Validation will catch this.`,
+        'info'
       );
     }
+
+    if (isCodeFile && !hasMarkdownBackticks) {
+      content = content
+        .replace(/^[\s\S]*?(?=^import|^export|^const|^function|^class|^interface|^type|^\/\/)/m, '')
+        .replace(/\n\n\n[#\-\*\s]*Installation[\s\S]*?(?=\n\n|$)/i, '')
+        .replace(/\n\n\n[#\-\*\s]*Setup[\s\S]*?(?=\n\n|$)/i, '')
+        .trim();
+    }
+
+    return content;
   }
+
+  /**
+   * Stage 5 — Validate: run all pre-write validation checks and auto-correction loop.
+   * Returns the validated (and possibly corrected) content ready to write to disk.
+   */
+  private async validateAndAutoCorrect(
+    step: PlanStep,
+    content: string,
+    matchingSource: { path: string; content: string } | undefined,
+    acceptanceCriteria: string[]
+  ): Promise<string> {
+    const fileExtension = step.path!.split('.').pop()?.toLowerCase();
+    let finalContent = content;
+
+    if (!['ts', 'tsx', 'js', 'jsx'].includes(fileExtension || '')) {
+      // Non-code files (JSON, YAML, etc) — skip validation
+      this.config.onMessage?.(`✅ Skipping validation for non-code file ${step.path}`, 'info');
+      return finalContent;
+    }
+
+    this.config.onMessage?.(`🔍 Validating ${step.path}...`, 'info');
+
+    const validationResult = await this.validateGeneratedCode(step.path!, content, step, acceptanceCriteria);
+
+    // CALLBACK PRESERVATION CHECK
+    if (matchingSource) {
+      const cbErrors = Executor.collectCallbackErrors(content, matchingSource.content);
+      if (cbErrors.length > 0) {
+        validationResult.errors = validationResult.errors ?? [];
+        validationResult.errors.push(...cbErrors);
+      }
+    }
+
+    const { critical: criticalErrors, suggestions: softSuggestions } = this.filterCriticalErrors(
+      validationResult.errors,
+      true
+    );
+
+    if (criticalErrors.length === 0) {
+      // Apply smart cleanup for actionable suggestions (e.g. dead cn import in .tsx)
+      const actionableSuggestions = softSuggestions.filter(
+        s => s.includes('Dead import') && s.includes('cn')
+      );
+      if (actionableSuggestions.length > 0) {
+        const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
+          ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
+          : () => Promise.resolve(null);
+        content = await SmartAutoCorrection.fixCommonPatternsAsync(
+          content, actionableSuggestions, ragResolver, step.path!
+        );
+      }
+      this.config.onMessage?.(`✅ Validation passed for ${step.path}`, 'info');
+      return content;
+    }
+
+    // ❌ CRITICAL ERRORS FOUND — Auto-correction loop
+    let validationAttempt = 1;
+    let currentContent = content;
+    let lastCriticalErrors = criticalErrors;
+    let loopDetected = false;
+    let previousAttemptErrors: string[] = [];
+    let consecutiveSameErrors = 0;
+    const recentErrorFingerprints: string[] = [];
+
+    while (validationAttempt <= this.MAX_VALIDATION_ITERATIONS && !loopDetected) {
+      const errorList = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+      this.config.onMessage?.(
+        `❌ Critical validation errors (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS}) for ${step.path}:\n${errorList}`,
+        'error'
+      );
+
+      const currentFingerprint = JSON.stringify([...lastCriticalErrors].sort());
+
+      if (
+        previousAttemptErrors.length > 0 &&
+        currentFingerprint === JSON.stringify([...previousAttemptErrors].sort())
+      ) {
+        consecutiveSameErrors++;
+      } else {
+        consecutiveSameErrors = 0;
+      }
+      previousAttemptErrors = [...lastCriticalErrors];
+
+      recentErrorFingerprints.push(currentFingerprint);
+      if (recentErrorFingerprints.length > 3) recentErrorFingerprints.shift();
+      const isOscillating =
+        recentErrorFingerprints.length === 3 &&
+        recentErrorFingerprints[0] === recentErrorFingerprints[2] &&
+        recentErrorFingerprints[0] !== recentErrorFingerprints[1];
+
+      if (consecutiveSameErrors >= 2 || isOscillating) {
+        this.config.onMessage?.(
+          `🔄 LOOP DETECTED: Validation errors oscillating — stopping auto-correction to prevent infinite loop`,
+          'error'
+        );
+        loopDetected = true;
+        break;
+      }
+
+      // DETERMINISTIC CALLBACK SPLICER
+      if (matchingSource) {
+        const missingCbErrors = lastCriticalErrors.filter(e =>
+          e.includes('Callback Preservation') && e.includes('missing from the generated output')
+        );
+        if (missingCbErrors.length > 0) {
+          const missingNames = missingCbErrors
+            .map(e => { const m = e.match(/handler `(\w+)`/); return m?.[1] ?? ''; })
+            .filter(Boolean);
+          const spliced = Executor.spliceCallbackHandlers(currentContent, matchingSource.content, missingNames);
+          if (spliced !== currentContent) {
+            const splicedCbErrors = Executor.collectCallbackErrors(spliced, matchingSource.content);
+            const resolvedCount = missingCbErrors.length - splicedCbErrors.filter(
+              e => e.includes('missing from the generated output')
+            ).length;
+            if (resolvedCount > 0) {
+              console.log(`[Executor] Spliced ${resolvedCount} missing callback handler(s): ${missingNames.join(', ')}`);
+              currentContent = spliced;
+              lastCriticalErrors = [
+                ...lastCriticalErrors.filter(e => !missingCbErrors.includes(e)),
+                ...splicedCbErrors,
+              ];
+              if (lastCriticalErrors.length === 0) {
+                finalContent = spliced;
+                this.config.onMessage?.(`✅ Deterministic callback splice resolved all errors.`, 'info');
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (validationAttempt === this.MAX_VALIDATION_ITERATIONS) {
+        const remainingErrors = lastCriticalErrors.map((e, i) => `  ${i + 1}. ${e}`).join('\n');
+        this.config.onMessage?.(
+          `❌ Max validation attempts (${this.MAX_VALIDATION_ITERATIONS}) reached. Remaining issues:\n${remainingErrors}\n\nPlease fix manually in the editor.`,
+          'error'
+        );
+        throw new Error(`Validation failed after ${this.MAX_VALIDATION_ITERATIONS} attempts.\n${remainingErrors}`);
+      }
+
+      this.config.onMessage?.(
+        `🔧 Attempting auto-correction (attempt ${validationAttempt}/${this.MAX_VALIDATION_ITERATIONS})...`,
+        'info'
+      );
+
+      // Fast-path: forwardRef missing displayName is a pure append — no LLM needed
+      const displayNameError = lastCriticalErrors.find(e => e.includes('forwardRef missing displayName'));
+      if (displayNameError && lastCriticalErrors.length === 1) {
+        const compNameMatch = displayNameError.match(/Add `(\w+)\.displayName/);
+        if (compNameMatch) {
+          const compName = compNameMatch[1];
+          const patched = currentContent.trimEnd() + `\n${compName}.displayName = '${compName}';\n`;
+          const patchValidation = await this.validateGeneratedCode(step.path!, patched, step, acceptanceCriteria);
+          const { critical: patchCritical } = this.filterCriticalErrors(patchValidation.errors, false);
+          if (patchCritical.length === 0) {
+            currentContent = patched;
+            lastCriticalErrors = [];
+            break;
+          }
+        }
+      }
+
+      const canAutoFix = SmartAutoCorrection.isAutoFixable(lastCriticalErrors);
+      let correctedContent: string;
+
+      const hasJsxInTsError = step.path!.endsWith('.ts') && !step.path!.endsWith('.tsx') &&
+        lastCriticalErrors.some(e => e.includes('Wrong file extension') || e.includes('contains JSX'));
+
+      if (canAutoFix) {
+        this.config.onMessage?.(`🧠 Attempting smart auto-correction (circular imports, missing/unused imports, etc.)...`, 'info');
+        const ragResolver = (this.config.codebaseIndex && this.config.embeddingClient)
+          ? (name: string) => this.config.codebaseIndex!.resolveExportSource(name, this.config.embeddingClient!)
+          : () => Promise.resolve(null);
+        const smartFixed = await SmartAutoCorrection.fixCommonPatternsAsync(
+          currentContent, lastCriticalErrors, ragResolver, step.path!
+        );
+
+        const smartValidation = await this.validateGeneratedCode(step.path!, smartFixed, step, acceptanceCriteria);
+        const { critical: criticalAfterFix, suggestions: suggestionsAfterFix } = this.filterCriticalErrors(
+          smartValidation.errors,
+          false
+        );
+
+        if (criticalAfterFix.length === 0) {
+          this.config.onMessage?.(
+            `✅ Smart auto-correction successful! Fixed: ${lastCriticalErrors.slice(0, 2).map(e => e.split(':')[0]).join(', ')}${lastCriticalErrors.length > 2 ? ', ...' : ''}`,
+            'info'
+          );
+          if (suggestionsAfterFix.length > 0) {
+            this.config.onMessage?.(
+              `⚠️ Remaining suggestions: ${suggestionsAfterFix.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+              'info'
+            );
+          }
+          correctedContent = smartFixed;
+        } else {
+          this.config.onMessage?.(`⚠️ Smart fix incomplete, using LLM for context-aware correction...`, 'info');
+          correctedContent = await this.llmCorrectContent(currentContent, lastCriticalErrors, step, hasJsxInTsError, acceptanceCriteria);
+        }
+      } else {
+        this.config.onMessage?.(`🤖 Using LLM for context-aware correction (complex errors detected)...`, 'info');
+        correctedContent = await this.llmCorrectContent(currentContent, lastCriticalErrors, step, hasJsxInTsError, acceptanceCriteria);
+      }
+
+      // Re-validate the corrected code
+      const nextValidation = await this.validateGeneratedCode(step.path!, correctedContent, step, acceptanceCriteria);
+      if (matchingSource) {
+        const cbErrors = Executor.collectCallbackErrors(correctedContent, matchingSource.content);
+        if (cbErrors.length > 0) {
+          nextValidation.errors = nextValidation.errors ?? [];
+          nextValidation.errors.push(...cbErrors);
+        }
+      }
+      const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
+        nextValidation.errors,
+        false
+      );
+
+      if (nextCritical.length === 0) {
+        this.config.onMessage?.(
+          `✅ Auto-correction successful on attempt ${validationAttempt}! Code now passes all critical validation checks.`,
+          'info'
+        );
+        if (nextSuggestions.length > 0) {
+          this.config.onMessage?.(
+            `⚠️ Remaining suggestions: ${nextSuggestions.map(s => s.replace(/⚠️/g, '').trim()).join('; ')}`,
+            'info'
+          );
+        }
+        finalContent = correctedContent;
+        break;
+      }
+
+      currentContent = correctedContent;
+      lastCriticalErrors = nextCritical;
+      validationAttempt++;
+    }
+
+    if (loopDetected) {
+      throw new Error(`Validation loop detected - infinite correction cycle prevented. Please fix manually.`);
+    }
+
+    return finalContent;
+  }
+
+  /**
+   * Shared LLM correction helper used by validateAndAutoCorrect.
+   * Chooses whole-file rewrite for JSX-in-.ts errors; surgical patches otherwise.
+   */
+  private async llmCorrectContent(
+    currentContent: string,
+    lastCriticalErrors: string[],
+    step: PlanStep,
+    hasJsxInTsError: boolean,
+    acceptanceCriteria: string[]
+  ): Promise<string> {
+    const formattedErrors = lastCriticalErrors.map((e, i) => {
+      if (e.includes('Hook') && e.includes('imported but never called')) {
+        const hookMatch = e.match(/Hook '(\w+)'/);
+        const hookName = hookMatch ? hookMatch[1] : 'hook';
+        const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
+          ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
+          : `const value = ${hookName}();`;
+        return `${i + 1}. ${e}\n   ACTION: Remove the unused import OR call the hook at the top level of the component body. Example: ${callExample}`;
+      }
+      return `${i + 1}. ${e}`;
+    }).join('\n');
+
+    if (hasJsxInTsError) {
+      const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
+      const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+      if (!fixResponse.success) throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
+      let result = fixResponse.message || '';
+      const fence = result.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+      if (fence) result = fence[1];
+      return result;
+    }
+
+    const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path!);
+    const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+    if (!surgicalResponse.success) throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
+    const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
+    if (patched) return patched;
+    // Patch parsing failed — strip fences and treat as whole-file fallback
+    let result = surgicalResponse.message || '';
+    const fence = result.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+    if (fence) result = fence[1];
+    return result;
+  }
+
+  /**
+   * Stage 6 — Write & Verify: write validated content to disk, run post-write
+   * tsc check (Check 6), and return the final (possibly tsc-corrected) content.
+   */
+  private async writeAndVerify(
+    step: PlanStep,
+    filePath: vscode.Uri,
+    finalContent: string,
+    sourceReadContents: { path: string; content: string }[],
+    matchingSource: { path: string; content: string } | undefined,
+    workspaceUri: vscode.Uri
+  ): Promise<string> {
+    const fileExtension = step.path!.split('.').pop()?.toLowerCase();
+
+    // Show preview of final (validated) content
+    if (this.config.onStepOutput && finalContent.length > 0) {
+      const preview = finalContent.length > 200
+        ? `\`\`\`${fileExtension || ''}\n${finalContent.substring(0, 200)}...\n\`\`\``
+        : `\`\`\`${fileExtension || ''}\n${finalContent}\n\`\`\``;
+      this.config.onStepOutput(step.stepId, preview, false);
+    }
+
+    // Write file
+    const bytes = new Uint8Array(finalContent.length);
+    for (let i = 0; i < finalContent.length; i++) {
+      bytes[i] = finalContent.charCodeAt(i);
+    }
+    await vscode.workspace.fs.writeFile(filePath, bytes);
+
+    // Check 6: TypeScript compiler (ground truth — runs post-write so tsc sees the file)
+    const isTsFile = step.path!.endsWith('.ts') || step.path!.endsWith('.tsx');
+    if (!isTsFile || !workspaceUri) return finalContent;
+
+    this.config.onMessage?.(`🔎 Check 6: TypeScript compiler...`, 'info');
+    let tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
+
+    if (tscErrors.length === 0) {
+      this.config.onMessage?.(`✅ Check 6: TypeScript clean.`, 'info');
+      return finalContent;
+    }
+
+    this.config.onMessage?.(
+      `⚠️ ${tscErrors.length} TypeScript error(s) in ${step.path}:\n` +
+      tscErrors.map(e => `  ${e}`).join('\n'),
+      'info'
+    );
+
+    // Pass 0: deterministic fixes before LLM
+    const deterministicFixed = SmartAutoCorrection.fixCommonPatterns(finalContent, tscErrors, step.path!);
+    if (deterministicFixed !== finalContent) {
+      this.config.onMessage?.(`🔧 Applying deterministic TypeScript fixes...`, 'info');
+      finalContent = deterministicFixed;
+      const detBytes = Buffer.from(finalContent, 'utf8');
+      await vscode.workspace.fs.writeFile(filePath, detBytes);
+      tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
+    }
+
+    // Pass 0.5: deterministic import resolver for TS2304 "Cannot find name 'X'"
+    const ts2304Names = tscErrors
+      .filter(e => e.includes('TS2304'))
+      .map(e => { const m = e.match(/Cannot find name '(\w+)'/); return m?.[1] ?? ''; })
+      .filter(Boolean);
+
+    if (ts2304Names.length > 0) {
+      let resolvedContent = finalContent;
+      const allSources: { path: string; content: string }[] = [...sourceReadContents];
+      if (matchingSource && !allSources.find(s => s.path === matchingSource.path)) {
+        allSources.unshift(matchingSource);
+      }
+
+      for (const unknownName of ts2304Names) {
+        const importLines = resolvedContent.split('\n').filter(l => l.trimStart().startsWith('import'));
+        if (new RegExp(`\\b${unknownName}\\b`).test(importLines.join('\n'))) continue;
+
+        for (const src of allSources) {
+          const defaultRe = new RegExp(`import\\s+${unknownName}\\s+from\\s+(['"])([^'"]+)\\1`);
+          const namedRe = new RegExp(`import\\s+\\{[^}]*\\b${unknownName}\\b[^}]*\\}\\s+from\\s+(['"])([^'"]+)\\1`);
+          const defaultMatch = src.content.match(defaultRe);
+          const namedMatch = src.content.match(namedRe);
+
+          let importStatement: string | null = null;
+          if (defaultMatch) {
+            const relPath = this.computeRelativeImportPath(step.path!, src.path, defaultMatch[2]);
+            importStatement = `import ${unknownName} from '${relPath}';`;
+          } else if (namedMatch) {
+            const relPath = this.computeRelativeImportPath(step.path!, src.path, namedMatch[2]);
+            importStatement = `import { ${unknownName} } from '${relPath}';`;
+          }
+
+          if (importStatement && !resolvedContent.includes(importStatement)) {
+            const importLineMatches = [...resolvedContent.matchAll(/^import[^\n]*\n/gm)];
+            if (importLineMatches.length > 0) {
+              const last = importLineMatches[importLineMatches.length - 1];
+              const insertPos = last.index! + last[0].length;
+              resolvedContent = resolvedContent.slice(0, insertPos) + importStatement + '\n' + resolvedContent.slice(insertPos);
+            } else {
+              resolvedContent = importStatement + '\n' + resolvedContent;
+            }
+            break;
+          }
+        }
+      }
+
+      if (resolvedContent !== finalContent) {
+        this.config.onMessage?.(`🔧 Resolving missing imports deterministically (TS2304)...`, 'info');
+        finalContent = resolvedContent;
+        await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
+        tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
+      }
+    }
+
+    // Up to 2 LLM correction passes if errors remain
+    for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
+      this.config.onMessage?.(`🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info');
+
+      const surgicalPrompt = this.buildSurgicalTscPrompt(finalContent, tscErrors, step.path!);
+      let corrected: string | null = null;
+
+      if (surgicalPrompt) {
+        const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
+        if (surgicalResponse.success && surgicalResponse.message?.trim()) {
+          corrected = this.applySurgicalTscPatches(finalContent, surgicalResponse.message);
+        }
+      }
+
+      if (corrected === null) {
+        const fixPrompt =
+          `The following TypeScript file has compiler errors reported by tsc.\n\n` +
+          `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
+          `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
+          `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
+          `NEVER add 'any' type — use specific types or 'unknown'. ` +
+          `Provide ONLY the corrected code. No explanations, no markdown fences.`;
+        const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
+        if (!fixResponse.success || !fixResponse.message?.trim()) break;
+        let raw = fixResponse.message;
+        const fenceMatch = raw.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+        if (fenceMatch) raw = fenceMatch[1];
+        corrected = raw;
+      }
+
+      finalContent = corrected;
+      await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
+      tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
+    }
+
+    if (tscErrors.length > 0) {
+      if (step.path) this.filesWithPersistentTscErrors.add(step.path);
+      this.config.onMessage?.(
+        `⚠️ ${tscErrors.length} TypeScript error(s) persist after correction. ` +
+        `File written — the final tsc RUN step will surface any remaining issues.`,
+        'info'
+      );
+    } else {
+      this.config.onMessage?.(`✅ Check 6: TypeScript errors resolved.`, 'info');
+    }
+
+    return finalContent;
+  }
+
 
   /**
    * Check 6: TypeScript compiler validation (ground truth).
