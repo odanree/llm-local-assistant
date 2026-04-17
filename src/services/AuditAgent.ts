@@ -83,11 +83,16 @@ PRESCRIPTIVE
   Examples: prompt strings that say "use cn()", import mandates in LLM prompts,
   getGenerationConstraints() that inject cn() rules, example code in prompt
   templates that show "import { cn } from '@/utils/cn'".
-  KEY SIGNAL: the snippet contains directive language like "mandatory", "always",
-  "required", "NEVER ... instead use cn()", or WRONG/RIGHT usage examples that exist
-  to enforce cn() adoption — even if those WRONG/RIGHT examples look like template code.
-  A usage rule labeled "(mandatory)" or containing "always import cn as ..." is
-  PRESCRIPTIVE regardless of whether WRONG/RIGHT examples appear alongside it.
+  KEY SIGNAL — ask: is cn() the RECOMMENDED solution here?
+  PRESCRIPTIVE when any of these apply:
+  - Snippet says "use cn()", "Use cn() utility", "use cn() for", or "import cn"
+    as a positive directive telling the LLM what to DO.
+  - Contains "mandatory", "always import cn as ...", "(mandatory)" usage labels.
+  - Contains WRONG/RIGHT examples where cn() is the RIGHT answer.
+  NEGATION GUARD — classify as INCIDENTAL instead when the snippet:
+  - Lists cn() as something to AVOID: "NO cn()", "NEVER use cn()", "DO NOT use cn()"
+  - Bans cn() alongside other tools: "NO cn(), clsx, className with Tailwind strings"
+  The direction is the test: cn() promoted → PRESCRIPTIVE. cn() banned → INCIDENTAL.
   → These should be REMOVED or made conditional.
 
 REACTIVE
