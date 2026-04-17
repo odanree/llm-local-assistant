@@ -522,3 +522,80 @@ describe('Planner — filterRedundantWrites()', () => {
     expect(logged).not.toMatch(/redundant WRITE/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// generatePlan — userRequestedTests guard (integration)
+// Verifies that filterTestSteps fires when hasTests=true but the user
+// request contains no test-related keywords (the new guard added in fix).
+// ---------------------------------------------------------------------------
+
+describe('Planner — generatePlan() userRequestedTests guard', () => {
+  const llmResponseWithTestStep = JSON.stringify([
+    { step: 1, action: 'write', path: 'src/RegisterForm.tsx', description: 'Create form' },
+    { step: 2, action: 'run', command: 'npx vitest run', description: 'Run vitest' },
+  ]);
+
+  const makeIntegrationPlanner = (hasTests: boolean) =>
+    new Planner({
+      llmCall: vi.fn().mockResolvedValue(llmResponseWithTestStep),
+      onProgress: vi.fn(),
+    });
+
+  it('strips the test RUN step when hasTests=true but user did not ask for tests', async () => {
+    const planner = makeIntegrationPlanner(true);
+    const plan = await planner.generatePlan(
+      'create a RegisterForm component',
+      '/workspace',
+      'MyProject',
+      { hasTests: true, testFramework: 'vitest' }
+    );
+    const runSteps = plan.steps.filter(s => s.action === 'run');
+    expect(runSteps).toHaveLength(0);
+  });
+
+  it('keeps the test RUN step when hasTests=true AND user asked to run tests', async () => {
+    const planner = makeIntegrationPlanner(true);
+    const plan = await planner.generatePlan(
+      'create a RegisterForm component and run vitest',
+      '/workspace',
+      'MyProject',
+      { hasTests: true, testFramework: 'vitest' }
+    );
+    const runSteps = plan.steps.filter(s => s.action === 'run');
+    expect(runSteps).toHaveLength(1);
+  });
+
+  it('strips the test RUN step when hasTests=false (original behaviour preserved)', async () => {
+    const planner = makeIntegrationPlanner(false);
+    const plan = await planner.generatePlan(
+      'create a RegisterForm component and run vitest',
+      '/workspace',
+      'MyProject',
+      { hasTests: false }
+    );
+    const runSteps = plan.steps.filter(s => s.action === 'run');
+    expect(runSteps).toHaveLength(0);
+  });
+
+  it.each([
+    'run tests',
+    'run test',
+    'run vitest',
+    'run jest',
+    'check test coverage',
+    'verify tests pass',
+    'add a spec for the form',
+    'update coverage',
+    'run pytest',
+  ])('treats "%s" as a test request and keeps the RUN step', async (request) => {
+    const planner = makeIntegrationPlanner(true);
+    const plan = await planner.generatePlan(
+      `create a RegisterForm and ${request}`,
+      '/workspace',
+      'MyProject',
+      { hasTests: true, testFramework: 'vitest' }
+    );
+    const runSteps = plan.steps.filter(s => s.action === 'run');
+    expect(runSteps).toHaveLength(1);
+  });
+});

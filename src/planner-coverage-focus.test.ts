@@ -103,7 +103,7 @@ describe('Planner - Coverage Focus', () => {
       ]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Three steps');
+      const plan = await planner.generatePlan('Three steps and run tests');
 
       expect(plan.steps.length).toBe(3);
     });
@@ -118,7 +118,7 @@ describe('Planner - Coverage Focus', () => {
       ]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Five steps');
+      const plan = await planner.generatePlan('Five steps, run tests');
 
       expect(plan.steps.length).toBe(5);
     });
@@ -162,7 +162,7 @@ describe('Planner - Coverage Focus', () => {
       ]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Chain');
+      const plan = await planner.generatePlan('Chain, run tests');
 
       expect(plan.steps.length).toBe(4);
     });
@@ -176,7 +176,7 @@ describe('Planner - Coverage Focus', () => {
       ]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Parallel');
+      const plan = await planner.generatePlan('Parallel, run tests');
 
       expect(plan.steps.length).toBe(4);
     });
@@ -191,7 +191,7 @@ describe('Planner - Coverage Focus', () => {
       ]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Complex');
+      const plan = await planner.generatePlan('Complex, run tests');
 
       expect(plan.steps.length).toBe(5);
     });
@@ -636,7 +636,7 @@ describe('Planner - Coverage Focus', () => {
       ]`;
       mockLLMCall.mockResolvedValue(response);
 
-      const plan = await planner.generatePlan('Sorted');
+      const plan = await planner.generatePlan('Sorted, run tests');
 
       expect(plan.steps.length).toBe(3);
     });
