@@ -96,6 +96,10 @@ REACTIVE
   KEY SIGNAL: look for an if-condition that gates on cn() being present (importsCn,
   error.includes('cn'), hasCnPhantomImport) — if the code only runs because cn is
   already there, it is REACTIVE regardless of whether it keeps or removes cn().
+  IMPORTANT: an error message that says "Use cn() for all class merging" or shows a
+  cn() usage example is STILL REACTIVE if it lives inside an if(importsCn) block.
+  The message is advice about correct cn() usage — it is gated on cn() already being
+  imported, so it does NOT prescribe cn() use in new code.
   → These should be KEPT — they are still valid for projects that have cn.ts.
 
 INCIDENTAL
