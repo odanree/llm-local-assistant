@@ -28,9 +28,9 @@ describe('AuditAgent — scan()', () => {
     expect(executorMatches.length).toBeGreaterThan(0);
   });
 
-  it('finds cn() matches in CodeAnalyzer.ts', () => {
+  it('finds cn() matches in smartAutoCorrection.ts', () => {
     const matches = scan(CN_MANDATE, SRC);
-    const analyzerMatches = matches.filter(m => m.file.endsWith('CodeAnalyzer.ts'));
+    const analyzerMatches = matches.filter(m => m.file.endsWith('smartAutoCorrection.ts'));
     expect(analyzerMatches.length).toBeGreaterThan(0);
   });
 
