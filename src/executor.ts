@@ -844,17 +844,22 @@ export class Executor {
         );
 
         if (contractResult.hasViolations) {
-          // For pure .ts config/data files (not .tsx), skip "Cannot find module" for
-          // page/component/screen imports — these are external leaf dependencies that
-          // legitimately don't exist in the test workspace (e.g. Routes.ts importing HomePage).
-          // The contract validator is designed for store↔component contracts, not config files.
-          const isConfigTs = filePath.endsWith('.ts') && !filePath.endsWith('.d.ts');
+          // Skip "Cannot find module" errors for component-to-component imports.
+          // The cross-file contract check is designed to catch store/hook API mismatches
+          // (e.g. a component destructures a property that doesn't exist on the store).
+          // It is NOT designed to enforce that every imported component file already exists
+          // on disk — that is TypeScript's job. Blocking here causes an oscillation loop:
+          //   1. LLM imports Input → contract fires (file not found)
+          //   2. LLM removes import (uses native <input>) → criterion fires (not using <Input />)
+          //   3. Repeat until loop-detected.
+          // Rule: skip "Cannot find module" whenever the missing module is in a UI layer
+          // (components/, pages/, screens/, views/) for EITHER .ts config OR .tsx component files.
           const contractErrors = contractResult.violations
             .filter(v => {
-              if (isConfigTs && v.message.includes('Cannot find module')) {
+              if (v.message.includes('Cannot find module')) {
                 const moduleRef = v.message.match(/Cannot find module '([^']+)'/)?.[1] ?? '';
-                if (/\/(pages|screens|views|components)\//i.test(moduleRef)) {
-                  console.log(`[Executor] ℹ️ Skipping page/component import check for config file: ${moduleRef}`);
+                if (/\/(components|pages|screens|views)\//i.test(moduleRef)) {
+                  console.log(`[Executor] ℹ️ Skipping UI-layer component import check (not a store contract): ${moduleRef}`);
                   return false;
                 }
               }
