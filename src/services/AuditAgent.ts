@@ -83,6 +83,11 @@ PRESCRIPTIVE
   Examples: prompt strings that say "use cn()", import mandates in LLM prompts,
   getGenerationConstraints() that inject cn() rules, example code in prompt
   templates that show "import { cn } from '@/utils/cn'".
+  KEY SIGNAL: the snippet contains directive language like "mandatory", "always",
+  "required", "NEVER ... instead use cn()", or WRONG/RIGHT usage examples that exist
+  to enforce cn() adoption — even if those WRONG/RIGHT examples look like template code.
+  A usage rule labeled "(mandatory)" or containing "always import cn as ..." is
+  PRESCRIPTIVE regardless of whether WRONG/RIGHT examples appear alongside it.
   → These should be REMOVED or made conditional.
 
 REACTIVE
@@ -93,13 +98,19 @@ REACTIVE
   - auto-correction that removes a dead or phantom cn import
   - error messages that fire on "cn() is imported but className uses bare string"
   - code that detects cn() in generated output and replaces or removes it
-  KEY SIGNAL: look for an if-condition that gates on cn() being present (importsCn,
-  error.includes('cn'), hasCnPhantomImport) — if the code only runs because cn is
-  already there, it is REACTIVE regardless of whether it keeps or removes cn().
-  IMPORTANT: an error message that says "Use cn() for all class merging" or shows a
-  cn() usage example is STILL REACTIVE if it lives inside an if(importsCn) block.
-  The message is advice about correct cn() usage — it is gated on cn() already being
-  imported, so it does NOT prescribe cn() use in new code.
+  KEY SIGNAL: the gate variable checks for cn() presence in GENERATED OUTPUT —
+  variables like importsCn, hasCnPhantomImport, or error.includes('cn') test whether
+  the generated code already contains cn(). If the code only runs because cn is
+  already in the generated output, it is REACTIVE regardless of whether it keeps or
+  removes cn().
+  IMPORTANT: an error message inside an if(importsCn) block is STILL REACTIVE even if
+  the message text says "Use cn() for all class merging." The message fires only when
+  cn() is already imported in generated code — it enforces correct usage, it does NOT
+  inject a mandate into a fresh LLM prompt.
+  CONTRAST WITH PRESCRIPTIVE: if the gate checks a PROJECT CONFIG variable such as
+  cnUtilityPath, cnEnabled, or data.cnUtilityPath — and the body pushes a string into
+  an LLM prompt (lines.push, constraints.push, prompt +=) — that is PRESCRIPTIVE. It
+  uses project config to actively tell the LLM to use cn() in new code.
   → These should be KEPT — they are still valid for projects that have cn.ts.
 
 INCIDENTAL
