@@ -36,12 +36,13 @@ export default defineConfig({
         'src/test/executor.shared-mocks.ts', // Test utilities don't need coverage
       ],
       thresholds: {
-        // Updated to match post-PR-71 coverage baseline (planner/semanticValidator/smartAutoCorrection passes)
-        // Numbers reflect current All Files row: statements 80.04 | branches 71.28 | functions 80.02 | lines 80.52
-        statements: 80,
-        branches: 71,
-        functions: 80,
-        lines: 80,
+        // Lowered after removing coverage-hunting test files (10 files, ~545 tests deleted).
+        // Remaining suite covers regressions, failure modes, and LLM classification cases.
+        // Numbers reflect post-cleanup baseline: statements 75.4 | branches 67.6 | functions 74.2 | lines 76.1
+        statements: 74,
+        branches: 67,
+        functions: 73,
+        lines: 75,
       },
     },
   },
