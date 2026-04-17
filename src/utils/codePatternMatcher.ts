@@ -18,8 +18,12 @@ export function matchFormPatterns(
   const patterns = [];
 
   // Pattern 1: State Interface
+  // Accept common form state naming conventions (State, Data, Values, Fields) plus
+  // inline generic typing on useState (e.g. useState<{ name: string; email: string }>).
   const hasStateInterface =
-    /interface\s+\w+State\s*{/.test(code) || /type\s+\w+State\s*=\s*{/.test(code);
+    /interface\s+\w+(?:State|Data|Values|Fields)\s*\{/.test(code) ||
+    /type\s+\w+(?:State|Data|Values|Fields)\s*=\s*\{/.test(code) ||
+    /useState\s*<\s*\{[^>]+\}\s*>/.test(code);
   patterns.push({
     type: 'stateInterface',
     found: hasStateInterface,

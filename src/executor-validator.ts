@@ -104,7 +104,7 @@ export function validateFormComponentPatterns(content: string, filePath: string)
   if (!patternMap.get('stateInterface') && !importsZustandStore) {
     errors.push(
       `❌ Pattern 1 violation: Missing state interface. ` +
-      `Forms require: interface LoginFormState { email: string; password: string; }`
+      `Forms require a typed state interface, e.g.: interface RegisterFormState { name: string; email: string; }`
     );
   }
 

@@ -2193,7 +2193,7 @@ Include in the single import: React (default), plus every named export you use (
       formPatternSection = `
 ## REQUIRED: Form Component Patterns
 
-1. **State Interface** - Define typed state: interface LoginFormState { email: string; password: string; }
+1. **State Interface** - Define a typed state interface named after your form component. Example: interface RegisterFormState { name: string; email: string; password: string; }
 2. **Event Typing** - Use FormEventHandler for submit, FormEvent for inputs:
    - Input: const handleChange = (event: FormEvent<HTMLInputElement>) => { const { name, value } = event.currentTarget; ... }
    - Form: const handleSubmit: FormEventHandler<HTMLFormElement> = (event) => { event.preventDefault(); ... }
