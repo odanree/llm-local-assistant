@@ -162,9 +162,15 @@ export class Planner {
       // "verify your work", "view result", "see the output", etc.
       sortedSteps = this.filterNoisyReadSteps(sortedSteps);
 
-      // POST-PROCESS: Drop test RUN steps when the project has no test files.
-      // The LLM prompt says "NO npm test" but the LLM sometimes ignores it.
-      if (!hasTests) {
+      // POST-PROCESS: Drop test RUN steps when the project has no test files,
+      // OR when the user didn't explicitly ask to run/verify tests.
+      // The LLM prompt discourages unconditional test steps, but this guard
+      // is the hard backstop for when the LLM ignores the instruction.
+      const userRequestedTests =
+        /\b(test|spec|vitest|jest|pytest|coverage|run tests?|verify tests?|check tests?)\b/i.test(
+          userRequest
+        );
+      if (!hasTests || !userRequestedTests) {
         sortedSteps = this.filterTestSteps(sortedSteps);
       }
 
@@ -438,7 +444,7 @@ MANUAL VERIFICATION (IMPORTANT):
 RULES:
 - ONE file per write step (never multiple files)
 - Include commands for run steps
-${hasTests ? '- Use "run" for npm test' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
+${hasTests ? '- Only add a "run" step for tests if the user explicitly asked to run or verify tests — do NOT add a test step for every feature request' : '- NO npm test, jest, vitest, pytest\n- Use plan summary for verification'}
 - FILE EXTENSION: use .tsx for files containing JSX/React components; use .ts for pure logic (hooks, stores, services, utils, config)
   WRONG: src/App.ts (renders components) → RIGHT: src/App.tsx
   WRONG: src/components/Button.ts (returns JSX) → RIGHT: src/components/Button.tsx
@@ -734,25 +740,6 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
         !step.command; // Only drop if no actual shell command — real test runners still pass through
       if (isTscStep) {
         console.warn(`[PARSER] Dropping redundant tsc step (Check 6 handles this inline): "${step.description}"`);
-        continue;
-      }
-
-      // Drop redundant test-runner RUN steps — no tests exist for decomposition tasks,
-      // so vitest/jest steps always pass vacuously and add noise to the plan score.
-      // Also drop steps where the command IS a test runner — the planner sometimes emits
-      // `command: "npm test"` which bypasses the `!step.command` guard.
-      const testRunnerCommand = step.command
-        ? /\b(vitest|jest|mocha|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test)\b/i.test(step.command)
-        : false;
-      const isRedundantTestStep =
-        action === 'run' &&
-        (descLower.includes('test suite') || descLower.includes('run tests') ||
-         descLower.includes('run test') || descLower.startsWith('vitest') ||
-         descLower.startsWith('jest') || descLower.includes('unit test') ||
-         descLower.includes('run vitest') || descLower.includes('run jest')) &&
-        (!step.command || testRunnerCommand);
-      if (isRedundantTestStep) {
-        console.warn(`[PARSER] Dropping redundant test-runner step (no tests in scope): "${step.description}"`);
         continue;
       }
 
@@ -1083,22 +1070,29 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
   }
 
   /**
-   * Drop RUN steps that invoke test runners when the project has no test files.
-   * The LLM sometimes emits test steps even when the prompt says not to.
-   * Removing them in code is more reliable than relying on prompt compliance.
+   * Drop RUN steps that invoke test runners when the user did not ask for tests.
+   * Matches both command-based runners (command contains vitest/jest/…) and
+   * description-based runners (description says "run vitest", "run tests", …).
+   * The LLM sometimes emits test steps even when the prompt says not to;
+   * removing them in code is more reliable than relying on prompt compliance alone.
    */
   private filterTestSteps(steps: ExecutionStep[]): ExecutionStep[] {
-    const testCommandPattern = /\b(vitest|jest|pytest|npm\s+test|yarn\s+test)\b/i;
+    const testCommandPattern = /\b(vitest|jest|pytest|mocha|npm\s+(?:run\s+)?test|yarn\s+test|pnpm\s+test)\b/i;
+    const testDescPattern =
+      /\b(test suite|run tests?|unit tests?|run vitest|run jest|vitest run|jest run)\b/i;
     const filtered = steps.filter(step => {
-      if (step.action === 'run' && step.command && testCommandPattern.test(step.command)) {
-        console.log(`[Planner] filterTestSteps: removed test step (no test files in project): "${step.description}"`);
+      if (step.action !== 'run') return true;
+      const commandIsTest = step.command ? testCommandPattern.test(step.command) : false;
+      const descIsTest = testDescPattern.test(step.description ?? '');
+      if (commandIsTest || descIsTest) {
+        console.log(`[Planner] filterTestSteps: removed test step: "${step.description}"`);
         return false;
       }
       return true;
     });
     const dropped = steps.length - filtered.length;
     if (dropped > 0) {
-      console.log(`[Planner] Filtered ${dropped} test step(s) — project has no test files`);
+      console.log(`[Planner] Filtered ${dropped} test step(s) — not requested by user`);
     }
     return filtered;
   }

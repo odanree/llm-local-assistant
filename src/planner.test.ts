@@ -373,7 +373,7 @@ describe('Planner (Consolidated - Table-Driven)', () => {
 ]`;
 
       mockLLMCall.mockResolvedValue(planResponse);
-      const plan = await planner.generatePlan('Refactor');
+      const plan = await planner.generatePlan('Refactor and run tests');
 
       // Check step 1 (read)
       expect(plan.steps[0].action).toBe('read');
