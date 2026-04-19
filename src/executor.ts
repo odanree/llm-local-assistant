@@ -2511,10 +2511,13 @@ TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into inte
 - RIGHT: clsx('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
 - Intermediate const variables for single class strings are dead indirection — inline them directly.
 
-CLASS MERGING RULE (mandatory): For combining Tailwind classes conditionally:
-- If src/utils/cn.ts is listed in the CONTEXT section above, import and use it: import { cn } from './utils/cn'
-- Otherwise use clsx: import { clsx } from 'clsx' — clsx is always available as an npm package
-- NEVER import cn from a path that is not explicitly present in the CONTEXT section above
+CLASS MERGING RULE (mandatory): Only import a class-merging utility when you actually need to combine classes conditionally.
+- ONLY import clsx/cn when the component accepts a 'className' prop OR has conditional Tailwind classes driven by props/state (e.g. variant, disabled, active)
+- Do NOT import clsx/cn for components with static layouts — forms, modals with fixed structure, pages, or any component whose className values never change at runtime
+- WRONG: importing clsx in a RegisterForm, LoginForm, or SettingsPage that has no className prop and no variant logic
+- RIGHT: importing clsx in a Button that merges variant classes with an optional className prop
+- If class merging IS needed: prefer cn if src/utils/cn.ts is listed in the CONTEXT section above; otherwise use clsx
+- NEVER import cn from a path not explicitly listed in the CONTEXT section above
 - NEVER pass an empty string as an argument: WRONG: clsx('px-4 py-2', '') — RIGHT: clsx('px-4 py-2')
 
 Example format (raw code, nothing else):
