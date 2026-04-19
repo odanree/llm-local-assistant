@@ -452,6 +452,14 @@ ${hasTests ? '- Only add a "run" step for tests if the user explicitly asked to 
     RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
     WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
 
+HOC TERMINOLOGY (apply when task mentions "higher-order component", "HOC", or "with*" wrapper):
+- A HOC is a FUNCTION that takes a component as an ARGUMENT and returns a new component — not a JSX child
+- CORRECT: "withAuth accepts a Component argument and returns a wrapped component"
+- WRONG: "withAuth accepts a page component as a child"
+- The generic signature is: function withAuth<P extends object>(Component: React.ComponentType<P>)
+- The returned component spreads props through: return <Component {...props as P} />
+- Step descriptions must use "component argument" not "child" or "children"
+
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
 - If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them

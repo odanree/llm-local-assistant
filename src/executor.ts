@@ -652,11 +652,27 @@ export class Executor {
         }
       }
 
+      // ABSOLUTE PATH CHECK: catch workspace-relative imports used as bare specifiers.
+      // e.g. from 'src/stores/authStore' instead of '../stores/authStore'.
+      // These look like npm packages but are actually broken path references — block them.
+      const absolutePathPrefixes = ['src/', 'app/', 'lib/', 'components/', 'stores/', 'hooks/', 'utils/', 'services/', 'pages/', 'types/'];
+      const allBareImports = [...content.matchAll(/from\s+['"]([^.@'"\/][^'"]*)['"]/g)];
+      for (const m of allBareImports) {
+        const imp = m[1];
+        if (absolutePathPrefixes.some(p => imp.startsWith(p))) {
+          const relative = imp.replace(/^[^/]+\//, '../');
+          integrationErrors.push(
+            `❌ ${filePath}: Absolute workspace import '${imp}' will not resolve at runtime. ` +
+            `Use a relative path instead: '${relative}'`
+          );
+        }
+      }
+
       // NPM PACKAGE CHECK: verify bare package imports (e.g. 'react-router-dom', 'zod')
       // are actually in package.json. Only runs when we successfully read package.json.
       if (this.availablePackages.length > 0) {
         // Match bare package imports: 'react-router-dom', '@tanstack/react-query', etc.
-        // Exclude relative paths (./ ../), @/ alias paths, and node builtins.
+        // Exclude relative paths (./ ../), @/ alias paths, node builtins, and workspace paths (caught above).
         const pkgImportLines = [...content.matchAll(/from\s+['"]([^.@'"\/][^'"]*|@[^/'"]+\/[^'"]+)['"]/g)];
         const nodeBuiltins = new Set([
           'path', 'fs', 'os', 'http', 'https', 'url', 'util', 'crypto', 'stream',
@@ -667,6 +683,8 @@ export class Executor {
         const alwaysAvailable = new Set(['react', 'react-dom', 'typescript']);
         for (const pkgMatch of pkgImportLines) {
           const pkgName = pkgMatch[1];
+          // Skip workspace-relative paths already caught above
+          if (absolutePathPrefixes.some(p => pkgName.startsWith(p))) continue;
           // Normalize scoped packages to their root (e.g. '@tanstack/react-query' → '@tanstack/react-query')
           const rootPkg = pkgName.startsWith('@')
             ? pkgName  // keep full scoped name
