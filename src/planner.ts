@@ -455,7 +455,8 @@ ${hasTests ? '- Only add a "run" step for tests if the user explicitly asked to 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
 - If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
-- If a helper already exists in EXISTING CODEBASE above, it will be imported inside the generated file — do NOT add a WRITE step to recreate it
+- If a helper is explicitly listed in the RAG CONTEXT above (e.g. "src/components/Input.tsx"), it may be imported inside the generated file — do NOT add a WRITE step to recreate it
+- CRITICAL: Do NOT reference components or utilities as "existing" unless they appear by name in the RAG context above. If the RAG context is empty or does not list a file, that file does not exist — do not mention it in step descriptions
 - Creating unrequested abstractions (reusable components, utilities, wrappers) is OUT OF SCOPE and will be rejected
 
 DELIVERABLE COMPLETENESS RULE (CRITICAL — check this first):
