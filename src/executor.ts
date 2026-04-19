@@ -2478,7 +2478,11 @@ STRICTLY FORBIDDEN (these will be rejected):
       ? `\nINSTALLED PACKAGES (ONLY import from these — do NOT import from packages not on this list):\n` +
         `${this.availablePackages.join(', ')}\n` +
         `- If a package you want isn't listed, use a different approach (e.g. window.location for navigation, built-in React for state)\n` +
-        `- react, react-dom, typescript are always available even if not listed\n\n`
+        `- typescript is always available even if not listed\n` +
+        (step.path!.endsWith('.tsx') || step.path!.endsWith('.jsx')
+          ? `- react and react-dom are available for .tsx/.jsx files even if not listed\n`
+          : `- do NOT import react or react-dom in .ts files — they have no JSX\n`) +
+        `\n`
       : '';
 
     // FINAL PROMPT ASSEMBLY
