@@ -1,0 +1,9 @@
+{
+  "hasTailwind": false,
+  "cnUtilityPath": "src/constants/templates.ts",
+  "cnImportStatement": "import { cn } from '@/constants/templates'",
+  "hasCssModules": false,
+  "namedExportConvention": true,
+  "existingVariants": [],
+  "detectedAt": "2026-04-15T17:27:08.387Z"
+}
