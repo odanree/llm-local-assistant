@@ -133,8 +133,16 @@ export async function generateAcceptanceCriteria(
       ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
       : '';
     const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisual;
-    const childrenReminder = isTsxComponent && !step.description.toLowerCase().includes('children')
-      ? ' If this component wraps or displays content (text, icons, slots), include a criterion for "Accepts children: React.ReactNode". Omit it only for self-contained display components like icons or spinners.'
+    // Only suggest children criterion for genuine layout/wrapper components.
+    // Forms, pages, inputs, and data-display components do NOT accept children —
+    // adding a children criterion to RegisterForm or LoginPage is an architectural mistake.
+    const isFormOrInputComponent = /(?:Form|Input|Field|Checkbox|Radio|Select|TextArea|Toggle|Switch)/i.test(step.path);
+    const isPageOrScreenComponent = /(?:Page|Screen|Dashboard|Settings|Profile|Detail|List|Table)/i.test(step.path);
+    const childrenReminder = isTsxComponent
+      && !isFormOrInputComponent
+      && !isPageOrScreenComponent
+      && !step.description.toLowerCase().includes('children')
+      ? ' LAYOUT/WRAPPER ONLY: If this component is a layout container, shell, card, or modal that wraps arbitrary content, include a criterion for "Accepts children: React.ReactNode". Do NOT add this criterion for forms, inputs, pages, or focused data-display components.'
       : '';
     const prompt = `You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.\n\nTask: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
 
