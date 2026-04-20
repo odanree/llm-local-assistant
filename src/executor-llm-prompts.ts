@@ -50,6 +50,28 @@ export async function generateAcceptanceCriteria(
       : '';
     const isStructuralLayoutCriteria = isStructuralLayout(step.path, step.description);
     const isDecomposedNavigationCriteria = isDecomposedNavigation(step.path, step.description);
+    const isHOCCriteria = isHOCComponent(step.path);
+
+    // Short-circuit: pre-define criteria for HOC files (with[A-Z] prefix).
+    // Pre-defined criteria ensure displayName, generics, and declarative Navigate are always checked.
+    // The LLM criteria generator frequently drops items 5-6 when generating only 4 criteria.
+    if (isHOCCriteria) {
+      // Extract the auth field from the store RAG context (sourceContent) if available
+      const storeFieldMap = sourceContent ? extractStoreFields(sourceContent) : new Map();
+      const authHookEntry = [...storeFieldMap.entries()].find(([hook]) => /auth|session/i.test(hook));
+      const authField = authHookEntry
+        ? authHookEntry[1].find(f => /logged|auth|session|token/i.test(f)) ?? 'isLoggedIn'
+        : 'isLoggedIn';
+      const authHookName = authHookEntry ? authHookEntry[0] : 'useAuthStore';
+      const hocName = stepBaseName; // e.g. "withAuth"
+      return [
+        `Exported as a named function \`${hocName}\` with generic signature <P extends object>`,
+        `Accepts a Component argument of type React.ComponentType<P> — NOT a \`children\` prop`,
+        `Reads \`${authField}\` from \`${authHookName}()\` — only uses fields the store actually exports`,
+        `Returns <Navigate to="/login" replace /> when unauthenticated — NOT useNavigate()+useEffect`,
+        `Spreads props with \`{...props as P}\` and sets \`Wrapped.displayName\``,
+      ];
+    }
 
     // Short-circuit: pre-define criteria for well-known decomposition targets.
     if (isStructuralLayoutCriteria) {
