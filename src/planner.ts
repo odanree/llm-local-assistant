@@ -162,6 +162,21 @@ export class Planner {
       // "verify your work", "view result", "see the output", etc.
       sortedSteps = this.filterNoisyReadSteps(sortedSteps);
 
+      // POST-PROCESS: Drop self-read steps.
+      // A self-read is a READ step whose target path is also being WRITE'd in this plan.
+      // The LLM sometimes adds "READ the file you just created" after a WRITE — always wrong:
+      // the file didn't exist before the plan ran, and there is nothing useful to read back.
+      const writtenPaths = new Set(
+        sortedSteps.filter(s => s.action === 'write').map(s => s.path).filter(Boolean)
+      );
+      sortedSteps = sortedSteps.filter(s => {
+        if (s.action === 'read' && s.path && writtenPaths.has(s.path)) {
+          console.log(`[Planner] Dropping self-read: READ ${s.path} targets a file being WRITE'd in this plan`);
+          return false;
+        }
+        return true;
+      });
+
       // POST-PROCESS: Drop test RUN steps when the project has no test files,
       // OR when the user didn't explicitly ask to run/verify tests.
       // The LLM prompt discourages unconditional test steps, but this guard
@@ -413,6 +428,7 @@ BENEFIT OF DECOUPLING:
    - READ = File must exist before this step
    - WRITE = File is being created or modified
    - If unsure whether file exists, default to WRITE (executor will handle it)
+   - CRITICAL: A READ step's path MUST NEVER be the same as any WRITE step's path. Reading a file you are also writing is always wrong — the file may not exist yet. A READ step for "authStore" must target the authStore FILE (e.g. src/stores/authStore.ts), NOT the component file being written.
 
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.

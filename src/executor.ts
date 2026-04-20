@@ -22,6 +22,7 @@ import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 // matchFormPatterns and findImportAndSyntaxIssuesPure moved to executor-validator.ts
 import {
   isNonVisualWrapper,
+  isHOCComponent,
   isStructuralLayout,
   isDecomposedNavigation,
   extractPageImports,
@@ -128,6 +129,7 @@ export class Executor {
   // that access via executor['methodName']) working without any changes.
   // -------------------------------------------------------------------------
   private static isNonVisualWrapper(fp: string) { return isNonVisualWrapper(fp); }
+  private static isHOCComponent(fp: string) { return isHOCComponent(fp); }
   private static isStructuralLayout(fp: string, d?: string) { return isStructuralLayout(fp, d); }
   private static isDecomposedNavigation(fp: string, d?: string) { return isDecomposedNavigation(fp, d); }
   private static extractPageImports(code: string) { return extractPageImports(code); }
@@ -2286,6 +2288,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     // NON-INTERACTIVE TSX RULES (form/page/layout components)
     const isNonInteractiveTsx = step.path!.endsWith('.tsx') && !isInteractiveComponent;
     const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path!);
+    const isHOCTsx = isNonInteractiveTsx && Executor.isHOCComponent(step.path!);
     const isStructuralLayoutTsx = isNonInteractiveTsx && Executor.isStructuralLayout(step.path!, step.description);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
@@ -2298,6 +2301,29 @@ STRICTLY FORBIDDEN (these will be rejected):
         `  NEVER create an empty interface \`interface ${componentName}Props {}\` — that is dead code.\n` +
         `  NEVER use React.ComponentProps<typeof ${componentName}> — compile error (circular self-reference).\n` +
         `- Use a plain arrow function. NEVER spread \`...props\` unless there are actual props to forward.\n` +
+        (isHOCTsx
+          ? `- HOC RULES (mandatory — this is a Higher-Order Component, NOT a children wrapper):\n` +
+            `- NEVER use React.forwardRef — HOCs are plain functions, not ref-forwarders.\n` +
+            `- SIGNATURE: export function ${componentName}<P extends object>(Component: React.ComponentType<P>) {\n` +
+            `    const Wrapped = (props: P) => { /* auth check */ return <Component {...props as P} />; };\n` +
+            `    Wrapped.displayName = \`${componentName}(\${Component.displayName ?? Component.name})\`;\n` +
+            `    return Wrapped;\n` +
+            `  }\n` +
+            `- GENERIC: ALWAYS use \`<P extends object>\` — NEVER use \`any\` as the props type workaround.\n` +
+            `  WRONG: function ${componentName}(Component: React.ComponentType<any>)\n` +
+            `  RIGHT:  function ${componentName}<P extends object>(Component: React.ComponentType<P>)\n` +
+            `- PROPS SPREAD: use \`{...props as P}\` to forward all props through to the wrapped component.\n` +
+            `- NEVER accept \`children\` prop — a HOC takes a Component argument, not JSX children.\n` +
+            `- NEVER import \`cn\` — HOCs have no styled elements.\n` +
+            `- SET displayName so React DevTools shows the HOC name: Wrapped.displayName = \`${componentName}(\${...})\`\n` +
+            `- ZUSTAND STATE ACCESS (mandatory): To read state from a Zustand store inside the Wrapped component,\n` +
+            `  import and call the store hook DIRECTLY — NEVER access state via window, globalThis, or any global:\n` +
+            `  WRONG: (window as unknown as Record<string, unknown>).authStore  — hallucinated global, will not work\n` +
+            `  WRONG: authStore.isAuthenticated()  — Zustand stores expose state FIELDS, not methods\n` +
+            `  RIGHT:  import { useAuthStore } from '../stores/authStore';  // (adjust path to match existing file)\n` +
+            `          const Wrapped = (props: P) => { const { isLoggedIn } = useAuthStore(); ... };\n` +
+            `  If the store path is unknown from context, use a relative path convention: '../stores/authStore'\n`
+          : '') +
         (isNonVisualWrapperTsx
           ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n` +
             `- MUST accept and render \`children\`: ({ children }: { children: React.ReactNode }) or React.PropsWithChildren<{}>\n` +

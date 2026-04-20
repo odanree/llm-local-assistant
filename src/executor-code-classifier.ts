@@ -24,6 +24,18 @@ export function isNonVisualWrapper(filePath: string): boolean {
 }
 
 /**
+ * Returns true when a file is a Higher-Order Component (HOC).
+ * HOCs use a `with*` prefix naming convention (withAuth, withPermission, withTheme, etc.).
+ * They are functions that accept a Component argument and return a new component —
+ * NOT wrappers that accept children. They need generics like <P extends object>.
+ */
+export function isHOCComponent(filePath: string): boolean {
+  if (!filePath.endsWith('.tsx')) { return false; }
+  const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+  return /^with[A-Z]/.test(name);
+}
+
+/**
  * Returns true when a file is a structural layout wrapper:
  * Layout components render HTML structure (header/main/footer) around children.
  * They ARE visual, use cn(), but still require a children prop.
