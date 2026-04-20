@@ -212,6 +212,19 @@ export class Planner {
       // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
       sortedSteps = sortedSteps.map((step, i) => ({ ...step, stepNumber: i + 1 }));
 
+      // POST-PROCESSING VALIDATION: Creation tasks must produce at least one WRITE step.
+      // If the LLM sees a related existing file and plans only READ steps, the user gets a
+      // plan that succeeds but creates nothing. Fail fast so the user can retry.
+      const isCreationRequest = /\b(create|implement|add|build|write|generate|make)\b/i.test(userRequest);
+      const hasWriteStep = sortedSteps.some(s => s.action === 'write');
+      if (isCreationRequest && !hasWriteStep) {
+        throw new Error(
+          `Incomplete plan: the request asks to create something but no WRITE steps were generated. ` +
+          `The LLM likely found a related existing file and treated it as satisfying the request. ` +
+          `Please try again — the planner will be retried automatically.`
+        );
+      }
+
       const plan: TaskPlan = {
         taskId: `plan-${Date.now()}`,
         userRequest,
@@ -496,6 +509,15 @@ A step description that mentions a file is NOT the same as a WRITE step for that
   → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
   → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
 - "create a Button component with variants" → MUST have: WRITE src/components/Button.tsx
+- "create a withAuth HOC" → MUST have: WRITE src/components/withAuth.tsx
+  → WRONG: Plan only has READ src/components/withAuthHOC.tsx — a related file is not the deliverable
+
+EXISTING FILES DO NOT SATISFY "CREATE" REQUESTS:
+- If you see a RELATED file in the EXISTING CODEBASE (e.g. withAuthHOC.tsx when user asked for withAuth),
+  that file does NOT satisfy the user's request — still WRITE the EXACT file the user asked for.
+- A plan that only READs existing files and creates NOTHING is ALWAYS wrong for create/implement/add tasks.
+- WRONG: User says "create withAuth.tsx" → Plan: READ withAuthHOC.tsx (0 WRITE steps)
+- RIGHT:  User says "create withAuth.tsx" → Plan: WRITE withAuth.tsx (1 WRITE step)
 - "decompose/extract/split App.tsx into Layout, Navigation, Routes"
   → MUST have: READ App.tsx, WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
   → Count the deliverables in the request — every named artifact needs its own WRITE step
