@@ -20,6 +20,10 @@
 export function isNonVisualWrapper(filePath: string): boolean {
   if (!filePath.endsWith('.tsx')) { return false; }
   const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+  // HOCs (with[A-Z] prefix) are classified separately by isHOCComponent.
+  // They do NOT accept children — the HOC takes a Component argument, not JSX children.
+  // Exclude them here so the children validator and criteria generator don't treat them as wrappers.
+  if (/^with[A-Z]/.test(name)) { return false; }
   return /Route|Guard|Provider|Context|HOC|Outlet/i.test(name);
 }
 

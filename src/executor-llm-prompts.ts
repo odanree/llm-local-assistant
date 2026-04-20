@@ -11,6 +11,7 @@ import { PlanStep } from './planner';
 import { LLMClient } from './llmClient';
 import {
   isNonVisualWrapper,
+  isHOCComponent,
   isStructuralLayout,
   isDecomposedNavigation,
   extractPropsInterface,
@@ -123,8 +124,11 @@ export async function generateAcceptanceCriteria(
       ];
     }
 
+    const isHOCFile = isHOCComponent(step.path);
     const hookLine = isPureLogicFile
       ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
+      : isHOCFile
+      ? ' HOC FILE: This is a Higher-Order Component (with[A-Z] prefix). DO NOT include a children criterion — HOCs accept a Component argument, NOT children. Criteria should focus on: (1) Correct function name and generic signature <P extends object>, (2) Accepts a Component argument of type React.ComponentType<P>, (3) Auth check and redirect to /login when unauthenticated, (4) Renders wrapped component with {...props as P} when authenticated, (5) Sets Wrapped.displayName. NEVER require children prop.'
       : isNonVisual
       ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). ALWAYS include one criterion that checks: "Accepts and renders children prop" — a wrapper that ignores children is broken. Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
       : isStructuralLayoutCriteria
@@ -132,10 +136,10 @@ export async function generateAcceptanceCriteria(
       : isDecomposedNavigationCriteria
       ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
       : '';
-    const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisual;
+    const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisual && !isHOCFile;
     // Only suggest children criterion for genuine layout/wrapper components.
-    // Forms, pages, inputs, and data-display components do NOT accept children —
-    // adding a children criterion to RegisterForm or LoginPage is an architectural mistake.
+    // Forms, pages, inputs, data-display components, and HOCs do NOT accept children —
+    // adding a children criterion to RegisterForm, LoginPage, or withAuth is an architectural mistake.
     const isFormOrInputComponent = /(?:Form|Input|Field|Checkbox|Radio|Select|TextArea|Toggle|Switch)/i.test(step.path);
     const isPageOrScreenComponent = /(?:Page|Screen|Dashboard|Settings|Profile|Detail|List|Table)/i.test(step.path);
     const childrenReminder = isTsxComponent

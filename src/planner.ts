@@ -475,6 +475,10 @@ HOC TERMINOLOGY (apply when task mentions "higher-order component", "HOC", or "w
 - The generic signature is: function withAuth<P extends object>(Component: React.ComponentType<P>)
 - The returned component spreads props through: return <Component {...props as P} />
 - Step descriptions must use "component argument" not "child" or "children"
+- FILE STRUCTURE: Generate the HOC in ONE file named after the HOC (e.g. src/components/withAuth.tsx).
+  Do NOT split into an implementation file + a re-export barrel.
+  WRONG: Step 1: WRITE withAuthHOC.tsx (implementation), Step 2: WRITE withAuth.tsx (re-export)
+  RIGHT:  Step 1: WRITE withAuth.tsx (all HOC logic in one file, exported as withAuth)
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
