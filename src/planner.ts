@@ -162,6 +162,20 @@ export class Planner {
       // "verify your work", "view result", "see the output", etc.
       sortedSteps = this.filterNoisyReadSteps(sortedSteps);
 
+      // POST-PROCESS: Normalize READ paths that are missing file extensions.
+      // The LLM sometimes emits paths like "src/stores/authStore" without a .ts extension,
+      // which triggers PATH_VIOLATION immediately. Store/hook/util files are almost always .ts.
+      sortedSteps = sortedSteps.map(s => {
+        if (s.action !== 'read' || !s.path) { return s; }
+        const p = s.path.replace(/\\/g, '/');
+        if (/\.[a-z]+$/i.test(p)) { return s; } // already has extension
+        // Infer extension: .tsx for components/, .ts for everything else
+        const inferredExt = /\/components\//.test(p) ? '.tsx' : '.ts';
+        const normalized = p + inferredExt;
+        console.log(`[Planner] Normalized READ path: ${p} → ${normalized}`);
+        return { ...s, path: normalized };
+      });
+
       // POST-PROCESS: Drop self-read steps.
       // A self-read is a READ step whose target path is also being WRITE'd in this plan.
       // The LLM sometimes adds "READ the file you just created" after a WRITE — always wrong:
@@ -442,6 +456,9 @@ BENEFIT OF DECOUPLING:
    - WRITE = File is being created or modified
    - If unsure whether file exists, default to WRITE (executor will handle it)
    - CRITICAL: A READ step's path MUST NEVER be the same as any WRITE step's path. Reading a file you are also writing is always wrong — the file may not exist yet. A READ step for "authStore" must target the authStore FILE (e.g. src/stores/authStore.ts), NOT the component file being written.
+   - EXTENSION REQUIRED: Every path MUST end with a file extension (.ts, .tsx, .js, .json, etc.).
+     WRONG: src/stores/authStore        WRONG: src/store/authStore
+     RIGHT:  src/stores/authStore.ts    (store files are almost always .ts, not .tsx)
 
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
