@@ -3048,6 +3048,41 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       }
     }
 
+    // Pass 0.6: deterministic fix for TS2614 "Module has no exported member X"
+    // This fires when the LLM generates `import { useAuthStore }` but the store uses `export default`.
+    // The TypeScript error already contains the suggested fix — apply it without an LLM call.
+    const ts2614Errors = tscErrors.filter(e => e.includes('TS2614'));
+    if (ts2614Errors.length > 0) {
+      let ts2614Fixed = finalContent;
+      for (const err of ts2614Errors) {
+        // Error format: Module '"../stores/authStore"' has no exported member 'useAuthStore'. Did you mean to use 'import useAuthStore from "../stores/authStore"' instead?
+        const m = err.match(/Module '"([^'"]+)"' has no exported member '(\w+)'/);
+        if (!m) continue;
+        const [, modulePath, memberName] = m;
+        const escapedPath = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escapedName = memberName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Replace named import `import { memberName, ...rest } from 'path'` with default import.
+        // If other names are in the same import, split them into a separate named import.
+        const namedImportRe = new RegExp(
+          `import\\s+\\{([^}]*)\\b${escapedName}\\b([^}]*)\\}\\s+from\\s+(['"])${escapedPath}\\3;?`,
+          'g'
+        );
+        ts2614Fixed = ts2614Fixed.replace(namedImportRe, (_match, before, after) => {
+          const rest = (before + after).split(',').map((s: string) => s.trim()).filter(Boolean);
+          const defaultImport = `import ${memberName} from '${modulePath}';`;
+          return rest.length > 0
+            ? defaultImport + `\nimport { ${rest.join(', ')} } from '${modulePath}';`
+            : defaultImport;
+        });
+      }
+      if (ts2614Fixed !== finalContent) {
+        this.config.onMessage?.(`🔧 Fixing named→default import (TS2614) deterministically...`, 'info');
+        finalContent = ts2614Fixed;
+        await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
+        tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
+      }
+    }
+
     // Up to 2 LLM correction passes if errors remain
     for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
       this.config.onMessage?.(`🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info');
