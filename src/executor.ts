@@ -2304,25 +2304,33 @@ STRICTLY FORBIDDEN (these will be rejected):
         (isHOCTsx
           ? `- HOC RULES (mandatory — this is a Higher-Order Component, NOT a children wrapper):\n` +
             `- NEVER use React.forwardRef — HOCs are plain functions, not ref-forwarders.\n` +
-            `- SIGNATURE: export function ${componentName}<P extends object>(Component: React.ComponentType<P>) {\n` +
-            `    const Wrapped = (props: P) => { /* auth check */ return <Component {...props as P} />; };\n` +
+            `- COMPLETE PATTERN (copy this exactly, adapt auth field name from store context):\n` +
+            `  import { useAuthStore } from '../stores/authStore';\n` +
+            `  import { Navigate } from 'react-router-dom';\n` +
+            `  export function ${componentName}<P extends object>(Component: React.ComponentType<P>) {\n` +
+            `    const Wrapped = (props: P) => {\n` +
+            `      const { isLoggedIn } = useAuthStore();  // use the ACTUAL field name from the store\n` +
+            `      if (!isLoggedIn) return <Navigate to="/login" replace />;\n` +
+            `      return <Component {...props as P} />;\n` +
+            `    };\n` +
             `    Wrapped.displayName = \`${componentName}(\${Component.displayName ?? Component.name})\`;\n` +
             `    return Wrapped;\n` +
             `  }\n` +
             `- GENERIC: ALWAYS use \`<P extends object>\` — NEVER use \`any\` as the props type workaround.\n` +
             `  WRONG: function ${componentName}(Component: React.ComponentType<any>)\n` +
             `  RIGHT:  function ${componentName}<P extends object>(Component: React.ComponentType<P>)\n` +
+            `- REDIRECT: use declarative \`<Navigate to="/login" replace />\` — NEVER \`useNavigate()\` with \`useEffect\`.\n` +
+            `  WRONG: const navigate = useNavigate(); useEffect(() => { if (!isLoggedIn) navigate('/login'); }, [...]);\n` +
+            `  RIGHT:  if (!isLoggedIn) return <Navigate to="/login" replace />;\n` +
             `- PROPS SPREAD: use \`{...props as P}\` to forward all props through to the wrapped component.\n` +
             `- NEVER accept \`children\` prop — a HOC takes a Component argument, not JSX children.\n` +
             `- NEVER import \`cn\` — HOCs have no styled elements.\n` +
-            `- SET displayName so React DevTools shows the HOC name: Wrapped.displayName = \`${componentName}(\${...})\`\n` +
-            `- ZUSTAND STATE ACCESS (mandatory): To read state from a Zustand store inside the Wrapped component,\n` +
-            `  import and call the store hook DIRECTLY — NEVER access state via window, globalThis, or any global:\n` +
-            `  WRONG: (window as unknown as Record<string, unknown>).authStore  — hallucinated global, will not work\n` +
-            `  WRONG: authStore.isAuthenticated()  — Zustand stores expose state FIELDS, not methods\n` +
-            `  RIGHT:  import { useAuthStore } from '../stores/authStore';  // (adjust path to match existing file)\n` +
-            `          const Wrapped = (props: P) => { const { isLoggedIn } = useAuthStore(); ... };\n` +
-            `  If the store path is unknown from context, use a relative path convention: '../stores/authStore'\n`
+            `- NEVER add loading state (isLoading, isCheckingAuth) unless the store actually exports one.\n` +
+            `  Use ONLY the fields the store actually exports — if the store has \`isLoggedIn: boolean\`, use that.\n` +
+            `  WRONG: const { isLoggedIn, isLoading } = useAuthStore();  // if isLoading doesn't exist in store\n` +
+            `  RIGHT:  const { isLoggedIn } = useAuthStore();  // use only what the store actually exports\n` +
+            `- ZUSTAND STATE ACCESS: import and call the store hook DIRECTLY inside the Wrapped component.\n` +
+            `  NEVER access state via window, globalThis, or any global object.\n`
           : '') +
         (isNonVisualWrapperTsx
           ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n` +

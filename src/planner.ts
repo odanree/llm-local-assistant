@@ -488,10 +488,15 @@ HOC TERMINOLOGY (apply when task mentions "higher-order component", "HOC", or "w
 - The generic signature is: function withAuth<P extends object>(Component: React.ComponentType<P>)
 - The returned component spreads props through: return <Component {...props as P} />
 - Step descriptions must use "component argument" not "child" or "children"
-- FILE STRUCTURE: Generate the HOC in ONE file named after the HOC (e.g. src/components/withAuth.tsx).
-  Do NOT split into an implementation file + a re-export barrel.
+- FILE STRUCTURE: Generate the HOC in ONE WRITE step (file named after the HOC).
+  If the task references an existing store/hook/file, add a READ step for it BEFORE the WRITE step.
+  Do NOT split the HOC into an implementation file + a re-export barrel.
   WRONG: Step 1: WRITE withAuthHOC.tsx (implementation), Step 2: WRITE withAuth.tsx (re-export)
-  RIGHT:  Step 1: WRITE withAuth.tsx (all HOC logic in one file, exported as withAuth)
+  RIGHT (with authStore context): Step 1: READ src/stores/authStore.ts, Step 2: WRITE src/components/withAuth.tsx
+  RIGHT (no dependency): Step 1: WRITE src/components/withAuth.tsx
+- STEP DESCRIPTIONS: Do NOT mention "loading state", "isLoading", or "isCheckingAuth" in the step description
+  unless the user explicitly asked for it. Typical auth stores only expose isLoggedIn: boolean — no loading
+  field. Inventing a loading requirement causes runtime TypeErrors (field doesn't exist in store).
 
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
