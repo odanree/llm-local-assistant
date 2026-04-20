@@ -2900,6 +2900,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       if (e.includes('Hook') && e.includes('imported but never called')) {
         const hookMatch = e.match(/Hook '(\w+)'/);
         const hookName = hookMatch ? hookMatch[1] : 'hook';
+        // Navigation router hooks should be REMOVED, not called — calling useNavigate() conflicts
+        // with declarative <Navigate> and triggers criteria violations (two contradictory rules).
+        if (/^use(Navigate|Location|Params|SearchParams|Match)$/.test(hookName)) {
+          return `${i + 1}. ${e}\n   ACTION: REMOVE '${hookName}' from the import line — do NOT call it. ` +
+            `Use the declarative <Navigate to="..." replace /> component for redirects instead. ` +
+            `Delete '${hookName}' from the import and do not add a ${hookName}() call.`;
+        }
         const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
           ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
           : `const value = ${hookName}();`;

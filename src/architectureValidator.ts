@@ -913,8 +913,15 @@ export class ArchitectureValidator {
 
           // Generate context-aware suggestion based on hook type and file content
           let suggestion = `Must call the hook: const { ... } = ${hookName}();`;
-          
-          if (hookName === 'useState') {
+
+          if (/^use(Navigate|Location|Params|SearchParams|Match)$/.test(hookName)) {
+            // Router navigation hooks: unused import means <Navigate> component is already
+            // handling the redirect declaratively. REMOVE the import — do NOT add a call.
+            // Adding a useNavigate() call conflicts with <Navigate> and triggers a criteria violation.
+            suggestion = `REMOVE '${hookName}' from the import — it is imported but not used. ` +
+              `If redirecting, use the declarative <Navigate to="..." replace /> component instead of calling ${hookName}(). ` +
+              `Fix: delete '${hookName}' from the import line.`;
+          } else if (hookName === 'useState') {
             // For useState, provide more specific guidance
             suggestion = `useState must be called in the component body. Example: const [state, setState] = useState(initialValue);`;
           } else if (hookName === 'useEffect') {
