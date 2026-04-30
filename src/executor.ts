@@ -2377,6 +2377,16 @@ data from the existing hook. DO NOT add any of the following:
 - Additional imports beyond what sub-components need
 - Any functionality not present in the original source
 Correct pattern: 1) call useUser(userId), 2) pass data to <UserAvatar> and <UserStats>, done.
+
+TYPE SAFETY RULE (mandatory for coordinator): The data hook returns an untyped value (e.g. user: unknown).
+You MUST cast it to the schema type before accessing any properties:
+  import { User } from '../schemas/userSchema';
+  const { user, loading, error } = useUser(userId);
+  const typedUser = user as User;  // ← REQUIRED: cast before accessing .name / .email / .age
+  // Then use typedUser.name, typedUser.email, typedUser.age — NOT user.name, user.email, user.age
+WRONG: <UserAvatar name={user.name} />         ← user is untyped, causes TS2339
+RIGHT:  <UserAvatar name={typedUser.name} />   ← typedUser is User, property access is safe
+NEVER pass a prop that is not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
 ` : ''}`
       : '';
 
@@ -2868,36 +2878,62 @@ STRICTLY FORBIDDEN (these will be rejected):
 
     // SUB-COMPONENT FIELD OVERRIDE
     // When a non-coordinator .tsx component step has access to the source file, inject the
-    // exact fields the source accesses so the LLM doesn't invent props from the step description
-    // (e.g. step says "total posts, followers, join date" but source only uses name/email/age).
+    // exact entity fields the source accesses. Uses ENTITY-SPECIFIC extraction (not generic
+    // dot-access) to avoid collecting style/CSS property names as false data fields.
+    // This prevents LLM from using step-description-invented props (imageUrl, totalPosts,
+    // followersCount, joinDate) when source only uses name/email/age.
     const compositionSignalsSub = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
     const isCompositionSub = compositionSignalsSub.test(step.description ?? '') || compositionSignalsSub.test(step.prompt ?? '');
     const isSubcomponent = step.path!.endsWith('.tsx') && step.path!.includes('/components/') && !isCompositionSub;
     let subcomponentFieldOverrideSection = '';
     if (isSubcomponent && sourceReadContents.length > 0) {
       const sourceCombined = sourceReadContents.map(r => r.content).join('\n');
-      // Collect all entity fields accessed in source (dot-access and 'field' in entity patterns)
-      const entityWords = new Set<string>();
-      const dotAnyPattern = /\b(\w+)\.(\w+)\b/g;
-      for (const m of sourceCombined.matchAll(dotAnyPattern)) {
-        const obj = m[1]; const field = m[2];
-        if (['React', 'useState', 'useEffect', 'console', 'Math', 'Object', 'Array', 'String', 'Number', 'Boolean', 'window', 'document'].includes(obj)) continue;
-        if (field.length > 1 && !/^[A-Z]/.test(field)) entityWords.add(field);
+      // Step 1: find the primary data entity from 'field' in entity patterns (e.g. 'name' in user → entity=user)
+      const inEntityCandidatePat = /'(\w+)'\s+in\s+(\w+)/g;
+      const entityCount = new Map<string, number>();
+      for (const m of sourceCombined.matchAll(inEntityCandidatePat)) {
+        const entity = m[2];
+        entityCount.set(entity, (entityCount.get(entity) ?? 0) + 1);
       }
-      const inAnyPattern = /'(\w+)'\s+in\s+\b\w+\b/g;
-      for (const m of sourceCombined.matchAll(inAnyPattern)) entityWords.add(m[1]);
-      // Remove obvious non-prop words
-      const SKIP = new Set(['length', 'toString', 'map', 'filter', 'find', 'reduce', 'forEach', 'push', 'pop', 'slice', 'join', 'split', 'includes', 'indexOf', 'trim', 'replace', 'log', 'error', 'warn', 'then', 'catch', 'finally', 'current', 'style', 'className', 'children']);
-      const srcFields = [...entityWords].filter(f => !SKIP.has(f));
+      // Also look for hook destructuring: const { user, loading } = useXxx(...)
+      const hookDestructPat = /const\s*\{([^}]+)\}\s*=\s*use\w+\(/g;
+      for (const m of sourceCombined.matchAll(hookDestructPat)) {
+        const names = m[1].split(',').map(n => n.trim().split(/\s+/)[0]);
+        for (const n of names) {
+          if (n && /^[a-z]/.test(n) && !['loading', 'error', 'data', 'isLoading', 'refetch', 'mutate'].includes(n)) {
+            entityCount.set(n, (entityCount.get(n) ?? 0) + 2); // higher weight for hook destructure
+          }
+        }
+      }
+      const primaryEntity = [...entityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      let srcFields: string[] = [];
+      if (primaryEntity) {
+        // Step 2: extract only fields accessed ON that entity
+        const inPat = new RegExp(`'(\\w+)'\\s+in\\s+\\b${primaryEntity}\\b`, 'g');
+        const dotPat = new RegExp(`\\b${primaryEntity}\\.(\\w+)\\b`, 'g');
+        const castDotPat = new RegExp(`\\b${primaryEntity}\\b[^.]*\\)\\.(\\w+)\\b`, 'g'); // (entity as T).field
+        srcFields = [...new Set([
+          ...[...sourceCombined.matchAll(inPat)].map(m => m[1]),
+          ...[...sourceCombined.matchAll(dotPat)].map(m => m[1]),
+          ...[...sourceCombined.matchAll(castDotPat)].map(m => m[1]),
+        ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
+      }
+      // Collect words from the step description that name invented props (these must be blocked)
+      const descWords = (step.description ?? '').toLowerCase().match(/\b\w{4,}\b/g) ?? [];
+      const COMMON_WORDS = new Set(['from', 'that', 'with', 'this', 'into', 'data', 'user', 'comp', 'file', 'type', 'prop', 'interface', 'component', 'display', 'render', 'show', 'create', 'extract', 'dedicated', 'reusable', 'accepting', 'array', 'stats', 'logic', 'avatar', 'image']);
+      const inventedCandidates = descWords.filter(w => !COMMON_WORDS.has(w) && !srcFields.includes(w));
       if (srcFields.length > 0) {
+        const inventedWarning = inventedCandidates.length > 0
+          ? `DO NOT invent props mentioned in the requirement description (e.g. ${inventedCandidates.slice(0, 4).join(', ')}) — those are not in the source.\n`
+          : `DO NOT invent props not in this list.\n`;
         subcomponentFieldOverrideSection =
           `\n⚠️ PROPS FIELD OVERRIDE (this rule OVERRIDES any example fields in the REQUIREMENT):\n` +
-          `The source file accesses EXACTLY these fields: ${srcFields.join(', ')}.\n` +
+          `The source file's '${primaryEntity}' entity accesses EXACTLY these fields: ${srcFields.join(', ')}.\n` +
           `Your props interface MUST use ONLY fields from this set.\n` +
-          `DO NOT invent props like totalPosts, followersCount, joinDate, createdAt, bio, or any field not in the list above.\n` +
-          `WRONG example: interface UserStatsProps { joinDate: string; totalPosts: number; followersCount: number }\n` +
-          `RIGHT example: interface UserStatsProps { ${srcFields.slice(0, 3).map(f => `${f}: ${f === 'age' ? 'number' : 'string'}`).join('; ')} }\n\n`;
-        console.log(`[Executor] ℹ️ Injecting sub-component field override for ${step.path}: [${srcFields.join(', ')}]`);
+          inventedWarning +
+          `WRONG: interface UserAvatarProps { imageUrl: string }  ← imageUrl is not in the source entity\n` +
+          `RIGHT: interface UserAvatarProps { ${srcFields.slice(0, 2).map(f => `${f}: ${f === 'age' ? 'number' : 'string'}`).join('; ')} }\n\n`;
+        console.log(`[Executor] ℹ️ Sub-component field override for ${step.path} [entity=${primaryEntity}]: [${srcFields.join(', ')}]`);
       }
     }
 
