@@ -226,6 +226,257 @@ export class Planner {
       // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
       sortedSteps = sortedSteps.map((step, i) => ({ ...step, stepNumber: i + 1 }));
 
+      // POST-PROCESS: Inject missing READ step for HOC creation plans.
+      // The HOC prompt instructs the LLM to read the dependency store first, but ~1/7 runs
+      // the LLM skips the READ step entirely. Without the READ, Pass 0.3 still fixes named
+      // imports deterministically, but plan score drops. Inject the READ when missing.
+      {
+        const fs = require('fs');
+        const nodePath = require('path');
+        const hocWriteStep = sortedSteps.find(
+          s => s.action === 'write' && s.path && /\/with[A-Z][^/]*\.[tj]sx?$/.test(s.path)
+        );
+        const hasAnyRead = sortedSteps.some(s => s.action === 'read');
+        if (hocWriteStep && !hasAnyRead && workspacePath) {
+          // Extract store name from user request or step description
+          const combined = userRequest + ' ' + (hocWriteStep.description ?? '');
+          const storeMatch = combined.match(/\b([a-zA-Z]+[Ss]tore)\b/);
+          const storeName = storeMatch?.[1] ?? 'authStore';
+          // Find which store directory exists on disk
+          const candidates = [
+            `src/stores/${storeName}.ts`,
+            `src/store/${storeName}.ts`,
+          ];
+          const storePath = candidates.find(c =>
+            fs.existsSync(nodePath.join(workspacePath, c))
+          ) ?? candidates[0];
+          const maxId = sortedSteps.reduce((m, s) => Math.max(m, typeof s.stepId === 'number' ? s.stepId : 0), 0);
+          const injectedRead: ExecutionStep = {
+            stepId: maxId + 1,
+            stepNumber: 1,
+            action: 'read',
+            path: storePath,
+            description: `Read the existing ${storeName} to understand the session state structure for the HOC`,
+            expectedOutcome: 'Store field names and export style confirmed before generating the HOC',
+            id: `injected-read-${storeName}`,
+            dependsOn: [],
+          } as ExecutionStep;
+          sortedSteps = [
+            injectedRead,
+            ...sortedSteps.map(s => ({ ...s, stepNumber: (s.stepNumber ?? 0) + 1 })),
+          ];
+          console.log(`[Planner] Injected missing HOC dependency READ step: ${storePath}`);
+        }
+      }
+
+      // POST-PROCESS: Inject missing READ step for decomposition tasks.
+      // When the user says "take the existing X.tsx" or "decompose X.tsx", the planner must
+      // READ the source file first. Without it sub-components are invented from scratch,
+      // yielding wrong types, wrong styling, and wrong paths.
+      // Also aligns any WRITE step targeting the same filename to the correct workspace path.
+      {
+        const fsD = require('fs');
+        const nodePathD = require('path');
+        // Primary: verb immediately before filename
+        const decompMatch = userRequest.match(
+          /\b(?:existing\s+|decompose\s+|refactor\s+)([\w]+\.tsx?)/i
+        );
+        // Secondary: decompose/split/break keyword anywhere + filename anywhere in request
+        const decompKeyword = /\b(?:decompose|split|break\s+(?:up|down|apart))\b/i.test(userRequest);
+        const fileInRequest = decompKeyword
+          ? userRequest.match(/\b([\w]+\.tsx?)\b/i)
+          : null;
+        const sourceFileName = decompMatch?.[1] ?? fileInRequest?.[1];
+        if (sourceFileName) {
+          // Always resolve the canonical source path — needed for WRITE alignment
+          // even when the LLM already generated a READ step.
+          const candidateDirs = [
+            'src/components',
+            'src/pages',
+            'src/screens',
+            'src/views',
+            'src/features',
+            'src',
+          ];
+          const foundPath = workspacePath
+            ? candidateDirs
+                .map(d => `${d}/${sourceFileName}`)
+                .find(p => fsD.existsSync(nodePathD.join(workspacePath, p)))
+            : undefined;
+          const sourceRelPath = foundPath ?? `src/components/${sourceFileName}`;
+
+          const hasReadForSource = sortedSteps.some(
+            s => s.action === 'read' && s.path && s.path.endsWith(sourceFileName)
+          );
+          if (!hasReadForSource) {
+            const maxId = sortedSteps.reduce(
+              (m, s) => Math.max(m, typeof s.stepId === 'number' ? s.stepId : 0),
+              0
+            );
+            const injectedRead: ExecutionStep = {
+              stepId: maxId + 1,
+              stepNumber: 1,
+              action: 'read',
+              path: sourceRelPath,
+              description:
+                `Read the existing ${sourceFileName} to extract its actual structure and data types for guided decomposition`,
+              expectedOutcome:
+                'Source component structure, prop shapes, and styling approach confirmed before generating sub-components',
+              id: `injected-read-${sourceFileName.replace(/\./g, '-')}`,
+              dependsOn: [],
+            } as ExecutionStep;
+            // Inject at position 0 and renumber
+            sortedSteps = [
+              injectedRead,
+              ...sortedSteps.map(s => ({ ...s, stepNumber: (s.stepNumber ?? 0) + 1 })),
+            ];
+            console.log(`[Planner] Injected missing decomposition READ step: ${sourceRelPath}`);
+          }
+
+          // Always align any WRITE step for the source file to the correct path
+          // (runs regardless of whether we injected the READ or the LLM already had one).
+          sortedSteps = sortedSteps.map(s => {
+            if (s.action !== 'write' || !s.path) return s;
+            const sBaseName = s.path.split('/').pop();
+            if (sBaseName === sourceFileName && s.path !== sourceRelPath) {
+              console.log(
+                `[Planner] Aligned decomposition WRITE path: ${s.path} → ${sourceRelPath}`
+              );
+              return { ...s, path: sourceRelPath, targetFile: sourceRelPath };
+            }
+            return s;
+          });
+
+          // Move any sub-component .tsx WRITE steps that landed directly in src/ to
+          // src/components/ so they are co-located with the source and the sibling import
+          // filter (which requires 'components/' in the path) can catch them.
+          if (sourceRelPath.includes('/components/')) {
+            sortedSteps = sortedSteps.map(s => {
+              if (s.action !== 'write' || !s.path) { return s; }
+              const parts = s.path.split('/');
+              const isDirectlyInSrc = parts.length === 2 && parts[0] === 'src' && s.path.endsWith('.tsx');
+              if (!isDirectlyInSrc) { return s; }
+              const newPath = `src/components/${parts[1]}`;
+              console.log(`[Planner] Moved sub-component to components/: ${s.path} → ${newPath}`);
+              return { ...s, path: newPath, targetFile: newPath };
+            });
+          }
+        }
+      }
+
+      // POST-PROCESS: Align output file paths to explicit filenames mentioned in the user request.
+      // When the user says "decompose X into UserAvatar, UserStats, and userSchema.ts", those
+      // names are authoritative. If the LLM generates a WRITE step for a schema/component with
+      // a different name (e.g. userProfileValidation.ts instead of userSchema.ts), fix it here.
+      {
+        // Extract all explicit *.ts and *.tsx filenames from the request (excluding the source file)
+        const explicitFiles = [...userRequest.matchAll(/\b([\w]+\.tsx?)\b/gi)]
+          .map(m => m[1])
+          .filter((f, i, arr) => arr.indexOf(f) === i); // deduplicate
+        if (explicitFiles.length > 1) {
+          // Group by layer (tsx → components, ts → schemas or other)
+          const explicitTsx = explicitFiles.filter(f => f.endsWith('.tsx'));
+          const explicitTs = explicitFiles.filter(f => f.endsWith('.ts') && !f.endsWith('.tsx'));
+          // Align WRITE steps: for each explicit .ts file, ensure it's in src/schemas/.
+          // Catches two cases:
+          //   1. File is already in schemas/ but with a different basename — rename it.
+          //   2. File is in the wrong directory (e.g. src/userSchema.ts) — move it to src/schemas/.
+          for (const requestedName of explicitTs) {
+            // Case 1: file in schemas/ with wrong basename
+            const misnamedInSchemas = sortedSteps.find(s => {
+              if (s.action !== 'write' || !s.path) { return false; }
+              const basename = s.path.split('/').pop() ?? '';
+              return (s.path.includes('schemas/') || s.path.includes('validation/'))
+                && basename !== requestedName;
+            });
+            if (misnamedInSchemas && misnamedInSchemas.path) {
+              const dir = misnamedInSchemas.path.substring(0, misnamedInSchemas.path.lastIndexOf('/'));
+              const newPath = `${dir}/${requestedName}`;
+              console.log(`[Planner] Aligned schema WRITE path: ${misnamedInSchemas.path} → ${newPath}`);
+              sortedSteps = sortedSteps.map(s =>
+                s === misnamedInSchemas ? { ...s, path: newPath, targetFile: newPath } : s
+              );
+              continue;
+            }
+
+            // Case 2: schema-named file written to wrong directory (e.g. src/userSchema.ts)
+            const schemaNamePattern = /[Ss]chema\.ts$|[Vv]alidation\.ts$/;
+            const misplacedSchema = sortedSteps.find(s => {
+              if (s.action !== 'write' || !s.path) { return false; }
+              const basename = s.path.split('/').pop() ?? '';
+              // File has a schema-style name AND is NOT already in the correct layer
+              return basename === requestedName
+                && schemaNamePattern.test(basename)
+                && !s.path.includes('schemas/')
+                && !s.path.includes('validation/');
+            });
+            if (misplacedSchema && misplacedSchema.path) {
+              const corrected = `src/schemas/${requestedName}`;
+              console.log(`[Planner] Moved misplaced schema WRITE: ${misplacedSchema.path} → ${corrected}`);
+              sortedSteps = sortedSteps.map(s =>
+                s === misplacedSchema ? { ...s, path: corrected, targetFile: corrected } : s
+              );
+            }
+          }
+          // If the request explicitly names a .ts schema file but the LLM omitted a WRITE
+          // step for it, inject a minimal schema WRITE step so it isn't silently skipped.
+          for (const requestedName of explicitTs) {
+            const alreadyCovered = sortedSteps.some(
+              s => s.action === 'write' && s.path && s.path.endsWith(requestedName)
+            );
+            if (!alreadyCovered) {
+              const maxId = sortedSteps.reduce(
+                (m, s) => Math.max(m, typeof s.stepId === 'number' ? s.stepId : 0), 0
+              );
+              // Insert schema step before the final source-file update (keep it second-to-last)
+              const lastWriteIdx = sortedSteps.reduce(
+                (best, s, i) => (s.action === 'write' ? i : best), -1
+              );
+              const insertAt = lastWriteIdx >= 0 ? lastWriteIdx : sortedSteps.length;
+              const schemaStep: ExecutionStep = {
+                stepId: maxId + 1,
+                stepNumber: insertAt + 1,
+                action: 'write',
+                path: `src/schemas/${requestedName}`,
+                description: `Create ${requestedName}: Zod schema defining the shape and validation rules for user profile data`,
+                expectedOutcome: `${requestedName} created with Zod schema and exported TypeScript type`,
+                id: `injected-schema-${requestedName.replace(/\./g, '-')}`,
+                dependsOn: [],
+              } as ExecutionStep;
+              sortedSteps = [
+                ...sortedSteps.slice(0, insertAt),
+                schemaStep,
+                ...sortedSteps.slice(insertAt).map(s => ({ ...s, stepNumber: (s.stepNumber ?? 0) + 1 })),
+              ];
+              console.log(`[Planner] Injected missing schema WRITE step: src/schemas/${requestedName}`);
+            }
+          }
+        }
+
+        // Drop WRITE steps for utility files the user never asked for.
+        // When the request names specific output files, any extra WRITE to src/utils/ or
+        // src/helpers/ is LLM invention. Remove before the plan is shown to the user.
+        if (explicitFiles.length > 0) {
+          const beforeDrop = sortedSteps.length;
+          sortedSteps = sortedSteps.filter(s => {
+            if (s.action !== 'write' || !s.path) { return true; }
+            const isUtil = s.path.includes('/utils/') || s.path.includes('/helpers/') || s.path.includes('/lib/');
+            if (!isUtil) { return true; }
+            const basename = s.path.split('/').pop() ?? '';
+            const requestedExplicitly = explicitFiles.some(f => f === basename)
+              || new RegExp(`\\b${basename.replace(/\.[tj]sx?$/, '')}\\b`, 'i').test(userRequest);
+            if (!requestedExplicitly) {
+              console.log(`[Planner] Dropped uninvited util WRITE step: "${s.path}" — not in user request`);
+              return false;
+            }
+            return true;
+          });
+          if (sortedSteps.length < beforeDrop) {
+            sortedSteps = this.stripStaleDependencies(sortedSteps);
+          }
+        }
+      }
+
       // POST-PROCESSING VALIDATION: Creation tasks must produce at least one WRITE step.
       // If the LLM sees a related existing file and plans only READ steps, the user gets a
       // plan that succeeds but creates nothing. Fail fast so the user can retry.
