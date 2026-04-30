@@ -22,6 +22,7 @@ import { safeParse, sanitizeJson } from './utils/jsonSanitizer';
 // matchFormPatterns and findImportAndSyntaxIssuesPure moved to executor-validator.ts
 import {
   isNonVisualWrapper,
+  isHOCComponent,
   isStructuralLayout,
   isDecomposedNavigation,
   extractPageImports,
@@ -128,6 +129,7 @@ export class Executor {
   // that access via executor['methodName']) working without any changes.
   // -------------------------------------------------------------------------
   private static isNonVisualWrapper(fp: string) { return isNonVisualWrapper(fp); }
+  private static isHOCComponent(fp: string) { return isHOCComponent(fp); }
   private static isStructuralLayout(fp: string, d?: string) { return isStructuralLayout(fp, d); }
   private static isDecomposedNavigation(fp: string, d?: string) { return isDecomposedNavigation(fp, d); }
   private static extractPageImports(code: string) { return extractPageImports(code); }
@@ -652,11 +654,27 @@ export class Executor {
         }
       }
 
+      // ABSOLUTE PATH CHECK: catch workspace-relative imports used as bare specifiers.
+      // e.g. from 'src/stores/authStore' instead of '../stores/authStore'.
+      // These look like npm packages but are actually broken path references — block them.
+      const absolutePathPrefixes = ['src/', 'app/', 'lib/', 'components/', 'stores/', 'hooks/', 'utils/', 'services/', 'pages/', 'types/'];
+      const allBareImports = [...content.matchAll(/from\s+['"]([^.@'"\/][^'"]*)['"]/g)];
+      for (const m of allBareImports) {
+        const imp = m[1];
+        if (absolutePathPrefixes.some(p => imp.startsWith(p))) {
+          const relative = imp.replace(/^[^/]+\//, '../');
+          integrationErrors.push(
+            `❌ ${filePath}: Absolute workspace import '${imp}' will not resolve at runtime. ` +
+            `Use a relative path instead: '${relative}'`
+          );
+        }
+      }
+
       // NPM PACKAGE CHECK: verify bare package imports (e.g. 'react-router-dom', 'zod')
       // are actually in package.json. Only runs when we successfully read package.json.
       if (this.availablePackages.length > 0) {
         // Match bare package imports: 'react-router-dom', '@tanstack/react-query', etc.
-        // Exclude relative paths (./ ../), @/ alias paths, and node builtins.
+        // Exclude relative paths (./ ../), @/ alias paths, node builtins, and workspace paths (caught above).
         const pkgImportLines = [...content.matchAll(/from\s+['"]([^.@'"\/][^'"]*|@[^/'"]+\/[^'"]+)['"]/g)];
         const nodeBuiltins = new Set([
           'path', 'fs', 'os', 'http', 'https', 'url', 'util', 'crypto', 'stream',
@@ -667,6 +685,8 @@ export class Executor {
         const alwaysAvailable = new Set(['react', 'react-dom', 'typescript']);
         for (const pkgMatch of pkgImportLines) {
           const pkgName = pkgMatch[1];
+          // Skip workspace-relative paths already caught above
+          if (absolutePathPrefixes.some(p => pkgName.startsWith(p))) continue;
           // Normalize scoped packages to their root (e.g. '@tanstack/react-query' → '@tanstack/react-query')
           const rootPkg = pkgName.startsWith('@')
             ? pkgName  // keep full scoped name
@@ -2268,6 +2288,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     // NON-INTERACTIVE TSX RULES (form/page/layout components)
     const isNonInteractiveTsx = step.path!.endsWith('.tsx') && !isInteractiveComponent;
     const isNonVisualWrapperTsx = isNonInteractiveTsx && Executor.isNonVisualWrapper(step.path!);
+    const isHOCTsx = isNonInteractiveTsx && Executor.isHOCComponent(step.path!);
     const isStructuralLayoutTsx = isNonInteractiveTsx && Executor.isStructuralLayout(step.path!, step.description);
     const noForwardRefSection = isNonInteractiveTsx
       ? `\nCOMPONENT RULES (mandatory):\n` +
@@ -2280,6 +2301,37 @@ STRICTLY FORBIDDEN (these will be rejected):
         `  NEVER create an empty interface \`interface ${componentName}Props {}\` — that is dead code.\n` +
         `  NEVER use React.ComponentProps<typeof ${componentName}> — compile error (circular self-reference).\n` +
         `- Use a plain arrow function. NEVER spread \`...props\` unless there are actual props to forward.\n` +
+        (isHOCTsx
+          ? `- HOC RULES (mandatory — this is a Higher-Order Component, NOT a children wrapper):\n` +
+            `- NEVER use React.forwardRef — HOCs are plain functions, not ref-forwarders.\n` +
+            `- COMPLETE PATTERN (copy this exactly, adapt auth field name from store context):\n` +
+            `  import { useAuthStore } from '../stores/authStore';\n` +
+            `  import { Navigate } from 'react-router-dom';\n` +
+            `  export function ${componentName}<P extends object>(Component: React.ComponentType<P>) {\n` +
+            `    const Wrapped = (props: P) => {\n` +
+            `      const { isLoggedIn } = useAuthStore();  // use the ACTUAL field name from the store\n` +
+            `      if (!isLoggedIn) return <Navigate to="/login" replace />;\n` +
+            `      return <Component {...props as P} />;\n` +
+            `    };\n` +
+            `    Wrapped.displayName = \`${componentName}(\${Component.displayName ?? Component.name})\`;\n` +
+            `    return Wrapped;\n` +
+            `  }\n` +
+            `- GENERIC: ALWAYS use \`<P extends object>\` — NEVER use \`any\` as the props type workaround.\n` +
+            `  WRONG: function ${componentName}(Component: React.ComponentType<any>)\n` +
+            `  RIGHT:  function ${componentName}<P extends object>(Component: React.ComponentType<P>)\n` +
+            `- REDIRECT: use declarative \`<Navigate to="/login" replace />\` — NEVER \`useNavigate()\` with \`useEffect\`.\n` +
+            `  WRONG: const navigate = useNavigate(); useEffect(() => { if (!isLoggedIn) navigate('/login'); }, [...]);\n` +
+            `  RIGHT:  if (!isLoggedIn) return <Navigate to="/login" replace />;\n` +
+            `- PROPS SPREAD: use \`{...props as P}\` to forward all props through to the wrapped component.\n` +
+            `- NEVER accept \`children\` prop — a HOC takes a Component argument, not JSX children.\n` +
+            `- NEVER import \`cn\` — HOCs have no styled elements.\n` +
+            `- NEVER add loading state (isLoading, isCheckingAuth) unless the store actually exports one.\n` +
+            `  Use ONLY the fields the store actually exports — if the store has \`isLoggedIn: boolean\`, use that.\n` +
+            `  WRONG: const { isLoggedIn, isLoading } = useAuthStore();  // if isLoading doesn't exist in store\n` +
+            `  RIGHT:  const { isLoggedIn } = useAuthStore();  // use only what the store actually exports\n` +
+            `- ZUSTAND STATE ACCESS: import and call the store hook DIRECTLY inside the Wrapped component.\n` +
+            `  NEVER access state via window, globalThis, or any global object.\n`
+          : '') +
         (isNonVisualWrapperTsx
           ? `- NEVER import \`cn\` — this is a logic wrapper with NO styled elements. It renders children or redirects; it has no CSS class merging.\n` +
             `- MUST accept and render \`children\`: ({ children }: { children: React.ReactNode }) or React.PropsWithChildren<{}>\n` +
@@ -2848,6 +2900,13 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       if (e.includes('Hook') && e.includes('imported but never called')) {
         const hookMatch = e.match(/Hook '(\w+)'/);
         const hookName = hookMatch ? hookMatch[1] : 'hook';
+        // Navigation router hooks should be REMOVED, not called — calling useNavigate() conflicts
+        // with declarative <Navigate> and triggers criteria violations (two contradictory rules).
+        if (/^use(Navigate|Location|Params|SearchParams|Match)$/.test(hookName)) {
+          return `${i + 1}. ${e}\n   ACTION: REMOVE '${hookName}' from the import line — do NOT call it. ` +
+            `Use the declarative <Navigate to="..." replace /> component for redirects instead. ` +
+            `Delete '${hookName}' from the import and do not add a ${hookName}() call.`;
+        }
         const callExample = (hookName.endsWith('Store') || hookName.toLowerCase().includes('store'))
           ? `const { fieldA, fieldB, setFieldA } = ${hookName}();`
           : `const value = ${hookName}();`;
@@ -2984,6 +3043,41 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       if (resolvedContent !== finalContent) {
         this.config.onMessage?.(`🔧 Resolving missing imports deterministically (TS2304)...`, 'info');
         finalContent = resolvedContent;
+        await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
+        tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
+      }
+    }
+
+    // Pass 0.6: deterministic fix for TS2614 "Module has no exported member X"
+    // This fires when the LLM generates `import { useAuthStore }` but the store uses `export default`.
+    // The TypeScript error already contains the suggested fix — apply it without an LLM call.
+    const ts2614Errors = tscErrors.filter(e => e.includes('TS2614'));
+    if (ts2614Errors.length > 0) {
+      let ts2614Fixed = finalContent;
+      for (const err of ts2614Errors) {
+        // Error format: Module '"../stores/authStore"' has no exported member 'useAuthStore'. Did you mean to use 'import useAuthStore from "../stores/authStore"' instead?
+        const m = err.match(/Module '"([^'"]+)"' has no exported member '(\w+)'/);
+        if (!m) continue;
+        const [, modulePath, memberName] = m;
+        const escapedPath = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escapedName = memberName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Replace named import `import { memberName, ...rest } from 'path'` with default import.
+        // If other names are in the same import, split them into a separate named import.
+        const namedImportRe = new RegExp(
+          `import\\s+\\{([^}]*)\\b${escapedName}\\b([^}]*)\\}\\s+from\\s+(['"])${escapedPath}\\3;?`,
+          'g'
+        );
+        ts2614Fixed = ts2614Fixed.replace(namedImportRe, (_match, before, after) => {
+          const rest = (before + after).split(',').map((s: string) => s.trim()).filter(Boolean);
+          const defaultImport = `import ${memberName} from '${modulePath}';`;
+          return rest.length > 0
+            ? defaultImport + `\nimport { ${rest.join(', ')} } from '${modulePath}';`
+            : defaultImport;
+        });
+      }
+      if (ts2614Fixed !== finalContent) {
+        this.config.onMessage?.(`🔧 Fixing named→default import (TS2614) deterministically...`, 'info');
+        finalContent = ts2614Fixed;
         await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
         tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
       }

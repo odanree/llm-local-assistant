@@ -372,16 +372,34 @@ export class SmartAutoCorrection {
    * Remove an unused import statement
    */
   private static removeUnusedImport(code: string, name: string): string {
-    // Pattern: import { NAME } from 'source'; or import NAME from 'source';
-    const patterns = [
-      new RegExp(`import\\s+{[^}]*\\b${name}\\b[^}]*}\\s+from\\s+['"][^'"]*['"];?\\n?`, 'g'),
-      new RegExp(`import\\s+${name}\\s+from\\s+['"][^'"]*['"];?\\n?`, 'g'),
-    ];
-
     let result = code;
-    patterns.forEach(pattern => {
-      result = result.replace(pattern, '');
-    });
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Named imports — three passes to handle all positions:
+
+    // Pass 1: NAME is first in list → `import { NAME, Rest }` → `import { Rest }`
+    result = result.replace(
+      new RegExp(`(import\\s+\\{)\\s*${esc}\\s*,\\s*`, 'g'),
+      '$1 '
+    );
+
+    // Pass 2: NAME is middle or last → `, NAME` → ``
+    result = result.replace(
+      new RegExp(`,\\s*${esc}\\b`, 'g'),
+      ''
+    );
+
+    // Pass 3: NAME is the only named import → `import { NAME } from 'source';` → (drop line)
+    result = result.replace(
+      new RegExp(`import\\s+\\{\\s*${esc}\\s*\\}\\s+from\\s+['"][^'"]*['"];?\\n?`, 'g'),
+      ''
+    );
+
+    // Default import: `import NAME from 'source';`
+    result = result.replace(
+      new RegExp(`import\\s+${esc}\\s+from\\s+['"][^'"]*['"];?\\n?`, 'g'),
+      ''
+    );
 
     return result;
   }

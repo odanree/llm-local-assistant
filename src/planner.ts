@@ -162,6 +162,35 @@ export class Planner {
       // "verify your work", "view result", "see the output", etc.
       sortedSteps = this.filterNoisyReadSteps(sortedSteps);
 
+      // POST-PROCESS: Normalize READ paths that are missing file extensions.
+      // The LLM sometimes emits paths like "src/stores/authStore" without a .ts extension,
+      // which triggers PATH_VIOLATION immediately. Store/hook/util files are almost always .ts.
+      sortedSteps = sortedSteps.map(s => {
+        if (s.action !== 'read' || !s.path) { return s; }
+        const p = s.path.replace(/\\/g, '/');
+        if (/\.[a-z]+$/i.test(p)) { return s; } // already has extension
+        // Infer extension: .tsx for components/, .ts for everything else
+        const inferredExt = /\/components\//.test(p) ? '.tsx' : '.ts';
+        const normalized = p + inferredExt;
+        console.log(`[Planner] Normalized READ path: ${p} → ${normalized}`);
+        return { ...s, path: normalized };
+      });
+
+      // POST-PROCESS: Drop self-read steps.
+      // A self-read is a READ step whose target path is also being WRITE'd in this plan.
+      // The LLM sometimes adds "READ the file you just created" after a WRITE — always wrong:
+      // the file didn't exist before the plan ran, and there is nothing useful to read back.
+      const writtenPaths = new Set(
+        sortedSteps.filter(s => s.action === 'write').map(s => s.path).filter(Boolean)
+      );
+      sortedSteps = sortedSteps.filter(s => {
+        if (s.action === 'read' && s.path && writtenPaths.has(s.path)) {
+          console.log(`[Planner] Dropping self-read: READ ${s.path} targets a file being WRITE'd in this plan`);
+          return false;
+        }
+        return true;
+      });
+
       // POST-PROCESS: Drop test RUN steps when the project has no test files,
       // OR when the user didn't explicitly ask to run/verify tests.
       // The LLM prompt discourages unconditional test steps, but this guard
@@ -196,6 +225,19 @@ export class Planner {
       // Topological sort changes execution order but stepNumber still holds the LLM's
       // original numbering — this causes display gaps like [Step 1][Step 2][Step 4][Step 3].
       sortedSteps = sortedSteps.map((step, i) => ({ ...step, stepNumber: i + 1 }));
+
+      // POST-PROCESSING VALIDATION: Creation tasks must produce at least one WRITE step.
+      // If the LLM sees a related existing file and plans only READ steps, the user gets a
+      // plan that succeeds but creates nothing. Fail fast so the user can retry.
+      const isCreationRequest = /\b(create|implement|add|build|write|generate|make)\b/i.test(userRequest);
+      const hasWriteStep = sortedSteps.some(s => s.action === 'write');
+      if (isCreationRequest && !hasWriteStep) {
+        throw new Error(
+          `Incomplete plan: the request asks to create something but no WRITE steps were generated. ` +
+          `The LLM likely found a related existing file and treated it as satisfying the request. ` +
+          `Please try again — the planner will be retried automatically.`
+        );
+      }
 
       const plan: TaskPlan = {
         taskId: `plan-${Date.now()}`,
@@ -413,6 +455,10 @@ BENEFIT OF DECOUPLING:
    - READ = File must exist before this step
    - WRITE = File is being created or modified
    - If unsure whether file exists, default to WRITE (executor will handle it)
+   - CRITICAL: A READ step's path MUST NEVER be the same as any WRITE step's path. Reading a file you are also writing is always wrong — the file may not exist yet. A READ step for "authStore" must target the authStore FILE (e.g. src/stores/authStore.ts), NOT the component file being written.
+   - EXTENSION REQUIRED: Every path MUST end with a file extension (.ts, .tsx, .js, .json, etc.).
+     WRONG: src/stores/authStore        WRONG: src/store/authStore
+     RIGHT:  src/stores/authStore.ts    (store files are almost always .ts, not .tsx)
 
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
@@ -452,6 +498,23 @@ ${hasTests ? '- Only add a "run" step for tests if the user explicitly asked to 
     RIGHT: src/routes/Routes.ts  ← exports RouteConfig[], no JSX, pure data
     WRONG: src/routes/Routes.tsx ← .tsx implies JSX; route configs have no render output
 
+HOC TERMINOLOGY (apply when task mentions "higher-order component", "HOC", or "with*" wrapper):
+- A HOC is a FUNCTION that takes a component as an ARGUMENT and returns a new component — not a JSX child
+- CORRECT: "withAuth accepts a Component argument and returns a wrapped component"
+- WRONG: "withAuth accepts a page component as a child"
+- The generic signature is: function withAuth<P extends object>(Component: React.ComponentType<P>)
+- The returned component spreads props through: return <Component {...props as P} />
+- Step descriptions must use "component argument" not "child" or "children"
+- FILE STRUCTURE: Generate the HOC in ONE WRITE step (file named after the HOC).
+  If the task references an existing store/hook/file, add a READ step for it BEFORE the WRITE step.
+  Do NOT split the HOC into an implementation file + a re-export barrel.
+  WRONG: Step 1: WRITE withAuthHOC.tsx (implementation), Step 2: WRITE withAuth.tsx (re-export)
+  RIGHT (with authStore context): Step 1: READ src/stores/authStore.ts, Step 2: WRITE src/components/withAuth.tsx
+  RIGHT (no dependency): Step 1: WRITE src/components/withAuth.tsx
+- STEP DESCRIPTIONS: Do NOT mention "loading state", "isLoading", or "isCheckingAuth" in the step description
+  unless the user explicitly asked for it. Typical auth stores only expose isLoggedIn: boolean — no loading
+  field. Inventing a loading requirement causes runtime TypeErrors (field doesn't exist in store).
+
 SCOPE CONSTRAINT — FILE CREATION:
 - ONLY create files explicitly named or clearly implied by the user's request
 - If the user says "create LoginForm.tsx", create ONLY LoginForm.tsx — do NOT invent helper components (Input.tsx, Button.tsx, etc.) unless the user asked for them
@@ -468,6 +531,15 @@ A step description that mentions a file is NOT the same as a WRITE step for that
   → WRONG: Plan only has WRITE src/services/mockAuth.ts — wrapper was never written
   → WRONG: Step description says "which the ProtectedRouteWrapper will use" but no WRITE step for it
 - "create a Button component with variants" → MUST have: WRITE src/components/Button.tsx
+- "create a withAuth HOC" → MUST have: WRITE src/components/withAuth.tsx
+  → WRONG: Plan only has READ src/components/withAuthHOC.tsx — a related file is not the deliverable
+
+EXISTING FILES DO NOT SATISFY "CREATE" REQUESTS:
+- If you see a RELATED file in the EXISTING CODEBASE (e.g. withAuthHOC.tsx when user asked for withAuth),
+  that file does NOT satisfy the user's request — still WRITE the EXACT file the user asked for.
+- A plan that only READs existing files and creates NOTHING is ALWAYS wrong for create/implement/add tasks.
+- WRONG: User says "create withAuth.tsx" → Plan: READ withAuthHOC.tsx (0 WRITE steps)
+- RIGHT:  User says "create withAuth.tsx" → Plan: WRITE withAuth.tsx (1 WRITE step)
 - "decompose/extract/split App.tsx into Layout, Navigation, Routes"
   → MUST have: READ App.tsx, WRITE Layout.tsx, WRITE Navigation.tsx, WRITE Routes.ts, WRITE App.tsx (slim)
   → Count the deliverables in the request — every named artifact needs its own WRITE step

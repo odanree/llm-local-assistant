@@ -11,6 +11,7 @@ import { PlanStep } from './planner';
 import { LLMClient } from './llmClient';
 import {
   isNonVisualWrapper,
+  isHOCComponent,
   isStructuralLayout,
   isDecomposedNavigation,
   extractPropsInterface,
@@ -49,6 +50,28 @@ export async function generateAcceptanceCriteria(
       : '';
     const isStructuralLayoutCriteria = isStructuralLayout(step.path, step.description);
     const isDecomposedNavigationCriteria = isDecomposedNavigation(step.path, step.description);
+    const isHOCCriteria = isHOCComponent(step.path);
+
+    // Short-circuit: pre-define criteria for HOC files (with[A-Z] prefix).
+    // Pre-defined criteria ensure displayName, generics, and declarative Navigate are always checked.
+    // The LLM criteria generator frequently drops items 5-6 when generating only 4 criteria.
+    if (isHOCCriteria) {
+      // Extract the auth field from the store RAG context (sourceContent) if available
+      const storeFieldMap = sourceContent ? extractStoreFields(sourceContent) : new Map();
+      const authHookEntry = [...storeFieldMap.entries()].find(([hook]) => /auth|session/i.test(hook));
+      const authField = authHookEntry
+        ? authHookEntry[1].find(f => /logged|auth|session|token/i.test(f)) ?? 'isLoggedIn'
+        : 'isLoggedIn';
+      const authHookName = authHookEntry ? authHookEntry[0] : 'useAuthStore';
+      const hocName = stepBaseName; // e.g. "withAuth"
+      return [
+        `Exported as a named function \`${hocName}\` with generic signature <P extends object>`,
+        `Accepts a Component argument of type React.ComponentType<P> — NOT a \`children\` prop`,
+        `Reads \`${authField}\` from \`${authHookName}()\` — only uses fields the store actually exports`,
+        `Returns <Navigate to="/login" replace /> when unauthenticated — NOT useNavigate()+useEffect`,
+        `Spreads props with \`{...props as P}\` and sets \`Wrapped.displayName\``,
+      ];
+    }
 
     // Short-circuit: pre-define criteria for well-known decomposition targets.
     if (isStructuralLayoutCriteria) {
@@ -123,8 +146,11 @@ export async function generateAcceptanceCriteria(
       ];
     }
 
+    const isHOCFile = isHOCComponent(step.path);
     const hookLine = isPureLogicFile
       ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
+      : isHOCFile
+      ? ' HOC FILE: This is a Higher-Order Component (with[A-Z] prefix). DO NOT include a children criterion — HOCs accept a Component argument, NOT children. DO NOT include a loading state criterion (isLoading, isCheckingAuth) — the store only exports what it actually has; inventing loading fields causes runtime TypeErrors. Criteria should focus on: (1) Correct function name and generic signature <P extends object>, (2) Accepts a Component argument of type React.ComponentType<P>, (3) Reads auth state from Zustand store (only fields the store actually exports), (4) Uses declarative <Navigate to="/login" replace /> for redirect — NOT useNavigate()+useEffect, (5) Spreads props with {...props as P} when authenticated, (6) Sets Wrapped.displayName. NEVER require children prop. NEVER require a loading state field not mentioned in the task description.'
       : isNonVisual
       ? ' NON-VISUAL COMPONENT: this component is a logic wrapper — it redirects, renders children, or provides context. It has NO styled elements. NEVER require cn(), className, or styling in criteria. NEVER reference hook imports unless a hook file is explicitly named in the step description — reference the ACTUAL functions described (e.g., "calls isAuthenticated() from mockAuth service", "reads token from localStorage"). ALWAYS include one criterion that checks: "Accepts and renders children prop" — a wrapper that ignores children is broken. Only check for: correct children prop, redirects to correct path, and that imported symbols match the step description exactly.'
       : isStructuralLayoutCriteria
@@ -132,10 +158,10 @@ export async function generateAcceptanceCriteria(
       : isDecomposedNavigationCriteria
       ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
       : '';
-    const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisual;
+    const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisual && !isHOCFile;
     // Only suggest children criterion for genuine layout/wrapper components.
-    // Forms, pages, inputs, and data-display components do NOT accept children —
-    // adding a children criterion to RegisterForm or LoginPage is an architectural mistake.
+    // Forms, pages, inputs, data-display components, and HOCs do NOT accept children —
+    // adding a children criterion to RegisterForm, LoginPage, or withAuth is an architectural mistake.
     const isFormOrInputComponent = /(?:Form|Input|Field|Checkbox|Radio|Select|TextArea|Toggle|Switch)/i.test(step.path);
     const isPageOrScreenComponent = /(?:Page|Screen|Dashboard|Settings|Profile|Detail|List|Table)/i.test(step.path);
     const childrenReminder = isTsxComponent
@@ -144,7 +170,7 @@ export async function generateAcceptanceCriteria(
       && !step.description.toLowerCase().includes('children')
       ? ' LAYOUT/WRAPPER ONLY: If this component is a layout container, shell, card, or modal that wraps arbitrary content, include a criterion for "Accepts children: React.ReactNode". Do NOT add this criterion for forms, inputs, pages, or focused data-display components.'
       : '';
-    const prompt = `You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.\n\nTask: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
+    const prompt = `You output only valid JSON arrays of strings. No explanation, no preamble, no markdown.\n\nTask: ${step.description}\nFile: ${step.path}${constraintLine}${hookLine}${childrenReminder}\n\nList 3-5 YES/NO acceptance criteria (concrete, checkable by reading code). Focus on structure, required APIs, and what must NOT appear.\n\nCRITICAL: Derive criteria ONLY from the task description above. Do NOT invent requirements that are not explicitly stated — no loading states, no error boundaries, no accessibility props, no extra features unless the task description names them. Do NOT invent specific method names, function signatures, or store API calls from modules not explicitly shown in the task description. If the step says "reads auth state from store", write "Reads auth state from the Zustand store" — do NOT write "calls useAuthStore().isAuthenticated()" or any specific method you cannot see in the description.\n\nIMPORTANT: NEVER prescribe which utility to use for class merging. Do NOT write criteria like "uses cn()" or "imports cn from". Instead write the observable outcome: e.g. "Accepts optional className prop" or "Applies variant-based Tailwind classes conditionally".\n\nExample output: ["Uses React.forwardRef", "Only 'primary'/'secondary' variants defined", "Accepts className prop"]\n\nOutput the JSON array:`;
 
     const llmResponse = await llmClient.sendMessage(prompt);
     if (!llmResponse.success || !llmResponse.message) { return []; }

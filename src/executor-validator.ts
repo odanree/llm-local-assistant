@@ -490,7 +490,12 @@ export function validateCommonPatterns(content: string, filePath: string): strin
     // TypeScript generics are always PascalCase; JSX HTML elements are always lowercase.
     // Fix: match only lowercase tags (<button, <input, <div, <form, <label, <span, etc.)
     // Also allow `return null` as a valid empty render.
-    if (filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
+    // Pure re-export files (barrel files) have no function body and no JSX.
+    // Detect them by: contains `export ... from` and has no function/const declarations.
+    const isPureReExport =
+      /export\s*\{[^}]+\}\s*from\s*['"]/.test(content) &&
+      !/\bfunction\s+\w+|\bconst\s+\w+\s*=\s*(React\.|function|\(|async)/.test(content);
+    if (!isPureReExport && filePath.endsWith('.tsx') && (isInteractiveFile || filePath.includes('/components/'))) {
       const hasJsxReturn =
         /<[a-z][a-z0-9-]*[\s/>]/.test(content) ||    // lowercase HTML element (<button, <input, <div …)
         /<>|<\/>/.test(content) ||                    // React fragment opener/closer (<> </>)

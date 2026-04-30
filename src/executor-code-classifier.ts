@@ -20,7 +20,23 @@
 export function isNonVisualWrapper(filePath: string): boolean {
   if (!filePath.endsWith('.tsx')) { return false; }
   const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+  // HOCs (with[A-Z] prefix) are classified separately by isHOCComponent.
+  // They do NOT accept children — the HOC takes a Component argument, not JSX children.
+  // Exclude them here so the children validator and criteria generator don't treat them as wrappers.
+  if (/^with[A-Z]/.test(name)) { return false; }
   return /Route|Guard|Provider|Context|HOC|Outlet/i.test(name);
+}
+
+/**
+ * Returns true when a file is a Higher-Order Component (HOC).
+ * HOCs use a `with*` prefix naming convention (withAuth, withPermission, withTheme, etc.).
+ * They are functions that accept a Component argument and return a new component —
+ * NOT wrappers that accept children. They need generics like <P extends object>.
+ */
+export function isHOCComponent(filePath: string): boolean {
+  if (!filePath.endsWith('.tsx')) { return false; }
+  const name = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? '';
+  return /^with[A-Z]/.test(name);
 }
 
 /**
