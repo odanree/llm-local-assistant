@@ -399,6 +399,16 @@ export function validateCommonPatterns(content: string, filePath: string): strin
       );
     }
 
+    // Catch direct clsx import — this project uses a cn() wrapper, not clsx directly.
+    // import { clsx } from 'clsx' bypasses the wrapper and should never appear in component files.
+    if (/import\s+[{]?\s*clsx\s*[}]?\s*from\s*['"]clsx['"]/.test(content)) {
+      errors.push(
+        `❌ Direct clsx import: do not import clsx directly. ` +
+        `This project wraps clsx in a cn() utility. ` +
+        `Replace: import { clsx } from 'clsx'  →  import { cn } from '@/utils/cn' (or relative path)`
+      );
+    }
+
     // Validate cn import path: must be a relative path (../utils/cn, ./utils/cn) or alias (@/utils/cn)
     // Catches: import { cn } from 'src/utils/cn' — a bare path that TypeScript resolves differently
     const cnImportMatch = content.match(/import\s+[^'"]*\bcn\b[^'"]*from\s+['"]([^'"]+)['"]/);
@@ -434,6 +444,50 @@ export function validateCommonPatterns(content: string, filePath: string): strin
           `❌ Style bug: cn() is imported but a className prop uses a bare string literal. ` +
           `Every className must go through cn(): className={cn('your-classes')} — this applies to every element, including submit buttons.`
         );
+      }
+    }
+
+    // Detect cn() called as a JSX child expression — this renders the class string as DOM text.
+    // Pattern: cn() appearing immediately after a JSX tag close (>) rather than in className={cn(...)}.
+    // e.g. <p>{cn('text-gray-600', '')}<strong>...</strong></p> renders "text-gray-600" literally.
+    if (importsCn && />\s*\{cn\(/.test(content)) {
+      errors.push(
+        `❌ Runtime rendering bug: cn() is called inside JSX text content (e.g. <p>{cn('...')}</p>). ` +
+        `cn() returns a className string — it must only appear in a className prop: className={cn('...')}. ` +
+        `To style the element, move the cn() call to className: <p className={cn('text-gray-600')}>...</p>`
+      );
+    }
+
+    // Detect obviously unused named imports — imported symbol never referenced in file body.
+    // This catches the sibling-rule correction anti-pattern: LLM removes sibling import
+    // but adds a phantom schema/util import that's never called.
+    // Heuristic: find `import { X } from '...'` where X doesn't appear anywhere after the import block.
+    const importLines = content.split('\n').filter(l => l.trimStart().startsWith('import'));
+    const bodyAfterImports = content.replace(/^import[^\n]*\n/gm, '');
+    for (const importLine of importLines) {
+      const namedMatch = importLine.match(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/);
+      if (!namedMatch) continue;
+      const [, importBlock, importSource] = namedMatch;
+      const allNames = importBlock.split(',')
+        .map(n => n.trim().replace(/\s+as\s+\w+/, '').trim()) // strip 'as alias'
+        .filter(n => n && !/^type\s/.test(n));                 // skip type-only imports
+      for (const name of allNames) {
+        if (!name || name.includes(' ')) continue;
+        // Skip React — always implicitly used by JSX
+        if (name === 'React' || name === 'cn' || name === 'clsx') continue;
+        const usedInBody = new RegExp(`\\b${name}\\b`).test(bodyAfterImports);
+        if (!usedInBody) {
+          // Identify which other symbols in the SAME import line ARE used — tell LLM to keep them.
+          const keepNames = allNames.filter(n => n !== name && new RegExp(`\\b${n}\\b`).test(bodyAfterImports));
+          const keepClause = keepNames.length > 0
+            ? ` Keep '${keepNames.join("', '")}' (still used). ` +
+              `Correct the import to: import { ${keepNames.join(', ')} } from '${importSource}'`
+            : ` Remove the entire import line.`;
+          errors.push(
+            `❌ Unused import: '${name}' is imported but never used in this file.${keepClause} ` +
+            `Do NOT add replacement imports — if you removed a sibling import, only delete that line.`
+          );
+        }
       }
     }
 
@@ -689,7 +743,9 @@ export function validateCommonPatterns(content: string, filePath: string): strin
     const hasJsx = /<\/[A-Za-z]/.test(content)        // closing tag e.g. </div> </Component>
       || /<>|<\/>/.test(content)                       // React fragment <> </>
       || /<[A-Z][a-zA-Z]*[\s/]/.test(content)         // self-closing or spaced JSX <Foo /> <Foo >
-      || /<[a-z][a-zA-Z]*[\s/]/.test(content)         // lowercase HTML JSX <div /> <span > (NOT generic <T> which has no space/slash)
+      // lowercase HTML JSX <div /> <span> — but NOT TypeScript keyword generics like
+      // <typeof T>, <keyof T>, <extends T>, <infer U>, <import(...)> which are NOT JSX
+      || /<(?!typeof\b|keyof\b|extends\b|infer\b|import\b)[a-z][a-zA-Z]*[\s/]/.test(content)
       || /\(\)\s*=>\s*</.test(content)                 // arrow fn returning JSX: () => <Component>
       || /React\.FC|JSX\.Element/.test(content);       // JSX-specific type annotations
     if (hasJsx) {

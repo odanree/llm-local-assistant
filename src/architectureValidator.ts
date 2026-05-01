@@ -167,6 +167,70 @@ const LAYER_RULES: Record<string, LayerRule> = {
     ],
     rule: 'Pure utility functions. No React or state management.',
   },
+
+  'schemas/': {
+    forbiddenImports: [
+      'react',
+      'react-dom',
+      'components/',
+      'hooks/',
+      'pages/',
+      'screens/',
+      '@tanstack/react-query',
+      'zustand',
+      'redux',
+      'react-router',
+      'react-router-dom',
+    ],
+    allowedImportPatterns: [
+      'zod',
+      'yup',
+      'joi',
+      'types/',
+      'utils/',
+      'config/',
+      'constants/',
+    ],
+    allowedExportPatterns: [
+      'export const',
+      'export type',
+      'export interface',
+      'export function',
+    ],
+    rule: 'Schema/validation files are pure data contracts. No React, no UI components, no hooks.',
+  },
+
+  'validation/': {
+    forbiddenImports: [
+      'react',
+      'react-dom',
+      'components/',
+      'hooks/',
+      'pages/',
+      'screens/',
+      '@tanstack/react-query',
+      'zustand',
+      'redux',
+      'react-router',
+      'react-router-dom',
+    ],
+    allowedImportPatterns: [
+      'zod',
+      'yup',
+      'joi',
+      'types/',
+      'utils/',
+      'config/',
+      'constants/',
+    ],
+    allowedExportPatterns: [
+      'export const',
+      'export type',
+      'export interface',
+      'export function',
+    ],
+    rule: 'Validation files are pure data contracts. No React, no UI components, no hooks.',
+  },
 };
 
 export class ArchitectureValidator {
@@ -403,7 +467,8 @@ export class ArchitectureValidator {
     generatedCode: string,
     filePath: string,
     workspace: vscode.Uri,
-    previousStepFiles?: Map<string, string>  // ✅ CRITICAL: Files from previous steps (path -> content)
+    previousStepFiles?: Map<string, string>,  // ✅ CRITICAL: Files from previous steps (path -> content)
+    allowSiblingImports?: boolean             // True when the step explicitly composes/orchestrates peers
   ): Promise<LayerValidationResult> {
     const violations: LayerViolation[] = [];
 
@@ -474,6 +539,43 @@ export class ArchitectureValidator {
         } else {
           // ✅ Absolute paths: /src/utils/cn (less common but supported)
           // Already absolute, use as-is
+        }
+
+        // SIBLING COMPONENT RULE: A .tsx component must not import another .tsx component
+        // that was generated in the same plan (i.e. is in previousStepFiles).
+        // Decomposition tasks produce peer components — none should depend on a sibling.
+        // Exception: allowSiblingImports=true for composition/orchestrator steps (e.g. a
+        // UserProfile step that explicitly composes UserAvatar + UserStats is NOT a peer).
+        if (
+          !allowSiblingImports &&
+          previousStepFiles &&
+          filePath.endsWith('.tsx') &&
+          (filePath.includes('components/') || filePath.includes('pages/') || filePath.includes('screens/'))
+        ) {
+          const siblingCandidates = [
+            resolvedPath + '.tsx',
+            resolvedPath,
+          ];
+          for (const candidate of siblingCandidates) {
+            if (previousStepFiles.has(candidate) && candidate.endsWith('.tsx')) {
+              const importedName = candidate.split('/').pop() ?? candidate;
+              const currentName = filePath.split('/').pop() ?? filePath;
+              violations.push({
+                type: 'wrong-pattern',
+                import: imp.source,
+                message:
+                  `❌ SIBLING COMPONENT RULE: ${currentName} imports ${importedName}, but both are peer components from the same plan. ` +
+                  `Peer components must NOT depend on each other — accept required data as props instead.`,
+                suggestion:
+                  `Remove the import of ${importedName} AND remove all JSX usages of <${importedName.replace('.tsx', '')} ... /> from the component body. ` +
+                  `Do NOT add any other import as a replacement — simply delete that import line and any JSX elements that used it. ` +
+                  `Define a local props interface with the data this component needs (e.g. interface ${currentName.replace('.tsx', '')}Props { ... }). ` +
+                  `The parent page/layout that renders both siblings will pass props to each.`,
+                severity: 'high',
+              });
+              break;
+            }
+          }
         }
 
         // Try to read the source file
@@ -642,11 +744,17 @@ export class ArchitectureValidator {
             });
           } else if (isWorkspaceRelativePath) {
             // Workspace-relative path but file not found - this is a real error
+            const isTypesDir = resolvedPath.includes('/types/') || resolvedPath.includes('src/types');
+            const typeSuggestion = isTypesDir
+              ? `There is no src/types/ directory in this project. ` +
+                `TypeScript types are exported from schema files in src/schemas/. ` +
+                `Change the import to use the schema: e.g. \`import { ${imp.symbols[0]} } from '../schemas/userSchema'\``
+              : `Verify the file exists at: ${resolvedPath}.ts (or .tsx)`;
             violations.push({
               type: 'missing-export',
               import: imp.symbols[0],
               message: `Cannot find module '${resolvedPath}' from '${filePath}'`,
-              suggestion: `Verify the file exists at: ${resolvedPath}.ts (or .tsx)`,
+              suggestion: typeSuggestion,
               severity: 'high',
             });
             console.warn(

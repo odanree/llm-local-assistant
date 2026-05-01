@@ -461,6 +461,22 @@ export class SmartAutoCorrection {
       console.log('[SmartAutoCorrection] Replaced phantom cn() with clsx — src/utils/cn.ts not in workspace');
     }
 
+    // FIRST-C: Remove exact duplicate import lines. LLM corrections sometimes add a second
+    // `import { cn } from '@/utils/cn'` when one already exists, causing TS2300.
+    {
+      const seen = new Set<string>();
+      fixed = fixed.split('\n').filter(line => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('import ')) return true;
+        if (seen.has(trimmed)) {
+          console.log(`[SmartAutoCorrection] Removed duplicate import: ${trimmed}`);
+          return false;
+        }
+        seen.add(trimmed);
+        return true;
+      }).join('\n');
+    }
+
     // FIRST: Merge split React imports (deterministic — no LLM needed)
     fixed = this.mergeSplitReactImports(fixed);
 
@@ -880,7 +896,7 @@ export class SmartAutoCorrection {
       'is used but not imported from React',  // NEW: Specific hook import pattern
       'any type',
       'typo',
-      'Hook',  // Added: Hook usage errors (imported but never called)
+      'Hook Usage',  // Added: Hook usage errors (imported but never called) — narrow to avoid matching DATA FETCHING HOOK VIOLATION
       'imported but never called',  // Added: More specific pattern
       'Wrong import',  // Added: cn/UI import in a non-component .ts file
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
@@ -902,6 +918,10 @@ export class SmartAutoCorrection {
       'unmatched brace',
       'documentation instead of code',
       'multiple file',
+      'DATA FETCHING HOOK VIOLATION',  // Architectural error — requires LLM to restructure props/hooks, not SmartAutoCorrection
+      'prop-drilling',                  // Same — structural pattern that needs LLM reasoning
+      'SCHEMA COUPLING VIOLATION',     // Sub-component accepting user object — needs LLM to restructure to scalar props
+      'Schema Field Mismatch',         // Wrong field names in z.object() — needs LLM to rewrite the schema
     ];
 
     let hasFixable = false;

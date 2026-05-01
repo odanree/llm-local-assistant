@@ -412,6 +412,24 @@ export class Executor {
         plan.results.set(step.stepId, result!);
 
         if (!result!.success) {
+          // Special case: a READ step that fails with ENOENT means the planner
+          // generated a wrong path for a dependency file. Skip it gracefully so
+          // the WRITE step for the actual output file can still run. Aborting the
+          // plan here would prevent the output file from ever being created.
+          if (step.action === 'read' && result!.error?.includes('ENOENT')) {
+            const skipMsg = `⚠️ READ step skipped: "${step.path}" not found — continuing without dependency context.`;
+            this.config.onMessage?.(skipMsg, 'info');
+            plan.results.set(step.stepId, {
+              stepId: step.stepId,
+              success: true,
+              output: skipMsg,
+              duration: Date.now() - startTime,
+              timestamp: Date.now(),
+            });
+            succeededSteps++;
+            continue; // proceed to next step
+          }
+
           plan.status = PlanState.FAILED;
           plan.currentStep = step.stepId;
           const failureMsg = retryCount > 0
@@ -855,12 +873,18 @@ export class Executor {
           }
         }
 
+        // Detect orchestrator/composition steps: when the step description explicitly says
+        // to compose, render, or import the sub-components, sibling imports are intentional.
+        const compositionSignals = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+        const isCompositionStep = compositionSignals.test(step.description ?? '') || compositionSignals.test(step.prompt ?? '');
+
         const validator = new ArchitectureValidator();
         const contractResult = await validator.validateCrossFileContract(
           content,
           filePath,
           this.config.workspace,
-          previousStepFiles.size > 0 ? previousStepFiles : undefined  // ✅ Pass previous files context
+          previousStepFiles.size > 0 ? previousStepFiles : undefined,
+          isCompositionStep   // Allow sibling imports for orchestrator steps
         );
 
         if (contractResult.hasViolations) {
@@ -1003,6 +1027,100 @@ export class Executor {
         console.error(`[Executor] ❌ CRITICAL: Cross-file validation threw exception:`, error);
         // Don't silently swallow - this is a critical issue
         errors.push(`❌ Validation system error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // Check 4.5: Prop-drilling detection for coordinator (composition) steps in .tsx files.
+    // Runs on every validation pass (including inner correction loop re-validations) so SmartAutoCorrection
+    // cannot silently clear only the cn() error and declare victory while prop-drilling persists.
+    if (filePath.endsWith('.tsx')) {
+      const compositionSignalsVGC = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+      const isCoordinatorVGC = compositionSignalsVGC.test(step.description ?? '') || compositionSignalsVGC.test(step.prompt ?? '');
+      if (isCoordinatorVGC) {
+        const hasPropDrilledUserVGC = /(?:^|\s|\()(?:user|currentUser)\s*:\s*User\b/.test(content);
+        const hasUserIdPropVGC = /userId\s*:\s*string/.test(content);
+        if (hasPropDrilledUserVGC && !hasUserIdPropVGC) {
+          errors.push(
+            `❌ DATA FETCHING HOOK VIOLATION: coordinator accepts 'user: User' as a prop (prop-drilling). ` +
+            `This coordinator MUST have 'userId: string' in its props interface and call the data-fetching hook internally. ` +
+            `Correct pattern: interface Props { userId: string } → const { user, loading, error } = useUser(userId). ` +
+            `NEVER accept a pre-fetched user object — the coordinator is responsible for data fetching.`
+          );
+        }
+      }
+
+      // Check 4.6: Sub-component user-object coupling.
+      // Sub-components (UserAvatar, UserStats, etc.) must NOT accept a 'user' object as a prop —
+      // they should accept scalar props (e.g. imageUrl: string, name: string, followingCount: number).
+      // Accepting a 'user' prop creates implicit schema coupling and prevents reuse.
+      // This check only applies to non-coordinator component steps.
+      if (!isCoordinatorVGC && filePath.includes('/components/')) {
+        // Detect: any prop named 'user' (or 'currentUser') regardless of its type
+        // Pattern: interface XProps { user: ... } or { user: ..., ... }
+        const hasUserObjectProp = /(?:interface\s+\w+Props|Props\s*=\s*\{)[^}]*?\buser\s*:\s*(?:\{|User\b)/.test(content) ||
+          /\(\s*\{[^}]*\buser\b[^}]*\}\s*:[^)]*\bProps\b/.test(content);
+        if (hasUserObjectProp) {
+          // Infer likely scalar props from the filename so the correction message is actionable.
+          const compName = filePath.split(/[\\/]/).pop()?.replace(/\.tsx?$/, '') ?? 'Component';
+          const scalarExample = /[Aa]vatar/.test(compName)
+            ? `interface ${compName}Props { imageUrl: string; name: string; className?: string; }`
+            : /[Ss]tat/.test(compName)
+            ? `interface ${compName}Props { name: string; email: string; age: number; className?: string; }`
+            : `interface ${compName}Props { /* scalar fields from the user object */ className?: string; }`;
+          errors.push(
+            `❌ SCHEMA COUPLING VIOLATION: this sub-component accepts a 'user' object as a prop. ` +
+            `Sub-components must NEVER accept an entire user object — use scalar props instead. ` +
+            `In ONE edit: (1) change the props interface to scalar fields, (2) remove any User/schema import lines that become unused, (3) keep ALL JSX and render logic intact. ` +
+            `Suggested props interface: ${scalarExample}. ` +
+            `The coordinator (UserProfile) will extract these values from the hook result and pass them as scalars.`
+          );
+        }
+      }
+    }
+
+    // Check 4.7: Schema field fidelity — generated z.object() fields must match source-accessed fields.
+    // Catches the LLM inventing field names (e.g. 'username' when source uses 'name').
+    if (filePath.endsWith('.ts') && !filePath.endsWith('.tsx') &&
+        (filePath.includes('/schemas/') || filePath.includes('/validation/')) && this.plan) {
+      const schemaBase = filePath.split(/[\\/]/).pop()!.replace(/\.ts$/, '');
+      const entityLower = schemaBase.replace(/[Ss]chema$/, '').replace(/[Vv]alidation$/, '').toLowerCase();
+      const inPattern = new RegExp(`'(\\w+)'\\s+in\\s+\\b${entityLower}\\b`, 'g');
+      const dotPattern = new RegExp(`\\b${entityLower}\\.(\\w+)\\b`, 'g');
+      let sourceText = '';
+      for (const prevStep of this.plan.steps) {
+        if (prevStep.stepId === step.stepId) continue;
+        const prevResult = this.plan.results?.get(prevStep.stepId);
+        if (prevStep && prevResult?.success && prevStep.action === 'read' && prevResult.output) {
+          const isSummaryText = prevResult.output.startsWith('Read ') && prevResult.output.includes(' bytes)');
+          if (!isSummaryText && prevResult.output.length > 0) { sourceText += prevResult.output + '\n'; }
+        }
+      }
+      if (sourceText.length > 0) {
+        const inFields = [...sourceText.matchAll(inPattern)].map(m => m[1]);
+        const dotFields = [...sourceText.matchAll(dotPattern)].map(m => m[1]);
+        const expectedFields = [...new Set([...inFields, ...dotFields])].filter(f => f !== entityLower && f !== 'length');
+        if (expectedFields.length > 0) {
+          const zObjectMatch = content.match(/z\.object\(\s*\{([^}]+)\}/s);
+          if (zObjectMatch) {
+            const genFields = new Set([...zObjectMatch[1].matchAll(/(\w+)\s*:/g)].map(m => m[1]));
+            const invalidFields = [...genFields].filter(f => !expectedFields.includes(f));
+            const missingFields = expectedFields.filter(f => !genFields.has(f));
+            if (invalidFields.length > 0 || missingFields.length > 0) {
+              const template = expectedFields.map(f => {
+                if (f === 'email') { return `  ${f}: z.string().email()`; }
+                if (f === 'age') { return `  ${f}: z.number()`; }
+                return `  ${f}: z.string()`;
+              }).join(',\n');
+              errors.push(
+                `❌ Schema Field Mismatch: Generated z.object() has [${[...genFields].join(', ')}] ` +
+                `but source accesses EXACTLY [${expectedFields.join(', ')}]. ` +
+                (invalidFields.length > 0 ? `Remove invented fields: ${invalidFields.join(', ')}. ` : '') +
+                (missingFields.length > 0 ? `Add missing fields: ${missingFields.join(', ')}. ` : '') +
+                `Required structure:\n  z.object({\n${template},\n  })`
+              );
+            }
+          }
+        }
       }
     }
 
@@ -1946,12 +2064,78 @@ export class Executor {
       this.config.onStepOutput?.(step.stepId, `📝 Generating ${step.path}...`, false);
       const content = await this.generateAndCleanContent(prompt, step);
 
+      // Stage 4.5: Pre-validation deterministic fix for HOC files.
+      // Remove unused navigation hook imports (useNavigate, useHistory) before the validator
+      // sees them. The LLM frequently co-imports useNavigate alongside <Navigate> even when
+      // the pattern explicitly shows only <Navigate>. Removing it here costs 0 fix passes.
+      let contentAfterPreFix = content;
+      if (isHOCComponent(step.path)) {
+        const navHooks = ['useNavigate', 'useHistory', 'useRouter'];
+        for (const hook of navHooks) {
+          const isCalled = new RegExp(`\\b${hook}\\s*\\(`).test(contentAfterPreFix);
+          if (isCalled) continue; // actually used — keep it
+          // Remove the hook name from any named import block on the same source
+          const importBlockRe = /import\s*\{([^}]+)\}\s*from\s*(['"][^'"]+['"]\s*;?)/g;
+          let hookRemoved = false;
+          const patched = contentAfterPreFix.replace(importBlockRe, (match, importBody, source) => {
+            const names = importBody.split(',').map((s: string) => s.trim()).filter(Boolean);
+            const filtered = names.filter((n: string) => n !== hook);
+            if (filtered.length === names.length) return match; // hook not in this block
+            hookRemoved = true;
+            if (filtered.length === 0) return ''; // entire import line removed
+            return `import { ${filtered.join(', ')} } from ${source}`;
+          });
+          if (hookRemoved) {
+            console.log(`[Executor] Pre-validation: removed unused '${hook}' from HOC import`);
+            contentAfterPreFix = patched;
+          }
+        }
+      }
+
+      // Stage 4.5b: Pre-validation deterministic fix for schema files.
+      // The LLM sometimes generates an entire React component inside schemas/ .ts files.
+      // When JSX is detected, replace the whole content with a proper Zod schema — stripping
+      // individual lines is not enough because JSX tags remain in function bodies.
+      if (step.path && (step.path.includes('/schemas/') || step.path.includes('/validation/'))
+          && step.path.endsWith('.ts') && !step.path.endsWith('.tsx')) {
+        // Exclude TypeScript keyword generics (typeof, keyof, extends, infer) which are NOT JSX
+        const hasJsxInSchema = /<(?!typeof\b|keyof\b|extends\b|infer\b|import\b)[A-Za-z][A-Za-z0-9.]*[\s/>]/.test(contentAfterPreFix)
+          || /React\.FC|JSX\.Element|ReactElement/.test(contentAfterPreFix)
+          || /import React/.test(contentAfterPreFix)
+          || /return\s*\(?\s*</.test(contentAfterPreFix);
+        if (hasJsxInSchema) {
+          console.log(`[Executor] Pre-validation: replacing JSX-contaminated schema file ${step.path} with Zod template`);
+          // Derive entity name from filename: userSchema.ts → user → User
+          const rawBase = (step.path.split('/').pop() ?? 'entity').replace(/\.ts$/, '');
+          const entityRaw = rawBase.replace(/[Ss]chema$/, '').replace(/[Vv]alidation$/, '') || rawBase;
+          const entityCap = entityRaw.charAt(0).toUpperCase() + entityRaw.slice(1);
+          const schemaVar = `${entityRaw}Schema`;
+          // Try to salvage any z.object field lines from the contaminated content
+          const zodFieldLines = contentAfterPreFix
+            .split('\n')
+            .filter(line => /^\s+\w+:\s*z\./.test(line))
+            .join('\n');
+          const objectBody = zodFieldLines || '  id: z.string(),\n  name: z.string().min(1),\n  email: z.string().email(),';
+          contentAfterPreFix =
+`import { z } from 'zod';
+
+export const ${schemaVar} = z.object({
+${objectBody}
+});
+
+export type ${entityCap} = z.infer<typeof ${schemaVar}>;
+
+export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
+`;
+        }
+      }
+
       // Stage 5: Pre-write validation + auto-correction loop
       const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
       const matchingSource = sourceReadContents.find(
         r => (r.path.split(/[\\/]/).pop() ?? '') === (step.path.split(/[\\/]/).pop() ?? '')
       );
-      const finalContent = await this.validateAndAutoCorrect(step, content, matchingSource, acceptanceCriteria);
+      const finalContent = await this.validateAndAutoCorrect(step, contentAfterPreFix, matchingSource, acceptanceCriteria);
 
       // Stage 6: Write to disk + post-write tsc check (Check 6)
       const resolvedContent = await this.writeAndVerify(step, filePath, finalContent, sourceReadContents, matchingSource, workspaceUri);
@@ -2024,17 +2208,32 @@ export class Executor {
     let multiStepContext = '';
     let sourceReadContents: { path: string; content: string }[] = [];
 
-    if (!this.plan || step.stepId <= 1) {
+    if (!this.plan) {
       return { multiStepContext, sourceReadContents };
     }
 
     const completedSteps = new Map(this.plan.results || new Map());
 
-    // Collect content from prior READ steps
+    // If no prior steps have completed at all, skip context building.
+    // Note: we cannot use `step.stepId <= 1` because the planner injects a read step
+    // with stepId = maxId+1 (high) but places it first in the array — so steps with
+    // low IDs like stepId=1 may still have a completed prior read step.
+    const hasCompletedPrior = [...completedSteps.entries()].some(
+      ([id, r]) => id !== step.stepId && r.success
+    );
+    if (!hasCompletedPrior) {
+      return { multiStepContext, sourceReadContents };
+    }
+
+    // Collect content from prior READ steps.
+    // Iterate plan.steps directly (not by stepId index) — injected read steps get
+    // stepId = maxId+1 but are placed at array position 0, so `for i < step.stepId`
+    // would miss them. Checking completedSteps.get() ensures we only use results
+    // that have actually been stored (i.e. the step has already executed).
     const readStepContents: { path: string; content: string }[] = [];
-    for (let i = 1; i < step.stepId; i++) {
-      const prevStep = this.plan.steps.find(s => s.stepId === i);
-      const prevResult = completedSteps.get(i);
+    for (const prevStep of this.plan.steps) {
+      if (prevStep.stepId === step.stepId) continue;
+      const prevResult = completedSteps.get(prevStep.stepId);
       if (prevStep && prevResult?.success && prevStep.action === 'read' && prevResult.output) {
         const isSummary = prevResult.output.startsWith('Read ') && prevResult.output.includes(' bytes)');
         if (!isSummary && prevResult.output.length > 0) {
@@ -2070,10 +2269,30 @@ export class Executor {
     const fileContracts: string[] = [];
     const requiredImports: string[] = [];
 
+    // Detect if this step is a composition/orchestrator step — only those should import
+    // previously created sibling components. Peer steps must NOT import each other.
+    const compositionSignalsCtx = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const isCompositionCtx = compositionSignalsCtx.test(step.description ?? '') || compositionSignalsCtx.test(step.prompt ?? '');
+
     for (const filePath of previouslyCreatedFiles) {
       try {
         const contract = await this.extractFileContract(filePath, workspaceUri);
         fileContracts.push(contract);
+        // For non-composition steps: skip .tsx component files in required imports.
+        // Adding them causes the LLM to import peer components, triggering the SIBLING RULE.
+        const isTsxComponent = filePath.endsWith('.tsx') && filePath.includes('components/');
+        if (isTsxComponent && !isCompositionCtx) {
+          console.log(`[Executor] Skipping required import for sibling component: ${filePath} (non-composition step)`);
+          continue;
+        }
+        // For non-composition steps: skip schema/validation .ts files in required imports.
+        // Adding them causes the LLM to import the User type from the schema, triggering the
+        // SCHEMA COUPLING RULE — only the coordinator should import from schemas directly.
+        const isSchemaFile = filePath.endsWith('.ts') && (filePath.includes('/schemas/') || filePath.includes('/validation/'));
+        if (isSchemaFile && !isCompositionCtx) {
+          console.log(`[Executor] Skipping schema import for non-composition step: ${filePath}`);
+          continue;
+        }
         const importStmt = this.calculateImportStatement(step.path!, filePath);
         if (importStmt) requiredImports.push(importStmt);
       } catch {
@@ -2130,7 +2349,45 @@ Rules:
 - Do NOT remove or simplify lines inside a handler body
 - Do NOT drop any handler that exists in the source and belongs in this file
 
-`
+DATA FETCHING HOOK PRESERVATION: If the source file uses a data-fetching hook (e.g. useUser,
+useAuth, useFetch, useQuery, useSelector, or any custom use* hook that returns data), you MUST
+keep that hook call in the updated file — do NOT replace it with hardcoded mock data or inline
+objects, and do NOT convert the component from data-fetching to prop-drilling.
+The refactor task is structural (decompose into sub-components), NOT a data-source change.
+- WRONG (mock data):    const user = { id: userId, name: "John Doe", email: "..." };
+- WRONG (prop-drilling): export const UserProfile = ({ user }: { user: User }) => { ... }
+  This removes data-fetching from the component and breaks all existing callers.
+- WRONG (any type): user: any[] — never use 'any' as a prop type. The hook's return type is the source of truth.
+- WRONG (schema validation as replacement): do NOT call userSchema.safeParse() inside the
+  component to replace the hook. The schema is for type inference only (e.g. z.infer<typeof userSchema>),
+  not for runtime data fetching.
+- RIGHT: Keep 'userId: string' in the props interface and retain the hook:
+  const { user, loading, error } = useUser(userId);
+  If sub-components need data that the hook does not return (e.g. followersCount, postsCount),
+  ADD those as additional props on UserProfile's interface — accept them from the parent.
+  NEVER hardcode or invent values (no 'const dummyFollowers = 12345').
+  Pass all values through as props: <UserStats followersCount={followersCount} />
+If the source does not use a data-fetching hook, do not invent one.
+
+${isCompositionCtx ? `COMPOSITION-ONLY RULE: Your sole job is to compose the extracted sub-components using
+data from the existing hook. DO NOT add any of the following:
+- useState for editing or form management
+- Form submit handlers or onSubmit callbacks
+- Inline Zod validation (z.object({...}).parse() inside the component)
+- Additional imports beyond what sub-components need
+- Any functionality not present in the original source
+Correct pattern: 1) call useUser(userId), 2) pass data to <UserAvatar> and <UserStats>, done.
+
+TYPE SAFETY RULE (mandatory for coordinator): The data hook returns an untyped value (e.g. user: unknown).
+You MUST cast it to the schema type before accessing any properties:
+  import { User } from '../schemas/userSchema';
+  const { user, loading, error } = useUser(userId);
+  const typedUser = user as User;  // ← REQUIRED: cast before accessing .name / .email / .age
+  // Then use typedUser.name, typedUser.email, typedUser.age — NOT user.name, user.email, user.age
+WRONG: <UserAvatar name={user.name} />         ← user is untyped, causes TS2339
+RIGHT:  <UserAvatar name={typedUser.name} />   ← typedUser is User, property access is safe
+NEVER pass a prop that is not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
+` : ''}`
       : '';
 
     const createdFilesSection = fileContracts.length > 0
@@ -2145,10 +2402,19 @@ CRITICAL INTEGRATION RULES:
 3. For Zustand stores: destructure only fields that appear in the store definition
 4. Do NOT create duplicate stores/utilities if they already exist above
 5. Do NOT create inline implementations if a shared file already exists
-6. ⚠️ SIBLING COMPONENT RULE: These files are for API reference only. Do NOT import sibling components
-   (other components from this plan) into this file unless the step description explicitly says you must
-   compose or render them. Example: Navigation must NOT import Layout — they are siblings, not parent/child.
-   Only the top-level App or the parent that owns both should import both.
+6. ⚠️ SIBLING COMPONENT RULE: The .tsx files listed above are PEER components from the same plan.
+   If the REQUIREMENT says to "compose" or "orchestrate" those components, you MUST import them — that is the goal.
+   If the REQUIREMENT does NOT say to compose them, do NOT import them — they are siblings, not helpers.
+   PEER example (UserStats step — no compose instruction): UserStats must NOT import UserAvatar.
+     WRONG: import UserAvatar from './UserAvatar'
+     RIGHT:  Accept required data as props (e.g. interface UserStatsProps { age: number; email: string })
+   ORCHESTRATOR example (UserProfile step — REQUIREMENT says "compose the new <UserAvatar /> and <UserStats />"):
+     CORRECT: import { UserAvatar } from './UserAvatar'; import { UserStats } from './UserStats';
+7. ⚠️ SCHEMA ISOLATION RULE: Do NOT import from schemas/ or validation/ directories into a UI component.
+   Schema files define Zod/validation shapes for form validation — they are NOT the source of TypeScript
+   interfaces for component props. Define component prop interfaces locally (e.g. interface UserAvatarProps).
+   WRONG: import { userSchema } from '../schemas/userSchema'  // schema in a component
+   RIGHT:  interface UserAvatarProps { name: string; imageUrl?: string }  // local interface
 
 `
       : '';
@@ -2305,8 +2571,8 @@ STRICTLY FORBIDDEN (these will be rejected):
           ? `- HOC RULES (mandatory — this is a Higher-Order Component, NOT a children wrapper):\n` +
             `- NEVER use React.forwardRef — HOCs are plain functions, not ref-forwarders.\n` +
             `- COMPLETE PATTERN (copy this exactly, adapt auth field name from store context):\n` +
-            `  import { useAuthStore } from '../stores/authStore';\n` +
-            `  import { Navigate } from 'react-router-dom';\n` +
+            `  import useAuthStore from '../stores/authStore';  // DEFAULT import — no braces\n` +
+            `  import { Navigate } from 'react-router-dom';  // ONLY Navigate — NEVER import useNavigate\n` +
             `  export function ${componentName}<P extends object>(Component: React.ComponentType<P>) {\n` +
             `    const Wrapped = (props: P) => {\n` +
             `      const { isLoggedIn } = useAuthStore();  // use the ACTUAL field name from the store\n` +
@@ -2316,6 +2582,13 @@ STRICTLY FORBIDDEN (these will be rejected):
             `    Wrapped.displayName = \`${componentName}(\${Component.displayName ?? Component.name})\`;\n` +
             `    return Wrapped;\n` +
             `  }\n` +
+            `- IMPORT RULES: useAuthStore uses \`export default\` — import WITHOUT braces: \`import useAuthStore from '...'\`\n` +
+            `  WRONG: import { useAuthStore } from '../stores/authStore'\n` +
+            `  RIGHT:  import useAuthStore from '../stores/authStore'\n` +
+            `- NEVER import useNavigate — it will be flagged as an unused import. The declarative\n` +
+            `  \`<Navigate to="/login" replace />\` component is the ONLY redirect mechanism for HOCs.\n` +
+            `  WRONG: import { useNavigate, Navigate } from 'react-router-dom'\n` +
+            `  RIGHT:  import { Navigate } from 'react-router-dom'\n` +
             `- GENERIC: ALWAYS use \`<P extends object>\` — NEVER use \`any\` as the props type workaround.\n` +
             `  WRONG: function ${componentName}(Component: React.ComponentType<any>)\n` +
             `  RIGHT:  function ${componentName}<P extends object>(Component: React.ComponentType<P>)\n` +
@@ -2406,8 +2679,74 @@ STRICTLY FORBIDDEN (these will be rejected):
         `- NEVER use export default — use named exports only\n\n`
       : '';
 
-    // CONFIG/DATA FILE RULES (.ts non-hook, non-store)
-    const isConfigOrDataTsTarget = step.path!.endsWith('.ts') && !step.path!.endsWith('.tsx') && !isHookTarget && !isStoreTarget;
+    // SCHEMA/VALIDATION FILE RULES (schemas/ or validation/ directories, .ts extension)
+    const isSchemaTarget = step.path!.endsWith('.ts') && !step.path!.endsWith('.tsx')
+      && (step.path!.includes('/schemas/') || step.path!.includes('/validation/'));
+    const existingSchemaContent = isSchemaTarget ? (sourceReadContents[0]?.content ?? '') : '';
+    // Derive the canonical schema var name from the filename: userSchema.ts → userSchema, loginSchema.ts → loginSchema
+    const schemaFileBase = isSchemaTarget
+      ? (step.path!.split('/').pop() ?? 'entity').replace(/\.ts$/, '')
+      : 'entity';
+    const schemaEntityRaw = schemaFileBase.replace(/[Ss]chema$/, '').replace(/[Vv]alidation$/, '') || schemaFileBase;
+    const schemaEntityCap = schemaEntityRaw.charAt(0).toUpperCase() + schemaEntityRaw.slice(1);
+    const schemaVarName = schemaFileBase; // e.g. "userSchema" — the PRIMARY export must use this name
+    const schemaTypeName = schemaEntityCap; // e.g. "User"
+    let schemaConstraintSection = isSchemaTarget
+      ? `\nSCHEMA/VALIDATION FILE RULES (mandatory — this is a pure Zod schema file):\n` +
+        `- ABSOLUTELY NO JSX: no <elements>, no </tags>, no React components, no render functions\n` +
+        `- NEVER import React (default or named) — Zod schemas have zero React dependency\n` +
+        `- NEVER use React.FC, JSX.Element, ReactElement, or any React type annotation\n` +
+        `- NEVER import from components/, hooks/, pages/, or any UI layer\n` +
+        `- ONLY allowed imports: { z } from 'zod' (and optionally zod utilities like z.infer)\n` +
+        `- PRIMARY EXPORT NAME (mandatory): The main schema object MUST be named \`${schemaVarName}\`.\n` +
+        `  Do NOT split into multiple sub-schemas with different names — use one top-level \`${schemaVarName}\`.\n` +
+        `\nFIELD FIDELITY (critical): Model ONLY the fields that appear in the source component shown in\n` +
+        `## EXISTING CODEBASE above. Do NOT invent fields (e.g. 'bio', 'id') that are not accessed in\n` +
+        `the source. Do NOT drop fields that ARE accessed in the source (e.g. if the source reads\n` +
+        `user.age, include age: z.number() in the schema).\n` +
+        `\nCORRECT format for this file (${step.path!.split('/').pop()}):\n` +
+        `  import { z } from 'zod';\n` +
+        `\n` +
+        `  export const ${schemaVarName} = z.object({\n` +
+        `    // ONLY include fields that the source component actually accesses — derive from the READ file\n` +
+        `  });\n` +
+        `\n` +
+        `  export type ${schemaTypeName} = z.infer<typeof ${schemaVarName}>;\n` +
+        `\n` +
+        `  export const validate${schemaTypeName} = (data: unknown) => ${schemaVarName}.parse(data);\n` +
+        `\n`
+      : '';
+
+    // Augment schema constraint with programmatically-extracted field names from source.
+    // The step description often invents fields (e.g. "dateOfBirth") that don't exist in the
+    // source — the injection below overrides those suggestions with the actual accessed fields.
+    if (isSchemaTarget && sourceReadContents.length > 0) {
+      const sourceCombined = sourceReadContents.map(r => r.content).join('\n');
+      const entityLower = schemaEntityRaw.toLowerCase();
+      const dotPattern = new RegExp(`\\b${entityLower}\\.(\\w+)\\b`, 'g');
+      const dotFields = [...sourceCombined.matchAll(dotPattern)].map(m => m[1]);
+      const inPattern = new RegExp(`'(\\w+)'\\s+in\\s+\\b${entityLower}\\b`, 'g');
+      const inFields = [...sourceCombined.matchAll(inPattern)].map(m => m[1]);
+      const extractedFields = [...new Set([...dotFields, ...inFields])].filter(f => f !== entityLower);
+      if (extractedFields.length > 0) {
+        // Build a concrete z.object() template so the LLM cannot misread the field list.
+        const fieldLines = extractedFields.map(f => {
+          if (f === 'email') { return `  ${f}: z.string().email(),`; }
+          if (f === 'age') { return `  ${f}: z.number(),`; }
+          return `  ${f}: z.string(),`;
+        }).join('\n');
+        schemaConstraintSection +=
+          `\n⚠️ FIELD OVERRIDE (this rule OVERRIDES any field suggestions in the step description):\n` +
+          `The source file accesses EXACTLY these fields: ${extractedFields.join(', ')}.\n` +
+          `DO NOT rename fields (e.g. do NOT rename 'age' to 'dateOfBirth' or 'dob').\n` +
+          `DO NOT add fields that are not in this list.\n` +
+          `Required z.object() structure:\n` +
+          `  z.object({\n${fieldLines}\n  })\n`;
+      }
+    }
+
+    // CONFIG/DATA FILE RULES (.ts non-hook, non-store, non-schema)
+    const isConfigOrDataTsTarget = step.path!.endsWith('.ts') && !step.path!.endsWith('.tsx') && !isHookTarget && !isStoreTarget && !isSchemaTarget;
     const configTsFormatExample = (() => {
       if (!isConfigOrDataTsTarget) return '';
       const sourceCode = sourceReadContents[0]?.content ?? '';
@@ -2537,6 +2876,67 @@ STRICTLY FORBIDDEN (these will be rejected):
         `\n`
       : '';
 
+    // SUB-COMPONENT FIELD OVERRIDE
+    // When a non-coordinator .tsx component step has access to the source file, inject the
+    // exact entity fields the source accesses. Uses ENTITY-SPECIFIC extraction (not generic
+    // dot-access) to avoid collecting style/CSS property names as false data fields.
+    // This prevents LLM from using step-description-invented props (imageUrl, totalPosts,
+    // followersCount, joinDate) when source only uses name/email/age.
+    const compositionSignalsSub = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const isCompositionSub = compositionSignalsSub.test(step.description ?? '') || compositionSignalsSub.test(step.prompt ?? '');
+    const isSubcomponent = step.path!.endsWith('.tsx') && step.path!.includes('/components/') && !isCompositionSub;
+    let subcomponentFieldOverrideSection = '';
+    if (isSubcomponent && sourceReadContents.length > 0) {
+      const sourceCombined = sourceReadContents.map(r => r.content).join('\n');
+      // Step 1: find the primary data entity from 'field' in entity patterns (e.g. 'name' in user → entity=user)
+      const inEntityCandidatePat = /'(\w+)'\s+in\s+(\w+)/g;
+      const entityCount = new Map<string, number>();
+      for (const m of sourceCombined.matchAll(inEntityCandidatePat)) {
+        const entity = m[2];
+        entityCount.set(entity, (entityCount.get(entity) ?? 0) + 1);
+      }
+      // Also look for hook destructuring: const { user, loading } = useXxx(...)
+      const hookDestructPat = /const\s*\{([^}]+)\}\s*=\s*use\w+\(/g;
+      for (const m of sourceCombined.matchAll(hookDestructPat)) {
+        const names = m[1].split(',').map(n => n.trim().split(/\s+/)[0]);
+        for (const n of names) {
+          if (n && /^[a-z]/.test(n) && !['loading', 'error', 'data', 'isLoading', 'refetch', 'mutate'].includes(n)) {
+            entityCount.set(n, (entityCount.get(n) ?? 0) + 2); // higher weight for hook destructure
+          }
+        }
+      }
+      const primaryEntity = [...entityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      let srcFields: string[] = [];
+      if (primaryEntity) {
+        // Step 2: extract only fields accessed ON that entity
+        const inPat = new RegExp(`'(\\w+)'\\s+in\\s+\\b${primaryEntity}\\b`, 'g');
+        const dotPat = new RegExp(`\\b${primaryEntity}\\.(\\w+)\\b`, 'g');
+        const castDotPat = new RegExp(`\\b${primaryEntity}\\b[^.]*\\)\\.(\\w+)\\b`, 'g'); // (entity as T).field
+        srcFields = [...new Set([
+          ...[...sourceCombined.matchAll(inPat)].map(m => m[1]),
+          ...[...sourceCombined.matchAll(dotPat)].map(m => m[1]),
+          ...[...sourceCombined.matchAll(castDotPat)].map(m => m[1]),
+        ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
+      }
+      // Collect words from the step description that name invented props (these must be blocked)
+      const descWords = (step.description ?? '').toLowerCase().match(/\b\w{4,}\b/g) ?? [];
+      const COMMON_WORDS = new Set(['from', 'that', 'with', 'this', 'into', 'data', 'user', 'comp', 'file', 'type', 'prop', 'interface', 'component', 'display', 'render', 'show', 'create', 'extract', 'dedicated', 'reusable', 'accepting', 'array', 'stats', 'logic', 'avatar', 'image']);
+      const inventedCandidates = descWords.filter(w => !COMMON_WORDS.has(w) && !srcFields.includes(w));
+      if (srcFields.length > 0) {
+        const inventedWarning = inventedCandidates.length > 0
+          ? `DO NOT invent props mentioned in the requirement description (e.g. ${inventedCandidates.slice(0, 4).join(', ')}) — those are not in the source.\n`
+          : `DO NOT invent props not in this list.\n`;
+        subcomponentFieldOverrideSection =
+          `\n⚠️ PROPS FIELD OVERRIDE (this rule OVERRIDES any example fields in the REQUIREMENT):\n` +
+          `The source file's '${primaryEntity}' entity accesses EXACTLY these fields: ${srcFields.join(', ')}.\n` +
+          `Your props interface MUST use ONLY fields from this set.\n` +
+          inventedWarning +
+          `WRONG: interface UserAvatarProps { imageUrl: string }  ← imageUrl is not in the source entity\n` +
+          `RIGHT: interface UserAvatarProps { ${srcFields.slice(0, 2).map(f => `${f}: ${f === 'age' ? 'number' : 'string'}`).join('; ')} }\n\n`;
+        console.log(`[Executor] ℹ️ Sub-component field override for ${step.path} [entity=${primaryEntity}]: [${srcFields.join(', ')}]`);
+      }
+    }
+
     // FINAL PROMPT ASSEMBLY
     const fileExtension = step.path!.split('.').pop()?.toLowerCase();
     const isCodeFile = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'json', 'yml', 'yaml', 'html', 'css', 'sh'].includes(fileExtension || '');
@@ -2544,7 +2944,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     if (isCodeFile) {
       prompt = `You are generating code for a SINGLE file: ${step.path}
 
-${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${hookConstraintSection}${storeConstraintSection}${configTsConstraintSection}${appRootConstraintSection}${navigationConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
+${intentRequirement}${reactImportsSection}${multiStepContext}${availablePackagesSection}${subcomponentFieldOverrideSection}${formPatternSection}${goldenTemplateSection}${profileConstraintsSection}${schemaConstraintSection}${hookConstraintSection}${storeConstraintSection}${configTsConstraintSection}${appRootConstraintSection}${navigationConstraintSection}${interactiveComponentSection}${noForwardRefSection}STRICT REQUIREMENTS:
 1. Implement the exact logic described in the REQUIREMENT above
 2. Output ONLY valid, executable code for this file
 3. NO markdown backticks, NO code blocks, NO explanations
@@ -2563,25 +2963,25 @@ SCOPE CONSTRAINT (mandatory): Implement ONLY what the REQUIREMENT explicitly des
 - Adding unrequested features is a spec violation. When in doubt, do less.
 
 TAILWIND STYLE RULE (mandatory): Do NOT extract Tailwind class strings into intermediate variables.
-- WRONG: const paddingStyle = 'px-4 py-2';  clsx(paddingStyle, variantClasses[variant], className)
-- RIGHT: clsx('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
+- WRONG: const paddingStyle = 'px-4 py-2';  cn(paddingStyle, variantClasses[variant], className)
+- RIGHT: cn('px-4 py-2 text-sm font-medium', variantClasses[variant], className)
 - Intermediate const variables for single class strings are dead indirection — inline them directly.
 
 CLASS MERGING RULE (mandatory): Only import a class-merging utility when you actually need to combine classes conditionally.
-- ONLY import clsx/cn when the component accepts a 'className' prop OR has conditional Tailwind classes driven by props/state (e.g. variant, disabled, active)
-- Do NOT import clsx/cn for components with static layouts — forms, modals with fixed structure, pages, or any component whose className values never change at runtime
-- WRONG: importing clsx in a RegisterForm, LoginForm, or SettingsPage that has no className prop and no variant logic
-- RIGHT: importing clsx in a Button that merges variant classes with an optional className prop
-- If class merging IS needed: prefer cn if src/utils/cn.ts is listed in the CONTEXT section above; otherwise use clsx
-- NEVER import cn from a path not explicitly listed in the CONTEXT section above
-- NEVER pass an empty string as an argument: WRONG: clsx('px-4 py-2', '') — RIGHT: clsx('px-4 py-2')
+- ONLY import cn when the component accepts a 'className' prop OR has conditional Tailwind classes driven by props/state (e.g. variant, disabled, active)
+- Do NOT import cn for components with static layouts — forms, modals with fixed structure, pages, or any component whose className values never change at runtime
+- WRONG: importing cn in a RegisterForm, LoginForm, or SettingsPage that has no className prop and no variant logic
+- RIGHT: importing cn in a Button that merges variant classes with an optional className prop
+- ALWAYS use cn from the project's utility: import { cn } from '@/utils/cn'  (or relative path e.g. '../utils/cn')
+- NEVER import clsx directly from 'clsx' — the project wraps clsx in cn(), use cn() instead
+- NEVER pass an empty string as an argument: WRONG: cn('px-4 py-2', '') — RIGHT: cn('px-4 py-2')
 
 Example format (raw code, nothing else):
 import React from 'react';
-import { clsx } from 'clsx';
+import { cn } from '@/utils/cn';
 
 export const MyComponent = ({ className }: { className?: string }) => {
-  return <div className={clsx('p-4', className)}>...</div>;
+  return <div className={cn('p-4', className)}>...</div>;
 };
 
 Do NOT include: backticks, markdown, explanations, other files, instructions`;
@@ -2670,6 +3070,39 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       if (cbErrors.length > 0) {
         validationResult.errors = validationResult.errors ?? [];
         validationResult.errors.push(...cbErrors);
+      }
+
+      // DATA FETCHING HOOK PRESERVATION: if source had a custom data-fetching hook,
+      // the updated file must also call it. Catches prop-drilling replacement.
+      const REACT_BUILTIN_HOOKS = new Set([
+        'useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext',
+        'useReducer', 'useId', 'useLayoutEffect', 'useInsertionEffect',
+        'useDeferredValue', 'useTransition', 'useSyncExternalStore',
+        'useImperativeHandle', 'useDebugValue',
+      ]);
+      const sourceHookMatches = [...matchingSource.content.matchAll(/\b(use[A-Z]\w*)\s*\(/g)];
+      const missingHooks = sourceHookMatches
+        .map(m => m[1])
+        .filter(h => !REACT_BUILTIN_HOOKS.has(h))
+        .filter(h => !content.includes(h + '('));
+      if (missingHooks.length > 0) {
+        validationResult.errors = validationResult.errors ?? [];
+        for (const hook of missingHooks) {
+          // Extract the exact import path for this hook from the source file so the LLM
+          // uses the correct relative path (not an invented @/ alias path).
+          const hookImportMatch = matchingSource.content.match(
+            new RegExp(`import\\s+\\{[^}]*\\b${hook}\\b[^}]*\\}\\s+from\\s+['"]([^'"]+)['"]`)
+          );
+          const hookImportPath = hookImportMatch ? hookImportMatch[1] : `../hooks/${hook.replace(/^use/, '').toLowerCase()}`;
+          validationResult.errors.push(
+            `❌ DATA FETCHING HOOK VIOLATION: '${hook}()' was called in the source file but is missing from the updated component. ` +
+            `Do NOT remove data-fetching hooks during decomposition — they are the component's data source. ` +
+            `Add: import { ${hook} } from '${hookImportPath}'; then call: const { user, loading, error } = ${hook}(userId). ` +
+            `Keep 'userId: string' in the props interface. ` +
+            `If sub-components need data the hook doesn't return (e.g. followersCount), add it to the props interface — do NOT hardcode values. ` +
+            `Pass data as props to sub-components: <UserAvatar imageUrl={user.imageUrl} name={user.name} />.`
+          );
+        }
       }
     }
 
@@ -2852,6 +3285,35 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           nextValidation.errors = nextValidation.errors ?? [];
           nextValidation.errors.push(...cbErrors);
         }
+        // Re-run hook check — auto-correction can silently remove hooks that it treats as
+        // "unused" variables (when the hook result isn't referenced in the corrected output).
+        const REACT_BUILTIN_HOOKS_RECHECK = new Set([
+          'useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext',
+          'useReducer', 'useId', 'useLayoutEffect', 'useInsertionEffect',
+          'useDeferredValue', 'useTransition', 'useSyncExternalStore',
+          'useImperativeHandle', 'useDebugValue',
+        ]);
+        const reHookMatches = [...matchingSource.content.matchAll(/\b(use[A-Z]\w*)\s*\(/g)];
+        const reRemovedHooks = reHookMatches
+          .map(m => m[1])
+          .filter(h => !REACT_BUILTIN_HOOKS_RECHECK.has(h))
+          .filter(h => !correctedContent.includes(h + '('));
+        if (reRemovedHooks.length > 0) {
+          nextValidation.errors = nextValidation.errors ?? [];
+          for (const hook of reRemovedHooks) {
+            const reHookImportMatch = matchingSource.content.match(
+              new RegExp(`import\\s+\\{[^}]*\\b${hook}\\b[^}]*\\}\\s+from\\s+['"]([^'"]+)['"]`)
+            );
+            const reHookPath = reHookImportMatch ? reHookImportMatch[1] : `../hooks/${hook.replace(/^use/, '').toLowerCase()}`;
+            nextValidation.errors.push(
+              `❌ DATA FETCHING HOOK VIOLATION: auto-correction removed '${hook}()'. ` +
+              `Add: import { ${hook} } from '${reHookPath}'; then call: const { user } = ${hook}(userId). ` +
+              `Keep 'userId: string' in the interface. ` +
+              `Add any extra props sub-components need (e.g. followersCount: number) — NEVER hardcode them. ` +
+              `Pass data as props: <UserStats followersCount={user.followersCount} />.`
+            );
+          }
+        }
       }
       const { critical: nextCritical, suggestions: nextSuggestions } = this.filterCriticalErrors(
         nextValidation.errors,
@@ -2916,13 +3378,41 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     }).join('\n');
 
     if (hasJsxInTsError) {
-      const fixPrompt = `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
+      const isSchemaFile = step.path!.includes('/schemas/') || step.path!.includes('/validation/');
+      const fixPrompt = isSchemaFile
+        ? `The schema file ${step.path} INCORRECTLY contains JSX/React code. It must be rewritten as a pure Zod schema.\n\nCURRENT (WRONG — has JSX):\n${currentContent}\n\nCRITICAL: This is a SCHEMA/VALIDATION file. NO JSX, NO React, NO components.\nRewrite it in this exact format:\n\nimport { z } from 'zod';\n\nexport const [entityName]Schema = z.object({\n  // keep all fields from the wrong code, expressed as zod validators\n});\n\nexport type [EntityName] = z.infer<typeof [entityName]Schema>;\n\nexport const validate[EntityName] = (data: unknown) => [entityName]Schema.parse(data);\n\nProvide ONLY the corrected TypeScript/Zod code. No explanations, no markdown.`
+        : `The following code for ${step.path} has CRITICAL validation errors that MUST be fixed.\n\nCURRENT CODE:\n${currentContent}\n\nERRORS TO FIX:\n${formattedErrors}\n\nCRITICAL: This is a .ts (NOT .tsx) file. REMOVE ALL JSX — no angle brackets, no JSX expressions, no renderRoutes(), no React.FC. Replace component-type references with \`import type { ComponentType } from 'react'\`. Keep only TypeScript interfaces, type aliases, plain objects, and data arrays. NEVER add 'any' type. Provide ONLY the corrected code. No explanations, no markdown.`;
       const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
       if (!fixResponse.success) throw new Error(`Auto-correction attempt failed: ${fixResponse.error || 'LLM error'}`);
       let result = fixResponse.message || '';
       const fence = result.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
       if (fence) result = fence[1];
       return result;
+    }
+
+    // SCHEMA COUPLING VIOLATION requires a full-file rewrite — the surgical patch format
+    // produces a cascade (fix user: User prop → User import unused → remove import → lose JSX).
+    // Use a whole-file prompt instead so all three changes happen atomically in one LLM call.
+    const hasSchemaCouplingError = lastCriticalErrors.some(e => e.includes('SCHEMA COUPLING VIOLATION'));
+    if (hasSchemaCouplingError && step.path?.endsWith('.tsx')) {
+      const schemaCouplingPrompt =
+        `The following React component has a SCHEMA COUPLING VIOLATION that must be fixed.\n\n` +
+        `FILE: ${step.path}\n\nCURRENT CODE:\n${currentContent}\n\n` +
+        `ERROR: ${lastCriticalErrors.find(e => e.includes('SCHEMA COUPLING VIOLATION'))}\n\n` +
+        `REWRITE INSTRUCTIONS — do ALL of these in one edit:\n` +
+        `1. Change the props interface: remove the 'user' object prop, replace with scalar props ` +
+        `   (e.g. imageUrl: string, name: string for Avatar; name: string, email: string, age: number for Stats).\n` +
+        `2. Remove ALL import lines that import User/schema types (they are now unused).\n` +
+        `3. Keep ALL JSX and render logic intact — update JSX attribute references to use the new scalar props.\n` +
+        `4. Keep import React and import { cn } lines.\n` +
+        `NEVER return a file without a JSX return statement. NEVER return only types or interfaces.\n` +
+        `Provide ONLY the corrected complete TypeScript/React file. No explanations, no markdown.`;
+      const schemaCouplingResp = await this.config.llmClient.sendMessage(schemaCouplingPrompt);
+      if (!schemaCouplingResp.success) throw new Error(`Auto-correction attempt failed: ${schemaCouplingResp.error || 'LLM error'}`);
+      let schemaCouplingResult = schemaCouplingResp.message || '';
+      const scFence = schemaCouplingResult.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
+      if (scFence) schemaCouplingResult = scFence[1];
+      return schemaCouplingResult;
     }
 
     const surgicalPrompt = this.buildSurgicalValidatorPrompt(currentContent, lastCriticalErrors, step.path!);
@@ -2969,6 +3459,54 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     // Check 6: TypeScript compiler (ground truth — runs post-write so tsc sees the file)
     const isTsFile = step.path!.endsWith('.ts') || step.path!.endsWith('.tsx');
     if (!isTsFile || !workspaceUri) return finalContent;
+
+    // Pass 0.3: pre-emptive named→default import fix (filesystem-based, no tsc needed)
+    // Scan `import { X } from 'path'` statements. If the resolved file has `export default X`
+    // but NO named export for X, convert to `import X from 'path'` before tsc runs.
+    // This catches the common LLM mistake of using named imports for default-export stores/hooks.
+    {
+      const targetDir = path.dirname(path.join(workspaceUri.fsPath, step.path!));
+      const namedImportScanRe = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
+      let p03Content = finalContent;
+      let p03Changed = false;
+      let p03Match: RegExpExecArray | null;
+      while ((p03Match = namedImportScanRe.exec(finalContent)) !== null) {
+        const [fullMatch, importedBlock, modulePath] = p03Match;
+        // Only handle relative imports (start with . or ..)
+        if (!modulePath.startsWith('.')) continue;
+        const names = importedBlock.split(',').map((s: string) => s.trim()).filter(Boolean);
+        // Resolve module path with extension candidates
+        const exts = ['', '.ts', '.tsx', '.js', '.jsx'];
+        let resolvedPath: string | null = null;
+        for (const ext of exts) {
+          const candidate = path.join(targetDir, modulePath + ext);
+          if (fs.existsSync(candidate)) { resolvedPath = candidate; break; }
+        }
+        if (!resolvedPath) continue;
+        let moduleSource: string;
+        try { moduleSource = fs.readFileSync(resolvedPath, 'utf8'); } catch { continue; }
+        for (const name of names) {
+          const hasDefaultExport = new RegExp(`export\\s+default\\s+${name}\\b`).test(moduleSource);
+          const hasNamedExport =
+            new RegExp(`export\\s+(?:const|function|class|let|var)\\s+${name}\\b`).test(moduleSource) ||
+            new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`).test(moduleSource);
+          if (hasDefaultExport && !hasNamedExport) {
+            const otherNames = names.filter((n: string) => n !== name);
+            const defaultLine = `import ${name} from '${modulePath}'`;
+            const replacement = otherNames.length > 0
+              ? `${defaultLine};\nimport { ${otherNames.join(', ')} } from '${modulePath}'`
+              : defaultLine;
+            p03Content = p03Content.replace(fullMatch, replacement);
+            p03Changed = true;
+          }
+        }
+      }
+      if (p03Changed) {
+        this.config.onMessage?.(`🔧 Pre-emptive fix: named→default import (filesystem check)...`, 'info');
+        finalContent = p03Content;
+        await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
+      }
+    }
 
     this.config.onMessage?.(`🔎 Check 6: TypeScript compiler...`, 'info');
     let tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
@@ -3083,6 +3621,19 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       }
     }
 
+    // Compute custom hooks from source (for hook-preservation guard inside the loop).
+    const REACT_BUILTIN_TSC = new Set([
+      'useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext',
+      'useReducer', 'useId', 'useLayoutEffect', 'useInsertionEffect',
+      'useDeferredValue', 'useTransition', 'useSyncExternalStore',
+      'useImperativeHandle', 'useDebugValue',
+    ]);
+    const sourceCustomHooks = matchingSource
+      ? [...matchingSource.content.matchAll(/\b(use[A-Z]\w*)\s*\(/g)]
+          .map(m => m[1])
+          .filter(h => !REACT_BUILTIN_TSC.has(h))
+      : [];
+
     // Up to 2 LLM correction passes if errors remain
     for (let tscPass = 0; tscPass < 2 && tscErrors.length > 0; tscPass++) {
       this.config.onMessage?.(`🔧 Fixing TypeScript errors (pass ${tscPass + 1}/2)...`, 'info');
@@ -3098,12 +3649,33 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       }
 
       if (corrected === null) {
+        const hookNames = sourceCustomHooks.length > 0
+          ? `\nCRITICAL — DATA FETCHING HOOKS: The following hooks from the source must remain: ` +
+            `${sourceCustomHooks.join(', ')}. ` +
+            `If the error is 'Cannot find name X' (e.g. 'User'), add a missing import statement ` +
+            `(e.g. import { User } from '../schemas/userSchema') — DO NOT remove the hook or ` +
+            `convert the component to prop-drilling to work around the missing type.\n`
+          : '';
+        // TS2339 guidance: when user is typed as unknown (from useUser hook), cast it
+        const hasTs2339 = tscErrors.some(e => e.includes('TS2339') || e.includes("Property") && e.includes("does not exist on type 'unknown'"));
+        const ts2339Hint = hasTs2339
+          ? `\nTS2339 FIX (Property does not exist on type 'unknown'): ` +
+            `The hook returns 'user' typed as 'unknown'. ` +
+            `Fix by importing the User type from the schema and casting: ` +
+            `import { User } from '../schemas/userSchema'; ` +
+            `then use 'const typedUser = user as User;' before accessing properties, ` +
+            `OR narrow inline: '(user as User).name'. ` +
+            `DO NOT change the hook call or restructure the component. DO NOT use 'any'.\n`
+          : '';
         const fixPrompt =
           `The following TypeScript file has compiler errors reported by tsc.\n\n` +
           `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
           `COMPILER ERRORS:\n${tscErrors.join('\n')}\n\n` +
           `Fix ONLY the listed errors. Do not change logic, structure, or add comments. ` +
-          `NEVER add 'any' type — use specific types or 'unknown'. ` +
+          `NEVER use 'any', 'any[]', 'any | undefined', or any type that includes 'any' — ` +
+          `use specific types or 'unknown' instead. ` +
+          hookNames +
+          ts2339Hint +
           `Provide ONLY the corrected code. No explanations, no markdown fences.`;
         const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
         if (!fixResponse.success || !fixResponse.message?.trim()) break;
@@ -3113,7 +3685,48 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         corrected = raw;
       }
 
-      finalContent = corrected;
+      // Guards: evaluate corrected before advancing finalContent so a rejected fix
+      // doesn't corrupt the base for the next attempt.
+      if (/:\s*any\b/.test(corrected)) {
+        tscErrors = [
+          ...tscErrors,
+          `❌ TypeScript fix introduced 'any' type — NEVER use any, any[], or any union with any. ` +
+          `Find and import the correct type instead of falling back to any.`,
+        ];
+        continue; // finalContent unchanged — next attempt uses the last accepted version
+      }
+      const removedHooks = sourceCustomHooks.filter(h => !corrected.includes(h + '('));
+      if (removedHooks.length > 0) {
+        tscErrors = [
+          ...tscErrors,
+          `❌ TypeScript fix removed hook(s): ${removedHooks.join(', ')}. ` +
+          `NEVER remove data-fetching hooks to fix type errors. ` +
+          `Instead, add the missing import for the type (e.g. import { User } from '../schemas/userSchema').`,
+        ];
+        continue; // finalContent unchanged — preserve hooks
+      }
+      // PROP-DRILLING GUARD: for coordinator steps, reject tsc fixes that convert the component
+      // from hook-based data fetching to prop-drilling — even if sourceCustomHooks is empty
+      // (matchingSource missing). Check structurally: user: User prop without userId: string.
+      {
+        const compositionSignalsTsc = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+        const isCoordinatorTsc = (compositionSignalsTsc.test(step.description ?? '') || compositionSignalsTsc.test(step.prompt ?? '')) && step.path?.endsWith('.tsx');
+        if (isCoordinatorTsc) {
+          const fixIntroducedPropDrilling =
+            /(?:^|\s)(?:user|currentUser)\s*:\s*User\b/.test(corrected) &&
+            !/userId\s*:\s*string/.test(corrected);
+          if (fixIntroducedPropDrilling) {
+            tscErrors = [
+              ...tscErrors,
+              `❌ TypeScript fix introduced prop-drilling: coordinator now accepts 'user: User' as a prop. ` +
+              `NEVER convert the coordinator to prop-drilling — keep 'userId: string' and call useUser(userId) internally. ` +
+              `Fix the type error by adding a missing import (e.g. import { User } from '../schemas/userSchema'), not by restructuring props.`,
+            ];
+            continue; // finalContent unchanged — preserve hook-based pattern
+          }
+        }
+      }
+      finalContent = corrected; // Only advance if all guards pass
       await vscode.workspace.fs.writeFile(filePath, Buffer.from(finalContent, 'utf8'));
       tscErrors = await this.runTscCheck(workspaceUri.fsPath, step.path!);
     }

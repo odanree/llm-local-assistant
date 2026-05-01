@@ -146,6 +146,38 @@ export async function generateAcceptanceCriteria(
       ];
     }
 
+    // Short-circuit: schema/validation .ts files.
+    // The LLM criteria generator reads the step description (which may say "name, email, bio")
+    // and generates a criterion for "bio field present". That criterion contradicts Check 4.7
+    // which reads the source and knows bio doesn't exist — causing an infinite correction loop.
+    // Fix: derive criteria from the source file directly, bypassing the step description.
+    const isSchemaTargetCriteria = step.path?.endsWith('.ts') && !step.path?.endsWith('.tsx')
+      && (step.path?.includes('/schemas/') || step.path?.includes('/validation/'));
+    if (isSchemaTargetCriteria) {
+      const schemaFileBase = (step.path.split('/').pop() ?? 'entitySchema').replace(/\.ts$/, '');
+      const entityRaw = schemaFileBase.replace(/[Ss]chema$/, '').replace(/[Vv]alidation$/, '');
+      const typeCap = entityRaw.charAt(0).toUpperCase() + entityRaw.slice(1);
+      // Extract actual accessed fields from source — same patterns as Check 4.7
+      const fields: string[] = [];
+      if (sourceContent) {
+        const entityLower = entityRaw.toLowerCase();
+        const dotPat = new RegExp(`\\b${entityLower}\\.(\\w+)\\b`, 'g');
+        const inPat = new RegExp(`'(\\w+)'\\s+in\\s+\\b${entityLower}\\b`, 'g');
+        const dotHits = [...sourceContent.matchAll(dotPat)].map(m => m[1]);
+        const inHits = [...sourceContent.matchAll(inPat)].map(m => m[1]);
+        fields.push(...new Set([...dotHits, ...inHits].filter(f => f !== entityLower)));
+      }
+      const fieldList = fields.length > 0
+        ? `EXACTLY these fields: ${fields.join(', ')} — no extra fields, no invented fields like bio`
+        : `fields that match what the source component actually accesses — no invented fields`;
+      return [
+        `Exports \`${schemaFileBase}\` as a Zod z.object() with ${fieldList}`,
+        `Exports \`${typeCap}\` TypeScript type via z.infer<typeof ${schemaFileBase}>`,
+        `Exports \`validate${typeCap}\` function that calls ${schemaFileBase}.parse(data)`,
+        `No JSX, no React imports, no component code — pure Zod validation file`,
+      ];
+    }
+
     const isHOCFile = isHOCComponent(step.path);
     const hookLine = isPureLogicFile
       ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`

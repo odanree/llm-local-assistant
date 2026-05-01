@@ -107,6 +107,17 @@ export function calculateImportStatement(sourcePath: string, targetPath: string)
       return `import { cn } from '${relativePath}';`;
     }
 
+    // Schema files export the TypeScript type (e.g. User) — inject ONLY the type in REQUIRED
+    // IMPORTS. The schema instance (userSchema) is for validation, which coordinator components
+    // should NOT be doing — they compose sub-components. Importing it unused triggers lint errors.
+    // If runtime validation is genuinely needed, the LLM can add it manually.
+    const isSchemaFile = /[Ss]chema$|[Vv]alidation$/.test(importName);
+    if (isSchemaFile) {
+      const entityRaw = importName.replace(/[Ss]chema$/, '').replace(/[Vv]alidation$/, '');
+      const typeName = entityRaw.charAt(0).toUpperCase() + entityRaw.slice(1);
+      return `import { ${typeName} } from '${relativePath}'; // ${typeName} is the TypeScript type — import from here, NOT from src/types/`;
+    }
+
     // Default: assume named export with same name as file
     return `import { ${importName} } from '${relativePath}';`;
   } catch (error) {
@@ -183,11 +194,20 @@ export function reorderStepsByDependencies(steps: PlanStep[]): PlanStep[] {
     const descLower = (step.description || '').toLowerCase();
     const fullText = `${pathLower} ${descLower}`;
 
+    // Guard: schema/validation .ts files must never be ordered AFTER component .tsx files.
+    // Schema descriptions often reference the coordinator component (e.g. "for user profile
+    // data received by the UserProfile component"), making the schema look like it depends on
+    // the coordinator. This inverted edge sorts schema last, breaking field-fidelity.
+    const currentIsSchema = /[\\/]schemas?[\\/]|[\\/]validat|[Ss]chema\.[tj]s$|[Vv]alidation\.[tj]s$/.test(step.path || '');
+
     writeSteps.forEach((otherStep, otherIdx) => {
       if (currentIdx === otherIdx) { return; }
       const basename = getFileBaseName((otherStep.path || '').toLowerCase());
       // Filename appears anywhere in the description → likely a dependency
       if (basename && new RegExp(`\\b${basename}\\b`, 'i').test(fullText)) {
+        // Skip inverted schema→component edge: schema files precede components, never follow.
+        const otherIsComponent = (otherStep.path || '').endsWith('.tsx');
+        if (currentIsSchema && otherIsComponent) { return; }
         dependencies.get(currentIdx)?.add(otherIdx);
       }
       // Store → component heuristic (layout-independent of vocabulary)
@@ -212,6 +232,8 @@ export function reorderStepsByDependencies(steps: PlanStep[]): PlanStep[] {
   //   App.tsx       → priority 4 (root, imports everything)
   const getStructuralPriority = (path: string): number => {
     const p = (path || '').toLowerCase();
+    // Schema/validation .ts files are pure type/config — no component imports, come first.
+    if (/[\\/]schemas?[\\/]|[\\/]validat[\\/]|schema\.[tj]s$|validation\.[tj]s$/i.test(p)) { return 0; }
     if (/[\\/]routes?[\\/]|[\\/]routes?\.[tj]s$|routes?\.ts$/i.test(p)) { return 0; }
     if (/[\\/](navigation|navbar|nav|sidebar)\.[tj]sx?$/i.test(p)) { return 1; }
     if (/[\\/]layout\.[tj]sx?$/i.test(p)) { return 2; }
@@ -446,17 +468,11 @@ export function attemptStrategySwitch(
     };
   }
 
-  // Heuristic: If trying to read a component/source file, suggest write
-  const sourcePatterns = ['.tsx', '.ts', '.jsx', '.js', '.vue', '.svelte'];
-  const isSourceFile = sourcePatterns.some(ext => step.path?.endsWith(ext));
-
-  if (isSourceFile) {
-    return {
-      message: `Source file "${step.path}" doesn't exist. Creating it...`,
-      suggestedAction: 'write',
-      suggestedPath: step.path,
-    };
-  }
+  // Source files: do NOT convert READ→WRITE. A READ step targeting a source file
+  // that doesn't exist means the planner generated a wrong path. Converting it to a
+  // WRITE step creates a hallucinated dependency file from scratch, which then causes
+  // TS errors in the integration check. The correct behaviour is to skip the READ
+  // step and let the plan continue (the WRITE step for the real output file still runs).
 
   // Can't determine recovery strategy
   return null;
