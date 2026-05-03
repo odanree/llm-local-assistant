@@ -855,6 +855,27 @@ export function validateCommonPatterns(content: string, filePath: string): strin
         `<div className={cn('...')}>{name.charAt(0).toUpperCase()}</div>`
       );
     }
+
+    // Check D: cn() called with a non-string argument (e.g. cn(styles.error) where styles is
+    // a CSSProperties object). cn() only accepts strings/arrays — passing an object silently
+    // produces an empty string class. Catches the coordinator anti-pattern of mixing a
+    // `const styles = {...}` inline-style object into cn() calls.
+    const cnObjectArgPattern = /\bcn\s*\([^)]*\b([a-z]\w*\.[a-z]\w*)\b[^)]*\)/g;
+    const cnObjectMatches = [...content.matchAll(cnObjectArgPattern)];
+    const styleObjectDotRefs = cnObjectMatches
+      .map(m => m[1])
+      .filter(ref => {
+        // Only flag if the referenced base variable looks like a styles/CSS object
+        const base = ref.split('.')[0];
+        return /^styles?$|^css$|^classNames?$|^style[sS]/.test(base);
+      });
+    if (styleObjectDotRefs.length > 0) {
+      errors.push(
+        `❌ Runtime-broken cn() call: \`cn(${styleObjectDotRefs[0]})\` passes a CSSProperties object to cn() ` +
+        `— cn() only accepts strings. Do NOT copy the source's \`const styles = {...}\` object into the coordinator. ` +
+        `Remove the styles object and use Tailwind strings directly: className={cn('text-red-500 p-3')}.`
+      );
+    }
   }
 
   return errors;

@@ -2420,6 +2420,12 @@ RIGHT:  <UserStats stats={[
   { label: 'Age',   value: typedUser.age },
 ]} />
 If a sub-component's prop type is unclear, use the scalar props directly (name={typedUser.name}).
+
+NO INLINE STYLES: The source may have a \`const styles = {...}\` object with inline styles.
+Do NOT copy it into the coordinator. Do NOT use style={{}} or style={styles.foo}.
+Do NOT write cn(styles.foo) — cn() accepts strings only, not CSSProperties objects.
+For loading/error states, use simple Tailwind strings: className={cn('text-red-500 p-3')}.
+The coordinator is a thin composition layer — it should have minimal or no styling of its own.
 ` : ''}`
       : '';
 

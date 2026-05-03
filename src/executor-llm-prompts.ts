@@ -215,14 +215,22 @@ export async function generateAcceptanceCriteria(
           ...[...sourceContent.matchAll(castDotPat)].map(m => m[1]),
         ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
         if (srcFields.length > 0) {
+          // Semantic field filtering: avatar/image components should only accept
+          // display-identity fields (name for initials), not data fields like email/age.
+          const compNameLower = stepBaseName.toLowerCase();
+          const isAvatarLike = compNameLower.includes('avatar') || compNameLower.includes('photo') || compNameLower.includes('image');
+          const semanticFields = isAvatarLike
+            ? srcFields.filter(f => /name|title|label|display|first|last/.test(f))
+            : srcFields;
+          const allowedFields = semanticFields.length > 0 ? semanticFields : srcFields;
           const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
           return [
-            `Props interface must use ONLY source-derived fields from (${srcFields.join(', ')}) — include the fields this component actually renders, NO invented fields like ${inventedExamples}. Do not declare a prop you do not render.`,
+            `Props interface must use ONLY source-derived fields from (${allowedFields.join(', ')}) — include the fields this component actually renders, NO invented fields like ${inventedExamples}. Do not declare a prop you do not render.`,
             `Exports named \`${stepBaseName}\` component with a local props interface`,
-            `Accepts optional \`className\` prop only if the component has conditional styling`,
+            `Accepts optional \`className\` prop only if the component has conditional styling — apply className ONLY to the outermost root element, never to inner children`,
             `No hook calls, no store imports — receives all data as props`,
             `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare`,
-            `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg', no invented numbers like 123, no TODO/placeholder comments) — all displayed values must come from props. If no image URL exists in source, render name as text/initials (e.g. {name.charAt(0)}), NOT an <img src=""> or <img src="/placeholder.jpg">.`,
+            `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers like 123, no TODO/placeholder comments) — all displayed values must come from props. If no image URL exists in source, render name as text/initials (e.g. {name.charAt(0)}), NOT an <img> tag.`,
           ];
         }
       }
