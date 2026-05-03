@@ -222,7 +222,7 @@ export async function generateAcceptanceCriteria(
             `Accepts optional \`className\` prop only if the component has conditional styling`,
             `No hook calls, no store imports — receives all data as props`,
             `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare`,
-            `No hardcoded data literals (no 'N/A', no fake URLs like '/placeholder.jpg', no invented numbers like 123 or dates like '2023-01-01', no TODO/placeholder comments) — all displayed values must come from props. If no image URL exists in source, render name as text/initials, NOT an <img> with a fake src.`,
+            `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg', no invented numbers like 123, no TODO/placeholder comments) — all displayed values must come from props. If no image URL exists in source, render name as text/initials (e.g. {name.charAt(0)}), NOT an <img src=""> or <img src="/placeholder.jpg">.`,
           ];
         }
       }
