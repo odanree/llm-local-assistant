@@ -183,7 +183,7 @@ export async function generateAcceptanceCriteria(
     // (from the step description), the PROPS FIELD OVERRIDE says "only name, email, age"
     // (from the source). The validator enforces the criteria and forces the LLM to add
     // invented props. Fix: derive criteria from source fields, bypassing the LLM generator.
-    const compositionSignalsCriteria = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const compositionSignalsCriteria = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionStepCriteria = compositionSignalsCriteria.test(step.description ?? '') || compositionSignalsCriteria.test(step.prompt ?? '');
     const isSubcomponentCriteria = step.path?.endsWith('.tsx')
       && step.path?.includes('/components/')
@@ -215,22 +215,30 @@ export async function generateAcceptanceCriteria(
           ...[...sourceContent.matchAll(castDotPat)].map(m => m[1]),
         ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
         if (srcFields.length > 0) {
-          // Semantic field filtering: avatar/image components should only accept
-          // display-identity fields (name for initials), not data fields like email/age.
           const compNameLower = stepBaseName.toLowerCase();
           const isAvatarLike = compNameLower.includes('avatar') || compNameLower.includes('photo') || compNameLower.includes('image');
-          const semanticFields = isAvatarLike
-            ? srcFields.filter(f => /name|title|label|display|first|last/.test(f))
-            : srcFields;
-          const allowedFields = semanticFields.length > 0 ? semanticFields : srcFields;
           const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
+
+          if (isAvatarLike) {
+            // Avatar components: prescribe exactly name for initials — no email/age (not visual).
+            // Permissive allowed-lists caused LLM to remove ALL props after Criterion 1 rejection.
+            return [
+              `Must accept exactly \`name: string\` prop — renders user initials as text (e.g. {name.charAt(0).toUpperCase()}). Do NOT accept email, age, imageUrl, or any non-visual field in the interface.`,
+              `Exports named \`${stepBaseName}\` component with a local props interface`,
+              `Accepts optional \`className\` prop only if the component has conditional styling — apply className ONLY to the outermost root element`,
+              `No hook calls, no store imports — receives all data as props`,
+              `Must NOT use <img> tags — no image URL exists in the source. Render a div/span with the user's initial (e.g. {name.charAt(0).toUpperCase()}) as a text avatar.`,
+              `No hardcoded data literals (no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers) — all displayed values must come from props.`,
+            ];
+          }
+
           return [
-            `Props interface must use ONLY source-derived fields from (${allowedFields.join(', ')}) — include the fields this component actually renders, NO invented fields like ${inventedExamples}. Do not declare a prop you do not render.`,
+            `Props interface must use ONLY source-derived fields from (${srcFields.join(', ')}) — include the fields this component actually renders, NO invented fields like ${inventedExamples}. Do not declare a prop you do not render.`,
             `Exports named \`${stepBaseName}\` component with a local props interface`,
             `Accepts optional \`className\` prop only if the component has conditional styling — apply className ONLY to the outermost root element, never to inner children`,
             `No hook calls, no store imports — receives all data as props`,
-            `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare`,
-            `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers like 123, no TODO/placeholder comments) — all displayed values must come from props. If no image URL exists in source, render name as text/initials (e.g. {name.charAt(0)}), NOT an <img> tag.`,
+            `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare. JSX labels must match props: if props are name/email/age, show Name/Email/Age data — NOT fabricated labels like 'Total Posts', 'Followers', or 'Joined' which don't exist in the source.`,
+            `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers like 123, no TODO/placeholder comments) — all displayed values must come from props.`,
           ];
         }
       }

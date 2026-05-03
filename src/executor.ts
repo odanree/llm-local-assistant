@@ -875,7 +875,7 @@ export class Executor {
 
         // Detect orchestrator/composition steps: when the step description explicitly says
         // to compose, render, or import the sub-components, sibling imports are intentional.
-        const compositionSignals = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+        const compositionSignals = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
         const isCompositionStep = compositionSignals.test(step.description ?? '') || compositionSignals.test(step.prompt ?? '');
 
         const validator = new ArchitectureValidator();
@@ -1034,7 +1034,7 @@ export class Executor {
     // Runs on every validation pass (including inner correction loop re-validations) so SmartAutoCorrection
     // cannot silently clear only the cn() error and declare victory while prop-drilling persists.
     if (filePath.endsWith('.tsx')) {
-      const compositionSignalsVGC = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+      const compositionSignalsVGC = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
       const isCoordinatorVGC = compositionSignalsVGC.test(step.description ?? '') || compositionSignalsVGC.test(step.prompt ?? '');
       if (isCoordinatorVGC) {
         const hasPropDrilledUserVGC = /(?:^|\s|\()(?:user|currentUser)\s*:\s*User\b/.test(content);
@@ -2294,7 +2294,7 @@ export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
 
     // Detect if this step is a composition/orchestrator step — only those should import
     // previously created sibling components. Peer steps must NOT import each other.
-    const compositionSignalsCtx = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const compositionSignalsCtx = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionCtx = compositionSignalsCtx.test(step.description ?? '') || compositionSignalsCtx.test(step.prompt ?? '');
 
     for (const filePath of previouslyCreatedFiles) {
@@ -2921,7 +2921,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     // dot-access) to avoid collecting style/CSS property names as false data fields.
     // This prevents LLM from using step-description-invented props (imageUrl, totalPosts,
     // followersCount, joinDate) when source only uses name/email/age.
-    const compositionSignalsSub = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const compositionSignalsSub = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionSub = compositionSignalsSub.test(step.description ?? '') || compositionSignalsSub.test(step.prompt ?? '');
     const isSubcomponent = step.path!.endsWith('.tsx') && step.path!.includes('/components/') && !isCompositionSub;
     let subcomponentFieldOverrideSection = '';
@@ -3768,7 +3768,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       // from hook-based data fetching to prop-drilling — even if sourceCustomHooks is empty
       // (matchingSource missing). Check structurally: user: User prop without userId: string.
       {
-        const compositionSignalsTsc = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+        const compositionSignalsTsc = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
         const isCoordinatorTsc = (compositionSignalsTsc.test(step.description ?? '') || compositionSignalsTsc.test(step.prompt ?? '')) && step.path?.endsWith('.tsx');
         if (isCoordinatorTsc) {
           const fixIntroducedPropDrilling =
