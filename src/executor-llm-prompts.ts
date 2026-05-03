@@ -178,6 +178,54 @@ export async function generateAcceptanceCriteria(
       ];
     }
 
+    // Short-circuit: non-coordinator .tsx sub-components with source content available.
+    // Same contradiction as the schema bio loop: LLM criteria say "imageUrl, userId, joinDate"
+    // (from the step description), the PROPS FIELD OVERRIDE says "only name, email, age"
+    // (from the source). The validator enforces the criteria and forces the LLM to add
+    // invented props. Fix: derive criteria from source fields, bypassing the LLM generator.
+    const compositionSignalsCriteria = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const isCompositionStepCriteria = compositionSignalsCriteria.test(step.description ?? '') || compositionSignalsCriteria.test(step.prompt ?? '');
+    const isSubcomponentCriteria = step.path?.endsWith('.tsx')
+      && step.path?.includes('/components/')
+      && !isCompositionStepCriteria;
+    if (isSubcomponentCriteria && sourceContent) {
+      // Identify the primary data entity (same logic as executor.ts sub-component override)
+      const inEntityCandidatePat = /'(\w+)'\s+in\s+(\w+)/g;
+      const entityCount = new Map<string, number>();
+      for (const m of sourceContent.matchAll(inEntityCandidatePat)) {
+        entityCount.set(m[2], (entityCount.get(m[2]) ?? 0) + 1);
+      }
+      const hookDestructPat = /const\s*\{([^}]+)\}\s*=\s*use\w+\(/g;
+      for (const m of sourceContent.matchAll(hookDestructPat)) {
+        const names = m[1].split(',').map(n => n.trim().split(/\s+/)[0]);
+        for (const n of names) {
+          if (n && /^[a-z]/.test(n) && !['loading', 'error', 'data', 'isLoading', 'refetch', 'mutate'].includes(n)) {
+            entityCount.set(n, (entityCount.get(n) ?? 0) + 2);
+          }
+        }
+      }
+      const primaryEntity = [...entityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (primaryEntity) {
+        const inPat = new RegExp(`'(\\w+)'\\s+in\\s+\\b${primaryEntity}\\b`, 'g');
+        const dotPat = new RegExp(`\\b${primaryEntity}\\.(\\w+)\\b`, 'g');
+        const castDotPat = new RegExp(`\\b${primaryEntity}\\b[^.]*\\)\\.(\\w+)\\b`, 'g');
+        const srcFields = [...new Set([
+          ...[...sourceContent.matchAll(inPat)].map(m => m[1]),
+          ...[...sourceContent.matchAll(dotPat)].map(m => m[1]),
+          ...[...sourceContent.matchAll(castDotPat)].map(m => m[1]),
+        ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
+        if (srcFields.length > 0) {
+          const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
+          return [
+            `Props interface uses ONLY source-derived fields (${srcFields.join(', ')}) — NOT invented props like ${inventedExamples}`,
+            `Exports named \`${stepBaseName}\` component with a local props interface`,
+            `Accepts optional \`className\` prop only if the component has conditional styling`,
+            `No hook calls, no store imports — receives all data as props`,
+          ];
+        }
+      }
+    }
+
     const isHOCFile = isHOCComponent(step.path);
     const hookLine = isPureLogicFile
       ? ` PURE LOGIC FILE: this file contains NO JSX and NO UI rendering. NEVER include cn, className, React component, or styling imports in criteria. Only check for correct TypeScript types, exported function signatures, and logic correctness.${mockAuthNote}`
