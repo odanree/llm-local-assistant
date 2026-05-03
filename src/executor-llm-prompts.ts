@@ -221,6 +221,8 @@ export async function generateAcceptanceCriteria(
             `Exports named \`${stepBaseName}\` component with a local props interface`,
             `Accepts optional \`className\` prop only if the component has conditional styling`,
             `No hook calls, no store imports — receives all data as props`,
+            `Every prop (${srcFields.join(', ')}) MUST appear in the JSX render body — a prop in the interface that is never referenced in JSX is WRONG.`,
+            `No 'N/A' placeholder text, no hardcoded URL string literals (e.g. 'default-avatar-url'), no TODO/placeholder comments — render the actual prop values. If no image URL exists in source, render name as text or initials, NOT an <img> with a fake src.`,
           ];
         }
       }
