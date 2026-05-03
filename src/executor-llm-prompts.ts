@@ -217,11 +217,11 @@ export async function generateAcceptanceCriteria(
         if (srcFields.length > 0) {
           const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
           return [
-            `Props interface MUST declare these source-derived fields: ${srcFields.join(', ')} — AND must NOT include invented fields like ${inventedExamples}. An empty or minimal interface with only className is WRONG.`,
+            `Props interface must use ONLY source-derived fields from (${srcFields.join(', ')}) — include the fields this component actually renders, NO invented fields like ${inventedExamples}. Do not declare a prop you do not render.`,
             `Exports named \`${stepBaseName}\` component with a local props interface`,
             `Accepts optional \`className\` prop only if the component has conditional styling`,
             `No hook calls, no store imports — receives all data as props`,
-            `Every prop (${srcFields.join(', ')}) MUST appear in the JSX render body — a prop in the interface that is never referenced in JSX is WRONG.`,
+            `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare`,
             `No hardcoded data literals (no 'N/A', no fake URLs like '/placeholder.jpg', no invented numbers like 123 or dates like '2023-01-01', no TODO/placeholder comments) — all displayed values must come from props. If no image URL exists in source, render name as text/initials, NOT an <img> with a fake src.`,
           ];
         }

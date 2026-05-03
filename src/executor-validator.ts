@@ -781,25 +781,50 @@ export function validateCommonPatterns(content: string, filePath: string): strin
     }
   }
 
-  // Detect destructured props that are never used in the component body.
-  // Catches: `email` declared + destructured but no `{email}` in JSX — the LLM accepted
-  // the correct field names after Criterion 1 corrections but didn't render them.
+  // Detect props that are declared in the interface OR destructured in the signature but
+  // never used in the component body. Two checks:
+  //  A) Interface props: declared in `interface FooProps { name: string; ... }` but
+  //     not referenced anywhere after the interface closing brace.
+  //  B) Destructured props: in `({ name, email })` but not in the component body.
+  // The LLM's evasion was to declare email/age in the interface but not destructure them —
+  // that satisfies criterion regex but leaves them unreachable. Catch it here.
   // Only runs for PascalCase-named .tsx components (not coordinator/layout/HOC files).
   if (filePath.endsWith('.tsx') && filePath.includes('/components/')) {
+    const skipProps = new Set(['className', 'children', 'style', 'key', 'ref', 'id', 'role',
+      'onClick', 'onChange', 'onSubmit', 'onBlur', 'onFocus', 'onMouseEnter', 'onMouseLeave',
+      'disabled', 'type', 'href', 'target', 'loading', 'error', 'isLoading']);
+
+    // Check A: interface props not used after the interface closes
+    const interfaceMatch = content.match(/interface\s+\w+Props\s*\{([^}]+)\}/);
+    if (interfaceMatch) {
+      const interfaceEnd = content.indexOf(interfaceMatch[0]) + interfaceMatch[0].length;
+      const afterInterface = content.slice(interfaceEnd);
+      const interfaceProps = interfaceMatch[1]
+        .split('\n')
+        .map(l => l.trim().replace(/\/\/.*$/, '').split(/\s*[?:]/)[0].trim())
+        .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
+      for (const prop of interfaceProps) {
+        if (!new RegExp(`\\b${prop}\\b`).test(afterInterface)) {
+          errors.push(
+            `❌ Unused prop '${prop}': declared in the props interface but never referenced in the component body. ` +
+            `Either render it in JSX (e.g. <span>{${prop}}</span>) or remove it from the interface.`
+          );
+        }
+      }
+    }
+
+    // Check B: destructured props not in component body (catches destructure-without-render)
     const compDestructMatch = content.match(/export\s+const\s+[A-Z]\w*\s*(?::[^=]+)?\s*=\s*\(\s*\{([^}]+)\}/);
     if (compDestructMatch) {
-      const skipProps = new Set(['className', 'children', 'style', 'key', 'ref', 'id', 'role',
-        'onClick', 'onChange', 'onSubmit', 'onBlur', 'onFocus', 'onMouseEnter', 'onMouseLeave', 'disabled', 'type', 'href', 'target']);
       const destructured = compDestructMatch[1]
         .split(',')
         .map(s => s.trim().split(/\s*[=:?]/)[0].trim())
         .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
-
       if (destructured.length > 0) {
         const matchEnd = content.indexOf(compDestructMatch[0]) + compDestructMatch[0].length;
         const componentBody = content.slice(matchEnd);
-        const unusedProps = destructured.filter(name => !new RegExp(`\\b${name}\\b`).test(componentBody));
-        for (const prop of unusedProps) {
+        const unusedDestructured = destructured.filter(name => !new RegExp(`\\b${name}\\b`).test(componentBody));
+        for (const prop of unusedDestructured) {
           errors.push(
             `❌ Unused prop '${prop}': destructured in the component signature but never referenced ` +
             `in the component body. Render it in JSX (e.g. <span>{${prop}}</span>) or remove it ` +
