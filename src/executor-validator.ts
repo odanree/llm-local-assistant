@@ -781,6 +781,78 @@ export function validateCommonPatterns(content: string, filePath: string): strin
     }
   }
 
+  // Detect props that are declared in the interface OR destructured in the signature but
+  // never used in the component body. Two checks:
+  //  A) Interface props: declared in `interface FooProps { name: string; ... }` but
+  //     not referenced anywhere after the interface closing brace.
+  //  B) Destructured props: in `({ name, email })` but not in the component body.
+  // Strips comments before checking — otherwise `// email not used` or `{/* {email} */}`
+  // would satisfy the word-boundary test and produce a false negative.
+  // Only runs for PascalCase-named .tsx components (not coordinator/layout/HOC files).
+  if (filePath.endsWith('.tsx') && filePath.includes('/components/')) {
+    const skipProps = new Set(['className', 'children', 'style', 'key', 'ref', 'id', 'role',
+      'onClick', 'onChange', 'onSubmit', 'onBlur', 'onFocus', 'onMouseEnter', 'onMouseLeave',
+      'disabled', 'type', 'href', 'target', 'loading', 'error', 'isLoading']);
+
+    // Helper: strip all comment forms before word-boundary checking.
+    // Without this, `// email is omitted` or `{/* {email} */}` counts as a "usage".
+    const stripComments = (src: string) => src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')   // JSX block comments {/* ... */}
+      .replace(/\/\*[\s\S]*?\*\//g, '')        // C-style block comments /* ... */
+      .replace(/\/\/.*/g, '');                 // line comments // ...
+
+    // Check A: interface props not used after the interface closes
+    const interfaceMatch = content.match(/interface\s+\w+Props\s*\{([^}]+)\}/);
+    if (interfaceMatch) {
+      const interfaceEnd = content.indexOf(interfaceMatch[0]) + interfaceMatch[0].length;
+      const afterInterface = stripComments(content.slice(interfaceEnd));
+      const interfaceProps = interfaceMatch[1]
+        .split('\n')
+        .map(l => l.trim().replace(/\/\/.*$/, '').split(/\s*[?:]/)[0].trim())
+        .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
+      for (const prop of interfaceProps) {
+        if (!new RegExp(`\\b${prop}\\b`).test(afterInterface)) {
+          errors.push(
+            `❌ Unused prop '${prop}': declared in the props interface but never referenced in the component body. ` +
+            `Either render it in JSX (e.g. <span>{${prop}}</span>) or remove it from the interface.`
+          );
+        }
+      }
+    }
+
+    // Check B: destructured props not in component body (catches destructure-without-render)
+    const compDestructMatch = content.match(/export\s+const\s+[A-Z]\w*\s*(?::[^=]+)?\s*=\s*\(\s*\{([^}]+)\}/);
+    if (compDestructMatch) {
+      const destructured = compDestructMatch[1]
+        .split(',')
+        .map(s => s.trim().split(/\s*[=:?]/)[0].trim())
+        .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
+      if (destructured.length > 0) {
+        const matchEnd = content.indexOf(compDestructMatch[0]) + compDestructMatch[0].length;
+        const componentBody = stripComments(content.slice(matchEnd));
+        const unusedDestructured = destructured.filter(name => !new RegExp(`\\b${name}\\b`).test(componentBody));
+        for (const prop of unusedDestructured) {
+          errors.push(
+            `❌ Unused prop '${prop}': destructured in the component signature but never referenced ` +
+            `in the component body. Render it in JSX (e.g. <span>{${prop}}</span>) or remove it ` +
+            `from the interface and signature.`
+          );
+        }
+      }
+    }
+
+    // Check C: empty or broken img src — <img src=""> or <img src='' renders nothing.
+    // Also catches the escalating degradation pattern: placeholder URL → empty string.
+    const hasEmptyImgSrc = /<img[^>]*src\s*=\s*(?:""|''|\{["']["']\})[^>]*>/.test(content);
+    if (hasEmptyImgSrc) {
+      errors.push(
+        `❌ Broken img src: <img src=""> renders a broken image icon. ` +
+        `If no image URL is available, remove the <img> element and render the user's name or initials as text instead: ` +
+        `<div className={cn('...')}>{name.charAt(0).toUpperCase()}</div>`
+      );
+    }
+  }
+
   return errors;
 }
 

@@ -2054,6 +2054,12 @@ export class Executor {
     if (guardResult) return guardResult;
 
     try {
+      // Clear conversation history before each write step to prevent context accumulation
+      // from previous steps hitting the 32k token limit by steps 4-5 of a decomposition plan.
+      // Each step's prompt is self-contained (includes full source + criteria); no cross-step
+      // history is needed. Correction loops within a step still benefit from the fresh context.
+      this.config.llmClient.clearHistory();
+
       // Stage 2: Multi-step context (previously created files, READ contents, dependency scan)
       const { multiStepContext, sourceReadContents } = await this.buildMultiStepContext(step, workspaceUri);
 
@@ -2127,6 +2133,23 @@ export type ${entityCap} = z.infer<typeof ${schemaVar}>;
 
 export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
 `;
+        }
+      }
+
+      // Stage 4.5c: Pre-validation deterministic fix for bare string classNames.
+      // The validator fires when cn() is imported but className="..." is used bare.
+      // The LLM correction loop cannot reliably fix this — it reintroduces it every pass.
+      // Wrapping deterministically here costs nothing (cn('x') === 'x') and prevents the loop.
+      const importsCnModule = /import\s+\{[^}]*\bcn\b[^}]*\}\s+from\s+['"][^'"]*\/cn['"]/.test(contentAfterPreFix)
+        || /import\s+cn\s+from\s+['"][^'"]*\/cn['"]/.test(contentAfterPreFix);
+      if (importsCnModule && step.path?.match(/\.[jt]sx?$/)) {
+        const before = contentAfterPreFix;
+        contentAfterPreFix = contentAfterPreFix
+          .replace(/\bclassName\s*=\s*"([^"]*)"/g, "className={cn('$1')}")
+          .replace(/\bclassName\s*=\s*'([^']*)'/g, 'className={cn("$1")}')
+          .replace(/\bclassName\s*=\s*\{["']([^"']*)["']\}/g, "className={cn('$1')}");
+        if (contentAfterPreFix !== before) {
+          console.log(`[Executor] Pre-validation: wrapped bare string classNames in cn() for ${step.path}`);
         }
       }
 
@@ -3358,6 +3381,10 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     hasJsxInTsError: boolean,
     acceptanceCriteria: string[]
   ): Promise<string> {
+    // Clear history before each correction pass — the correction prompt is fully self-contained
+    // (includes full current content + errors), so prior-pass messages only inflate context.
+    this.config.llmClient.clearHistory();
+
     const formattedErrors = lastCriticalErrors.map((e, i) => {
       if (e.includes('Hook') && e.includes('imported but never called')) {
         const hookMatch = e.match(/Hook '(\w+)'/);
@@ -3667,6 +3694,21 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             `OR narrow inline: '(user as User).name'. ` +
             `DO NOT change the hook call or restructure the component. DO NOT use 'any'.\n`
           : '';
+        // TS2304 "Cannot find name 'x'" in a component usually means a prop is declared in the
+        // interface but missing from the function destructuring. The surgical fix patches the usage
+        // site, not the destructuring line — point the LLM at the right fix location.
+        const ts2304Names = tscErrors
+          .filter(e => e.includes('TS2304') || e.includes("Cannot find name"))
+          .map(e => { const m = e.match(/Cannot find name '(\w+)'/); return m?.[1]; })
+          .filter((n): n is string => !!n);
+        const ts2304Hint = ts2304Names.length > 0
+          ? `\nTS2304 FIX (Cannot find name): The variable(s) [${ts2304Names.join(', ')}] are used in the ` +
+            `JSX but are not in scope. They are almost certainly declared in the props interface ` +
+            `but missing from the function's destructuring pattern. ` +
+            `Fix: add [${ts2304Names.join(', ')}] to the destructuring on the function signature line ` +
+            `(e.g. change ({ name, className }) to ({ name, ${ts2304Names.join(', ')}, className })). ` +
+            `DO NOT delete the JSX that uses them — just add them to the destructuring.\n`
+          : '';
         const fixPrompt =
           `The following TypeScript file has compiler errors reported by tsc.\n\n` +
           `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
@@ -3676,6 +3718,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           `use specific types or 'unknown' instead. ` +
           hookNames +
           ts2339Hint +
+          ts2304Hint +
           `Provide ONLY the corrected code. No explanations, no markdown fences.`;
         const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
         if (!fixResponse.success || !fixResponse.message?.trim()) break;
