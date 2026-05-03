@@ -217,7 +217,7 @@ export async function generateAcceptanceCriteria(
         if (srcFields.length > 0) {
           const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
           return [
-            `Props interface uses ONLY source-derived fields (${srcFields.join(', ')}) — NOT invented props like ${inventedExamples}`,
+            `Props interface MUST declare these source-derived fields: ${srcFields.join(', ')} — AND must NOT include invented fields like ${inventedExamples}. An empty or minimal interface with only className is WRONG.`,
             `Exports named \`${stepBaseName}\` component with a local props interface`,
             `Accepts optional \`className\` prop only if the component has conditional styling`,
             `No hook calls, no store imports — receives all data as props`,
