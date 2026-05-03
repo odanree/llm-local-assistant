@@ -3667,6 +3667,21 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             `OR narrow inline: '(user as User).name'. ` +
             `DO NOT change the hook call or restructure the component. DO NOT use 'any'.\n`
           : '';
+        // TS2304 "Cannot find name 'x'" in a component usually means a prop is declared in the
+        // interface but missing from the function destructuring. The surgical fix patches the usage
+        // site, not the destructuring line — point the LLM at the right fix location.
+        const ts2304Names = tscErrors
+          .filter(e => e.includes('TS2304') || e.includes("Cannot find name"))
+          .map(e => { const m = e.match(/Cannot find name '(\w+)'/); return m?.[1]; })
+          .filter((n): n is string => !!n);
+        const ts2304Hint = ts2304Names.length > 0
+          ? `\nTS2304 FIX (Cannot find name): The variable(s) [${ts2304Names.join(', ')}] are used in the ` +
+            `JSX but are not in scope. They are almost certainly declared in the props interface ` +
+            `but missing from the function's destructuring pattern. ` +
+            `Fix: add [${ts2304Names.join(', ')}] to the destructuring on the function signature line ` +
+            `(e.g. change ({ name, className }) to ({ name, ${ts2304Names.join(', ')}, className })). ` +
+            `DO NOT delete the JSX that uses them — just add them to the destructuring.\n`
+          : '';
         const fixPrompt =
           `The following TypeScript file has compiler errors reported by tsc.\n\n` +
           `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
@@ -3676,6 +3691,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           `use specific types or 'unknown' instead. ` +
           hookNames +
           ts2339Hint +
+          ts2304Hint +
           `Provide ONLY the corrected code. No explanations, no markdown fences.`;
         const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
         if (!fixResponse.success || !fixResponse.message?.trim()) break;
