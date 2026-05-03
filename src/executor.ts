@@ -2136,6 +2136,23 @@ export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
         }
       }
 
+      // Stage 4.5c: Pre-validation deterministic fix for bare string classNames.
+      // The validator fires when cn() is imported but className="..." is used bare.
+      // The LLM correction loop cannot reliably fix this — it reintroduces it every pass.
+      // Wrapping deterministically here costs nothing (cn('x') === 'x') and prevents the loop.
+      const importsCnModule = /import\s+\{[^}]*\bcn\b[^}]*\}\s+from\s+['"][^'"]*\/cn['"]/.test(contentAfterPreFix)
+        || /import\s+cn\s+from\s+['"][^'"]*\/cn['"]/.test(contentAfterPreFix);
+      if (importsCnModule && step.path?.match(/\.[jt]sx?$/)) {
+        const before = contentAfterPreFix;
+        contentAfterPreFix = contentAfterPreFix
+          .replace(/\bclassName\s*=\s*"([^"]*)"/g, "className={cn('$1')}")
+          .replace(/\bclassName\s*=\s*'([^']*)'/g, 'className={cn("$1")}')
+          .replace(/\bclassName\s*=\s*\{["']([^"']*)["']\}/g, "className={cn('$1')}");
+        if (contentAfterPreFix !== before) {
+          console.log(`[Executor] Pre-validation: wrapped bare string classNames in cn() for ${step.path}`);
+        }
+      }
+
       // Stage 5: Pre-write validation + auto-correction loop
       const filePath = vscode.Uri.joinPath(workspaceUri, step.path);
       const matchingSource = sourceReadContents.find(
@@ -3364,6 +3381,10 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     hasJsxInTsError: boolean,
     acceptanceCriteria: string[]
   ): Promise<string> {
+    // Clear history before each correction pass — the correction prompt is fully self-contained
+    // (includes full current content + errors), so prior-pass messages only inflate context.
+    this.config.llmClient.clearHistory();
+
     const formattedErrors = lastCriticalErrors.map((e, i) => {
       if (e.includes('Hook') && e.includes('imported but never called')) {
         const hookMatch = e.match(/Hook '(\w+)'/);
