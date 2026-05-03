@@ -781,6 +781,35 @@ export function validateCommonPatterns(content: string, filePath: string): strin
     }
   }
 
+  // Detect destructured props that are never used in the component body.
+  // Catches: `email` declared + destructured but no `{email}` in JSX — the LLM accepted
+  // the correct field names after Criterion 1 corrections but didn't render them.
+  // Only runs for PascalCase-named .tsx components (not coordinator/layout/HOC files).
+  if (filePath.endsWith('.tsx') && filePath.includes('/components/')) {
+    const compDestructMatch = content.match(/export\s+const\s+[A-Z]\w*\s*(?::[^=]+)?\s*=\s*\(\s*\{([^}]+)\}/);
+    if (compDestructMatch) {
+      const skipProps = new Set(['className', 'children', 'style', 'key', 'ref', 'id', 'role',
+        'onClick', 'onChange', 'onSubmit', 'onBlur', 'onFocus', 'onMouseEnter', 'onMouseLeave', 'disabled', 'type', 'href', 'target']);
+      const destructured = compDestructMatch[1]
+        .split(',')
+        .map(s => s.trim().split(/\s*[=:?]/)[0].trim())
+        .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
+
+      if (destructured.length > 0) {
+        const matchEnd = content.indexOf(compDestructMatch[0]) + compDestructMatch[0].length;
+        const componentBody = content.slice(matchEnd);
+        const unusedProps = destructured.filter(name => !new RegExp(`\\b${name}\\b`).test(componentBody));
+        for (const prop of unusedProps) {
+          errors.push(
+            `❌ Unused prop '${prop}': destructured in the component signature but never referenced ` +
+            `in the component body. Render it in JSX (e.g. <span>{${prop}}</span>) or remove it ` +
+            `from the interface and signature.`
+          );
+        }
+      }
+    }
+  }
+
   return errors;
 }
 
