@@ -2054,6 +2054,12 @@ export class Executor {
     if (guardResult) return guardResult;
 
     try {
+      // Clear conversation history before each write step to prevent context accumulation
+      // from previous steps hitting the 32k token limit by steps 4-5 of a decomposition plan.
+      // Each step's prompt is self-contained (includes full source + criteria); no cross-step
+      // history is needed. Correction loops within a step still benefit from the fresh context.
+      this.config.llmClient.clearHistory();
+
       // Stage 2: Multi-step context (previously created files, READ contents, dependency scan)
       const { multiStepContext, sourceReadContents } = await this.buildMultiStepContext(step, workspaceUri);
 
