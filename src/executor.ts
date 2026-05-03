@@ -2410,6 +2410,16 @@ You MUST cast it to the schema type before accessing any properties:
 WRONG: <UserAvatar name={user.name} />         ← user is untyped, causes TS2339
 RIGHT:  <UserAvatar name={typedUser.name} />   ← typedUser is User, property access is safe
 NEVER pass a prop that is not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
+
+NO HARDCODED DATA: Every value passed to sub-components MUST come from the data hook return (typedUser.*).
+Do NOT build arrays with hardcoded labels or values. Build them from actual data.
+WRONG: <UserStats stats={[{label:'Total Users', value:'100'}, {label:'Status', value:'Active'}]} />
+RIGHT:  <UserStats stats={[
+  { label: 'Name',  value: typedUser.name },
+  { label: 'Email', value: typedUser.email },
+  { label: 'Age',   value: typedUser.age },
+]} />
+If a sub-component's prop type is unclear, use the scalar props directly (name={typedUser.name}).
 ` : ''}`
       : '';
 

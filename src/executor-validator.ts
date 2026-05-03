@@ -794,12 +794,16 @@ export function validateCommonPatterns(content: string, filePath: string): strin
       'onClick', 'onChange', 'onSubmit', 'onBlur', 'onFocus', 'onMouseEnter', 'onMouseLeave',
       'disabled', 'type', 'href', 'target', 'loading', 'error', 'isLoading']);
 
-    // Helper: strip all comment forms before word-boundary checking.
-    // Without this, `// email is omitted` or `{/* {email} */}` counts as a "usage".
+    // Helper: strip comments AND plain string literal contents before word-boundary checking.
+    // Without comment stripping, `// email is omitted` or `{/* {email} */}` counts as a "usage".
+    // Without string stripping, `"age-display"` inside a className satisfies `\bage\b` — a false negative.
+    // Template literals are intentionally left intact: `${age} years` IS a real usage.
     const stripComments = (src: string) => src
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')   // JSX block comments {/* ... */}
       .replace(/\/\*[\s\S]*?\*\//g, '')        // C-style block comments /* ... */
-      .replace(/\/\/.*/g, '');                 // line comments // ...
+      .replace(/\/\/.*/g, '')                  // line comments // ...
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')    // double-quoted string contents → ""
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''");   // single-quoted string contents → ''
 
     // Check A: interface props not used after the interface closes
     const interfaceMatch = content.match(/interface\s+\w+Props\s*\{([^}]+)\}/);

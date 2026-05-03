@@ -417,6 +417,22 @@ export class Planner {
                 s === misplacedSchema ? { ...s, path: corrected, targetFile: corrected } : s
               );
             }
+
+            // Case 3: schema-style file placed in validation/ — redirect to schemas/.
+            // LLM sometimes generates `src/validation/userSchema.ts` even when the workspace
+            // already has a `src/schemas/` directory. Always prefer schemas/ for consistency.
+            const inValidationDir = sortedSteps.find(s => {
+              if (s.action !== 'write' || !s.path) { return false; }
+              return s.path.includes('/validation/')
+                && (s.path.split('/').pop() ?? '') === requestedName;
+            });
+            if (inValidationDir && inValidationDir.path) {
+              const corrected = inValidationDir.path.replace('/validation/', '/schemas/');
+              console.log(`[Planner] Redirected schema validation/ → schemas/: ${inValidationDir.path} → ${corrected}`);
+              sortedSteps = sortedSteps.map(s =>
+                s === inValidationDir ? { ...s, path: corrected, targetFile: corrected } : s
+              );
+            }
           }
           // If the request explicitly names a .ts schema file but the LLM omitted a WRITE
           // step for it, inject a minimal schema WRITE step so it isn't silently skipped.
