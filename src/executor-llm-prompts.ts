@@ -262,13 +262,9 @@ export async function generateAcceptanceCriteria(
         ];
       }
 
-      // Fallback: no source fields available — enforce scalar-props contract generically.
-      return [
-        `Props interface uses ONLY scalar props (string/number/boolean) — do NOT accept a 'user' object or any User/schema type. Decompose user data into individual typed props.`,
-        `Exports named \`${stepBaseName}\` component with a local props interface`,
-        `Accepts optional \`className\` prop — apply ONLY to the outermost root element`,
-        `No hook calls, no store imports — receives all data as props`,
-      ];
+      // No avatar/stats match and no source fields — fall through to the LLM generator below.
+      // Only avatar-like and stats-like components get deterministic criteria unconditionally;
+      // other sub-components still use the LLM when no source content is available.
     }
 
     const isHOCFile = isHOCComponent(step.path);
