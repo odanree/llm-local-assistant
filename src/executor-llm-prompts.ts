@@ -172,76 +172,103 @@ export async function generateAcceptanceCriteria(
         : `fields that match what the source component actually accesses — no invented fields`;
       return [
         `Exports \`${schemaFileBase}\` as a Zod z.object() with ${fieldList}`,
+        `Use precise Zod validators for known field semantics: email fields → z.string().email(), URL fields → z.string().url(). Use plain z.string() only for generic string fields.`,
         `Exports \`${typeCap}\` TypeScript type via z.infer<typeof ${schemaFileBase}>`,
         `Exports \`validate${typeCap}\` function that calls ${schemaFileBase}.parse(data)`,
         `No JSX, no React imports, no component code — pure Zod validation file`,
       ];
     }
 
-    // Short-circuit: non-coordinator .tsx sub-components with source content available.
-    // Same contradiction as the schema bio loop: LLM criteria say "imageUrl, userId, joinDate"
-    // (from the step description), the PROPS FIELD OVERRIDE says "only name, email, age"
-    // (from the source). The validator enforces the criteria and forces the LLM to add
-    // invented props. Fix: derive criteria from source fields, bypassing the LLM generator.
+    // Short-circuit: non-coordinator .tsx sub-components always get deterministic criteria.
+    // NEVER let the LLM criteria generator run for sub-components — step descriptions like
+    // "accepting a user object" produce criteria that oscillate against SCHEMA COUPLING VIOLATION.
     const compositionSignalsCriteria = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionStepCriteria = compositionSignalsCriteria.test(step.description ?? '') || compositionSignalsCriteria.test(step.prompt ?? '');
     const isSubcomponentCriteria = step.path?.endsWith('.tsx')
       && step.path?.includes('/components/')
       && !isCompositionStepCriteria;
-    if (isSubcomponentCriteria && sourceContent) {
-      // Identify the primary data entity (same logic as executor.ts sub-component override)
-      const inEntityCandidatePat = /'(\w+)'\s+in\s+(\w+)/g;
-      const entityCount = new Map<string, number>();
-      for (const m of sourceContent.matchAll(inEntityCandidatePat)) {
-        entityCount.set(m[2], (entityCount.get(m[2]) ?? 0) + 1);
+    if (isSubcomponentCriteria) {
+      const compNameLower = stepBaseName.toLowerCase();
+      const isAvatarLike = compNameLower.includes('avatar') || compNameLower.includes('photo') || compNameLower.includes('image');
+      const isStatsLike = /stats|metrics|detail|info|summary/i.test(compNameLower);
+      const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
+
+      // Avatar always gets prescriptive name-only criteria — regardless of source content.
+      if (isAvatarLike) {
+        return [
+          `Props interface must be EXACTLY \`interface ${stepBaseName}Props { name: string; className?: string; }\` — nothing more. Do NOT extend React.HTMLAttributes, HTMLDivElement, or any base type. Do NOT add \`...props\` spread. Do NOT accept email, age, imageUrl, or any field beyond name.`,
+          `Exports named \`${stepBaseName}\` component — renders a SINGLE initial as text: {name.charAt(0).toUpperCase()} inside a div with a visible background (e.g. className="bg-gray-200 rounded-full flex items-center justify-center w-10 h-10"). Do NOT split by spaces, do NOT generate multiple initials — one character only.`,
+          `Accepts optional \`className\` prop — merge it into the outermost root element using cn(), e.g. cn('bg-gray-200 rounded-full flex items-center justify-center w-10 h-10', className). Apply ONLY to the outermost root element, nowhere else.`,
+          `No hook calls, no store imports — receives all data as props`,
+          `Must NOT use <img> tags — no image URL exists in the source. Render a div/span with the user's initial as a text avatar.`,
+          `No hardcoded data literals (no fake URLs, no invented numbers, no hardcoded date strings) — all displayed values must come from props.`,
+        ];
       }
-      const hookDestructPat = /const\s*\{([^}]+)\}\s*=\s*use\w+\(/g;
-      for (const m of sourceContent.matchAll(hookDestructPat)) {
-        const names = m[1].split(',').map(n => n.trim().split(/\s+/)[0]);
-        for (const n of names) {
-          if (n && /^[a-z]/.test(n) && !['loading', 'error', 'data', 'isLoading', 'refetch', 'mutate'].includes(n)) {
-            entityCount.set(n, (entityCount.get(n) ?? 0) + 2);
+
+      // Try to derive source fields from READ step content for more specific criteria.
+      let srcFields: string[] = [];
+      if (sourceContent) {
+        const inEntityCandidatePat = /'(\w+)'\s+in\s+(\w+)/g;
+        const entityCount = new Map<string, number>();
+        for (const m of sourceContent.matchAll(inEntityCandidatePat)) {
+          entityCount.set(m[2], (entityCount.get(m[2]) ?? 0) + 1);
+        }
+        const hookDestructPat = /const\s*\{([^}]+)\}\s*=\s*use\w+\(/g;
+        for (const m of sourceContent.matchAll(hookDestructPat)) {
+          const names = m[1].split(',').map(n => n.trim().split(/\s+/)[0]);
+          for (const n of names) {
+            if (n && /^[a-z]/.test(n) && !['loading', 'error', 'data', 'isLoading', 'refetch', 'mutate'].includes(n)) {
+              entityCount.set(n, (entityCount.get(n) ?? 0) + 2);
+            }
           }
         }
-      }
-      const primaryEntity = [...entityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-      if (primaryEntity) {
-        const inPat = new RegExp(`'(\\w+)'\\s+in\\s+\\b${primaryEntity}\\b`, 'g');
-        const dotPat = new RegExp(`\\b${primaryEntity}\\.(\\w+)\\b`, 'g');
-        const castDotPat = new RegExp(`\\b${primaryEntity}\\b[^.]*\\)\\.(\\w+)\\b`, 'g');
-        const srcFields = [...new Set([
-          ...[...sourceContent.matchAll(inPat)].map(m => m[1]),
-          ...[...sourceContent.matchAll(dotPat)].map(m => m[1]),
-          ...[...sourceContent.matchAll(castDotPat)].map(m => m[1]),
-        ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
-        if (srcFields.length > 0) {
-          const compNameLower = stepBaseName.toLowerCase();
-          const isAvatarLike = compNameLower.includes('avatar') || compNameLower.includes('photo') || compNameLower.includes('image');
-          const inventedExamples = 'imageUrl, userId, id, joinDate, totalPosts, followersCount, bio, createdAt';
-
-          if (isAvatarLike) {
-            // Avatar components: prescribe exactly name for initials — no email/age (not visual).
-            // Permissive allowed-lists caused LLM to remove ALL props after Criterion 1 rejection.
-            return [
-              `Must accept exactly \`name: string\` prop — renders user initials as text (e.g. {name.charAt(0).toUpperCase()}). Do NOT accept email, age, imageUrl, or any non-visual field in the interface.`,
-              `Exports named \`${stepBaseName}\` component with a local props interface`,
-              `Accepts optional \`className\` prop only if the component has conditional styling — apply className ONLY to the outermost root element`,
-              `No hook calls, no store imports — receives all data as props`,
-              `Must NOT use <img> tags — no image URL exists in the source. Render a div/span with the user's initial (e.g. {name.charAt(0).toUpperCase()}) as a text avatar.`,
-              `No hardcoded data literals (no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers) — all displayed values must come from props.`,
-            ];
-          }
-
-          return [
-            `Props interface must use ONLY source-derived fields from (${srcFields.join(', ')}) — include the fields this component actually renders, NO invented fields like ${inventedExamples}. Do not declare a prop you do not render.`,
-            `Exports named \`${stepBaseName}\` component with a local props interface`,
-            `Accepts optional \`className\` prop only if the component has conditional styling — apply className ONLY to the outermost root element, never to inner children`,
-            `No hook calls, no store imports — receives all data as props`,
-            `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare. JSX labels must match props: if props are name/email/age, show Name/Email/Age data — NOT fabricated labels like 'Total Posts', 'Followers', or 'Joined' which don't exist in the source.`,
-            `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers like 123, no TODO/placeholder comments) — all displayed values must come from props.`,
-          ];
+        const primaryEntity = [...entityCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (primaryEntity) {
+          const inPat = new RegExp(`'(\\w+)'\\s+in\\s+\\b${primaryEntity}\\b`, 'g');
+          const dotPat = new RegExp(`\\b${primaryEntity}\\.(\\w+)\\b`, 'g');
+          const castDotPat = new RegExp(`\\b${primaryEntity}\\b[^.]*\\)\\.(\\w+)\\b`, 'g');
+          srcFields = [...new Set([
+            ...[...sourceContent.matchAll(inPat)].map(m => m[1]),
+            ...[...sourceContent.matchAll(dotPat)].map(m => m[1]),
+            ...[...sourceContent.matchAll(castDotPat)].map(m => m[1]),
+          ])].filter(f => f !== primaryEntity && f !== 'current' && f !== 'length' && !/^[A-Z]/.test(f));
         }
       }
+
+      // Stats components: filter out identity fields; use source fields if available.
+      if (isStatsLike) {
+        const identityFields = new Set(['name', 'title', 'label', 'displayName', 'firstName', 'lastName', 'fullName']);
+        const statsFields = srcFields.filter(f => !identityFields.has(f));
+        const fieldList = statsFields.length > 0 ? statsFields.join(', ') : 'email, age';
+        return [
+          `Props interface must use ONLY scalar fields (${fieldList}) with correct types — email: string, age: number (NOT string). Do NOT use array props (stats: Stat[], metrics: any[]) or nested objects. Do NOT add 'name' or identity fields. Do NOT accept a 'user' object. Do NOT extend any base interface. OVERRIDE: If the step description mentions followerCount, postsCount, joinDate, totalPosts, followersCount, or ANY field not explicitly listed above — IGNORE those descriptions. The ONLY valid fields are: ${fieldList}.`,
+          `Exports named \`${stepBaseName}\` component with a local props interface`,
+          `Accepts optional \`className\` prop declared DIRECTLY in the interface — do NOT use intersection types like \`UserStatsProps & { className?: string }\`. Apply className ONLY to the outermost root \`<div>\`, never to inner child elements.`,
+          `No hook calls, no store imports — receives all data as props`,
+          `Every prop in the interface must be destructured AND rendered in JSX — declare only what you display, render everything you declare. Use human-readable capitalized labels: email → 'Email:', age → 'Age:'. NEVER use the raw lowercase prop name as a display label.`,
+          `No hardcoded data literals (no 'N/A', no fake dates like 'Yesterday', 'Today', 'Jan 1, 2024', no invented numbers, no TODO/placeholder text) — all displayed values must come from props.`,
+        ];
+      }
+
+      // Default sub-component: use source fields if available, else generic scalar-props criteria.
+      if (srcFields.length > 0) {
+        return [
+          `Props interface must use ONLY source-derived fields from (${srcFields.join(', ')}) — NO invented fields like ${inventedExamples}. Do not declare a prop you do not render. Do NOT accept a 'user' object prop.`,
+          `Exports named \`${stepBaseName}\` component with a local props interface`,
+          `Accepts optional \`className\` prop only if the component has conditional styling — apply className ONLY to the outermost root element, never to inner children`,
+          `No hook calls, no store imports — receives all data as props`,
+          `Every prop declared in the interface must be destructured AND used in the JSX render body — declare only what you render, render everything you declare.`,
+          `No hardcoded data literals (no 'N/A', no src="" empty string, no fake URLs like '/placeholder.jpg' or 'https://via.placeholder.com', no invented numbers like 123, no hardcoded date strings like 'Yesterday' or 'Today', no TODO/placeholder comments) — all displayed values must come from props.`,
+        ];
+      }
+
+      // Fallback: no source fields available — enforce scalar-props contract generically.
+      return [
+        `Props interface uses ONLY scalar props (string/number/boolean) — do NOT accept a 'user' object or any User/schema type. Decompose user data into individual typed props.`,
+        `Exports named \`${stepBaseName}\` component with a local props interface`,
+        `Accepts optional \`className\` prop — apply ONLY to the outermost root element`,
+        `No hook calls, no store imports — receives all data as props`,
+      ];
     }
 
     const isHOCFile = isHOCComponent(step.path);
@@ -255,6 +282,8 @@ export async function generateAcceptanceCriteria(
       ? ' STRUCTURAL LAYOUT: This component is extracted from a source that may use inline styles (style={{}}), not Tailwind. Do NOT require cn() — require only: (1) Accepts children prop, (2) Correct props interface with isLoggedIn/theme/onLogout/isSidebarOpen/onToggleSidebar, (3) Renders Navigation conditionally based on isSidebarOpen, (4) Has header + sidebar + main + footer structure, (5) Renders children in the main area.'
       : isDecomposedNavigationCriteria
       ? ' PURE PRESENTATION NAVIGATION: This component receives all state as props (isLoggedIn, theme, onLogout). Do NOT require store imports. Require: (1) NavigationProps interface with isLoggedIn/theme/onLogout, (2) Uses <Link> for navigation (not useNavigate), (3) Shows accessible routes based on isLoggedIn prop, (4) Has logout button when isLoggedIn is true.'
+      : isCompositionStepCriteria
+      ? ' COMPOSITION COORDINATOR: This component orchestrates sub-components. Generate ONLY these criteria: (1) calls the data-fetching hook and destructures ONLY the values that hook actually returns (e.g. user, loading, error, updateUser) — do NOT require additional return values the hook does not export; do NOT require removing buttons or mutation handlers from the coordinator, (2) imports and renders each named sub-component, (3) validates data at runtime using userSchema.safeParse(user) — accesses typedUser via parsed.data, NEVER uses `user as User` type cast. FORBIDDEN criteria: do NOT generate any criterion requiring User.safeParse() or User.parse() — User is a TypeScript type alias (z.infer<typeof userSchema>), not a Zod schema object, so it has no runtime methods. Do NOT require removing mutation handlers or buttons. Do NOT require delegating every display element to a sub-component.'
       : '';
     const isTsxComponent = step.path.endsWith('.tsx') && !isPureLogicFile && !isNonVisual && !isHOCFile;
     // Only suggest children criterion for genuine layout/wrapper components.
@@ -583,7 +612,7 @@ export function buildSurgicalValidatorPrompt(
  * Returns null if no valid blocks are found.
  */
 export function applySurgicalValidatorPatches(content: string, patchText: string): string | null {
-  const blockRe = /<<<SEARCH\n([\s\S]*?)\n=====\n([\s\S]*?)\n>>>REPLACE/g;
+  const blockRe = /<<<SEARCH\n([\s\S]*?)\n={3,8}\n([\s\S]*?)\n>>>REPLACE/g;
   let result = content;
   let matched = false;
 

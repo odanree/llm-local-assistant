@@ -873,8 +873,66 @@ export function validateCommonPatterns(content: string, filePath: string): strin
       errors.push(
         `❌ Runtime-broken cn() call: \`cn(${styleObjectDotRefs[0]})\` passes a CSSProperties object to cn() ` +
         `— cn() only accepts strings. Do NOT copy the source's \`const styles = {...}\` object into the coordinator. ` +
-        `Remove the styles object and use Tailwind strings directly: className={cn('text-red-500 p-3')}.`
+        `Remove the styles object and use Tailwind strings directly: className="text-red-500 p-3".`
       );
+    }
+
+    // Check E: cn() called with a content string argument instead of a CSS class string.
+    // cn() joins CSS class names only. Passing text labels like 'Loading...', 'header', 'container'
+    // as cn() arguments produces invalid class names at runtime: className="p-4 Loading...".
+    // Pattern: cn('css-classes', 'ContentWord') or cn('css-classes', 'text...')
+    {
+      let foundCnContent = false;
+      const cnContentStringPat = /\bcn\s*\(([^)]*)\)/g;
+      for (const m of [...content.matchAll(cnContentStringPat)]) {
+        if (foundCnContent) break;
+        const argsStr = m[1];
+        const stringLitPat = /['"]([^'"]{2,})['"]/g;
+        for (const argM of [...argsStr.matchAll(stringLitPat)]) {
+          const val = argM[1];
+          // Flag: word starting with uppercase (content text, not a CSS class) OR contains '...'
+          if (/\b[A-Z]/.test(val) || /\.{3}/.test(val)) {
+            errors.push(
+              `❌ cn() called with content string "${val}" — cn() joins CSS class names only, NOT text labels. ` +
+              `WRONG: <div className={cn('p-4', 'Loading...')}> — ` +
+              `RIGHT: <div className="p-4">Loading...</div> (use plain className string; put text in JSX children)`
+            );
+            foundCnContent = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // Check F: Empty interface definition — leftover from correction attempts.
+    // An interface with no members is dead code and indicates an incomplete LLM generation.
+    {
+      const emptyInterfacePat = /\binterface\s+(\w+)\s*\{\s*\}/g;
+      for (const m of [...content.matchAll(emptyInterfacePat)]) {
+        errors.push(
+          `❌ Empty interface '${m[1]}' — remove this unused empty interface. ` +
+          `Every interface must declare at least one member or be deleted entirely.`
+        );
+      }
+    }
+
+    // Check G: Unreferenced non-Props interface — defined but never used.
+    // Common source: correction loop leaves a Stat/Item/Config interface behind after
+    // pivoting from array props (stats: Stat[]) to scalar props (email, age).
+    {
+      const interfacePat = /\binterface\s+(\w+)\s*\{[^}]+\}/g;
+      for (const m of [...content.matchAll(interfacePat)]) {
+        const name = m[1];
+        if (name.endsWith('Props')) continue; // component Props interface is always valid
+        // Count all occurrences of this name in the file (including the definition itself)
+        const occurrences = [...content.matchAll(new RegExp(`\\b${name}\\b`, 'g'))].length;
+        if (occurrences === 1) {
+          errors.push(
+            `❌ Unreferenced interface '${name}' — defined but never used. Remove it. ` +
+            `(Leftover from a previous generation attempt that used a different prop shape.)`
+          );
+        }
+      }
     }
   }
 

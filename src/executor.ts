@@ -1063,10 +1063,10 @@ export class Executor {
           // Infer likely scalar props from the filename so the correction message is actionable.
           const compName = filePath.split(/[\\/]/).pop()?.replace(/\.tsx?$/, '') ?? 'Component';
           const scalarExample = /[Aa]vatar/.test(compName)
-            ? `interface ${compName}Props { imageUrl: string; name: string; className?: string; }`
+            ? `interface ${compName}Props { name: string; className?: string; }`
             : /[Ss]tat/.test(compName)
-            ? `interface ${compName}Props { name: string; email: string; age: number; className?: string; }`
-            : `interface ${compName}Props { /* scalar fields from the user object */ className?: string; }`;
+            ? `interface ${compName}Props { email: string; age: number; className?: string; }`
+            : `interface ${compName}Props { /* scalar fields from the source */ className?: string; }`;
           errors.push(
             `❌ SCHEMA COUPLING VIOLATION: this sub-component accepts a 'user' object as a prop. ` +
             `Sub-components must NEVER accept an entire user object — use scalar props instead. ` +
@@ -2400,16 +2400,38 @@ data from the existing hook. DO NOT add any of the following:
 - Additional imports beyond what sub-components need
 - Any functionality not present in the original source
 Correct pattern: 1) call useUser(userId), 2) pass data to <UserAvatar> and <UserStats>, done.
+NAMED HANDLERS: Extract mutation callbacks as named functions placed AFTER guard clauses and AFTER the typedUser cast — do NOT use inline lambdas in JSX, do NOT declare them before the guards.
+  WRONG: const handleUpdate = () => ...; if (loading) return ...;  // handler before guards
+  RIGHT:  if (loading) return ...; if (error) return ...; if (!user) return ...;
+          const typedUser = user as User;
+          const handleUpdate = () => updateUser({ name: 'Updated Name' });
+          <button onClick={handleUpdate}>
+NO DUPLICATE RENDERING: Each sub-component owns its own display. If UserStats renders email and age, the coordinator MUST NOT also render <p>Email: ...</p> or <p>Age: ...</p> directly. Pass the data once to the sub-component and let it handle the display. Rendering the same field in both the sub-component and the coordinator is a duplication bug.
+LAYOUT HIERARCHY: Preserve the source file's visual order in the coordinator JSX:
+  1. Header row (flex container): UserAvatar + <h1>{typedUser.name}</h1> side-by-side
+  2. Statistics section below the header: <UserStats email={typedUser.email} age={typedUser.age} />
+  3. Action buttons at the bottom
+  Do NOT put UserStats in the same flex row as UserAvatar — they serve different roles (identity vs. detail).
+  WRONG: <div className="flex"><UserAvatar .../><UserStats .../></div><h1>...</h1>
+  RIGHT:  <div className="flex items-center"><UserAvatar .../><h1>...</h1></div><UserStats .../>
 
 TYPE SAFETY RULE (mandatory for coordinator): The data hook returns an untyped value (e.g. user: unknown).
-You MUST cast it to the schema type before accessing any properties:
-  import { User } from '../schemas/userSchema';
-  const { user, loading, error } = useUser(userId);
-  const typedUser = user as User;  // ← REQUIRED: cast before accessing .name / .email / .age
-  // Then use typedUser.name, typedUser.email, typedUser.age — NOT user.name, user.email, user.age
-WRONG: <UserAvatar name={user.name} />         ← user is untyped, causes TS2339
-RIGHT:  <UserAvatar name={typedUser.name} />   ← typedUser is User, property access is safe
-NEVER pass a prop that is not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
+Use \`userSchema.safeParse()\` for safe runtime validation — this is the PREFERRED pattern because it uses the schema at runtime (not just as a type) and handles invalid data gracefully:
+  import { userSchema } from '../schemas/userSchema';
+  const { user, loading, error, updateUser } = useUser(userId);
+  if (loading) return <div className="text-sm text-gray-500">Loading...</div>;
+  if (error) return <div className="text-sm text-red-500">{String(error)}</div>;
+  if (!user) return <div className="text-sm text-gray-400">No data</div>;
+  const parsed = userSchema.safeParse(user);                     // ← AFTER null guard
+  if (!parsed.success) return <div className="text-sm text-red-500">Invalid user data</div>;
+  const typedUser = parsed.data;                                 // ← typed as User, no cast needed
+  // Then use typedUser.name, typedUser.email, typedUser.age — all correctly typed via Zod inference
+WARNING:
+  WRONG: User.safeParse(user)         ← TS ERROR — User is a TypeScript type alias, NOT a Zod schema value
+  WRONG: user as User                 ← unsafe cast — bypasses validation; use safeParse instead
+  RIGHT:  userSchema.safeParse(user)  ← userSchema IS the Zod schema object; safeParse is a real runtime method
+Place ALL guard clauses (loading/error/null/parse-fail) BEFORE accessing typedUser.
+NEVER pass a prop not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
 
 NO HARDCODED DATA: Every value passed to sub-components MUST come from the data hook return (typedUser.*).
 Do NOT build arrays with hardcoded labels or values. Build them from actual data.
@@ -2424,7 +2446,12 @@ If a sub-component's prop type is unclear, use the scalar props directly (name={
 NO INLINE STYLES: The source may have a \`const styles = {...}\` object with inline styles.
 Do NOT copy it into the coordinator. Do NOT use style={{}} or style={styles.foo}.
 Do NOT write cn(styles.foo) — cn() accepts strings only, not CSSProperties objects.
-For loading/error states, use simple Tailwind strings: className={cn('text-red-500 p-3')}.
+For loading/error states, use plain JSX with a simple string className (no cn()):
+  if (loading) return <div className="text-sm text-gray-500">Loading...</div>;
+  if (error) return <div className="text-sm text-red-500">{String(error)}</div>;
+NEVER pass text content as a cn() argument — cn() joins CSS class strings only:
+  WRONG: <div className={cn('p-4 bg-yellow-100', 'Loading...')}> — 'Loading...' is not a CSS class
+  RIGHT: <div className="p-4 bg-yellow-100">Loading...</div>
 The coordinator is a thin composition layer — it should have minimal or no styling of its own.
 ` : ''}`
       : '';
@@ -3462,9 +3489,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
     if (!surgicalResponse.success) throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
     const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
-    if (patched) return patched;
-    // Patch parsing failed — strip fences and treat as whole-file fallback
+    // Only accept the patch if the extracted content is free of diff markers.
+    // If markers leaked into the extracted block the LLM embedded them inside the code body —
+    // fall through to the rewrite guard below.
+    if (patched && !/<<<SEARCH|>>>REPLACE/.test(patched)) return patched;
+    // Patch parsing failed or produced marker-contaminated content — treat as whole-file fallback.
     let result = surgicalResponse.message || '';
+    // Guard: if the raw response still contains unprocessed diff markers, the LLM returned
+    // a malformed patch (wrong separator, wrong block delimiters, etc.).
+    // Do NOT write diff text to disk — request a clean whole-file rewrite instead.
+    if (/<<<SEARCH|>>>REPLACE/.test(result)) {
+      this.config.onMessage?.(`⚠️ LLM returned malformed diff — requesting whole-file rewrite...`, 'info');
+      this.config.llmClient.clearHistory();
+      const rewritePrompt =
+        `Fix the following errors in: ${step.path}\n\n` +
+        `ERRORS:\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\n` +
+        `CURRENT CODE:\n${currentContent}\n\n` +
+        `Provide ONLY the complete corrected file. No diffs, no patch format, no SEARCH/REPLACE blocks, no markdown fences.`;
+      const rewriteResp = await this.config.llmClient.sendMessage(rewritePrompt);
+      result = rewriteResp.message || currentContent;
+    }
     const fence = result.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
     if (fence) result = fence[1];
     return result;

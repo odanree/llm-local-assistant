@@ -865,7 +865,9 @@ export class ArchitectureValidator {
       const names = importList
         .split(',')
         .map(s => s.trim())
-        .filter(s => /^use[A-Z]/.test(s));  // React hook convention: use + uppercase (excludes userService, usecase, etc.)
+        // React hook convention: use + uppercase (excludes userService, usecase, userSchema, etc.)
+        // Also skip anything imported from a schemas/ path — Zod schemas are not hooks.
+        .filter(s => /^use[A-Z]/.test(s) && !source.includes('/schemas/'));
       if (names.length > 0) {
         importedHooks.push({ names, source });
       }

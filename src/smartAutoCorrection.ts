@@ -783,6 +783,29 @@ export class SmartAutoCorrection {
         }
       }
 
+      // Fix: cn() called with content string argument — strip non-CSS args.
+      // The LLM treats cn() as a generic string joiner (e.g. cn('p-4', 'Loading...')).
+      // cn() only accepts CSS class strings; content text must go in JSX children.
+      // WRONG: cn('p-4 bg-yellow-100', 'Loading...')  RIGHT: cn('p-4 bg-yellow-100')
+      if (error.includes('cn() called with content string')) {
+        fixed = fixed.replace(
+          /\bcn\s*\(([^)]+)\)/g,
+          (_match, args) => {
+            const parts = (args as string).split(',').map((p: string) => p.trim());
+            const cleanParts = parts.filter((p: string) => {
+              const strMatch = p.match(/^['"]([^'"]+)['"]$/);
+              if (!strMatch) return true; // keep non-string-literal args (variables, expressions)
+              const val = strMatch[1];
+              // Remove if looks like content text: word starts with uppercase or contains '...'
+              return !/\b[A-Z]/.test(val) && !/\.{3}/.test(val);
+            });
+            const result = cleanParts.length > 0 ? cleanParts : parts.slice(0, 1);
+            return `cn(${result.join(', ')})`;
+          }
+        );
+        console.log(`[SmartAutoCorrection] Stripped content string arguments from cn() calls`);
+      }
+
       // Fix: Unclosed braces — deterministic tail append
       // Common cause: LLM truncated the output; missing closing braces are at the end.
       // Extract the count from the error "Syntax error: N unclosed brace(s)" and append N '}'.
@@ -902,6 +925,7 @@ export class SmartAutoCorrection {
       'Dead import',   // Added: cn/UI import in a .tsx file that never uses it
       'bare string literal',        // Deterministic: className="foo" → className={cn('foo')}
       'manual string concatenation', // Deterministic: className={`foo ${bar}`} → className={cn('foo', bar)}
+      'cn() called with content string', // Deterministic: cn('p-4', 'Loading...') → cn('p-4')
       'Config File Store Import',    // Deterministic: remove store imports from plain .ts config files
       "',' expected",                // Deterministic: semicolons used as commas in TS object literals (CSSProperties)
       'TS1005',                      // Same — TypeScript ',' expected error code
