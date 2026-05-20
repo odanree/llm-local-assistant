@@ -781,6 +781,161 @@ export function validateCommonPatterns(content: string, filePath: string): strin
     }
   }
 
+  // Detect props that are declared in the interface OR destructured in the signature but
+  // never used in the component body. Two checks:
+  //  A) Interface props: declared in `interface FooProps { name: string; ... }` but
+  //     not referenced anywhere after the interface closing brace.
+  //  B) Destructured props: in `({ name, email })` but not in the component body.
+  // Strips comments before checking — otherwise `// email not used` or `{/* {email} */}`
+  // would satisfy the word-boundary test and produce a false negative.
+  // Only runs for PascalCase-named .tsx components (not coordinator/layout/HOC files).
+  if (filePath.endsWith('.tsx') && filePath.includes('/components/')) {
+    const skipProps = new Set(['className', 'children', 'style', 'key', 'ref', 'id', 'role',
+      'onClick', 'onChange', 'onSubmit', 'onBlur', 'onFocus', 'onMouseEnter', 'onMouseLeave',
+      'disabled', 'type', 'href', 'target', 'loading', 'error', 'isLoading']);
+
+    // Helper: strip comments AND plain string literal contents before word-boundary checking.
+    // Without comment stripping, `// email is omitted` or `{/* {email} */}` counts as a "usage".
+    // Without string stripping, `"age-display"` inside a className satisfies `\bage\b` — a false negative.
+    // Template literals are intentionally left intact: `${age} years` IS a real usage.
+    const stripComments = (src: string) => src
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')   // JSX block comments {/* ... */}
+      .replace(/\/\*[\s\S]*?\*\//g, '')        // C-style block comments /* ... */
+      .replace(/\/\/.*/g, '')                  // line comments // ...
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')    // double-quoted string contents → ""
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''");   // single-quoted string contents → ''
+
+    // Check A: interface props not used after the interface closes
+    const interfaceMatch = content.match(/interface\s+\w+Props\s*\{([^}]+)\}/);
+    if (interfaceMatch) {
+      const interfaceEnd = content.indexOf(interfaceMatch[0]) + interfaceMatch[0].length;
+      const afterInterface = stripComments(content.slice(interfaceEnd));
+      const interfaceProps = interfaceMatch[1]
+        .split('\n')
+        .map(l => l.trim().replace(/\/\/.*$/, '').split(/\s*[?:]/)[0].trim())
+        .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
+      for (const prop of interfaceProps) {
+        if (!new RegExp(`\\b${prop}\\b`).test(afterInterface)) {
+          errors.push(
+            `❌ Unused prop '${prop}': declared in the props interface but never referenced in the component body. ` +
+            `Either render it in JSX (e.g. <span>{${prop}}</span>) or remove it from the interface.`
+          );
+        }
+      }
+    }
+
+    // Check B: destructured props not in component body (catches destructure-without-render)
+    const compDestructMatch = content.match(/export\s+const\s+[A-Z]\w*\s*(?::[^=]+)?\s*=\s*\(\s*\{([^}]+)\}/);
+    if (compDestructMatch) {
+      const destructured = compDestructMatch[1]
+        .split(',')
+        .map(s => s.trim().split(/\s*[=:?]/)[0].trim())
+        .filter(n => n && /^[a-z]/.test(n) && !skipProps.has(n));
+      if (destructured.length > 0) {
+        const matchEnd = content.indexOf(compDestructMatch[0]) + compDestructMatch[0].length;
+        const componentBody = stripComments(content.slice(matchEnd));
+        const unusedDestructured = destructured.filter(name => !new RegExp(`\\b${name}\\b`).test(componentBody));
+        for (const prop of unusedDestructured) {
+          errors.push(
+            `❌ Unused prop '${prop}': destructured in the component signature but never referenced ` +
+            `in the component body. Render it in JSX (e.g. <span>{${prop}}</span>) or remove it ` +
+            `from the interface and signature.`
+          );
+        }
+      }
+    }
+
+    // Check C: empty or broken img src — <img src=""> or <img src='' renders nothing.
+    // Also catches the escalating degradation pattern: placeholder URL → empty string.
+    const hasEmptyImgSrc = /<img[^>]*src\s*=\s*(?:""|''|\{["']["']\})[^>]*>/.test(content);
+    if (hasEmptyImgSrc) {
+      errors.push(
+        `❌ Broken img src: <img src=""> renders a broken image icon. ` +
+        `If no image URL is available, remove the <img> element and render the user's name or initials as text instead: ` +
+        `<div className={cn('...')}>{name.charAt(0).toUpperCase()}</div>`
+      );
+    }
+
+    // Check D: cn() called with a non-string argument (e.g. cn(styles.error) where styles is
+    // a CSSProperties object). cn() only accepts strings/arrays — passing an object silently
+    // produces an empty string class. Catches the coordinator anti-pattern of mixing a
+    // `const styles = {...}` inline-style object into cn() calls.
+    const cnObjectArgPattern = /\bcn\s*\([^)]*\b([a-z]\w*\.[a-z]\w*)\b[^)]*\)/g;
+    const cnObjectMatches = [...content.matchAll(cnObjectArgPattern)];
+    const styleObjectDotRefs = cnObjectMatches
+      .map(m => m[1])
+      .filter(ref => {
+        // Only flag if the referenced base variable looks like a styles/CSS object
+        const base = ref.split('.')[0];
+        return /^styles?$|^css$|^classNames?$|^style[sS]/.test(base);
+      });
+    if (styleObjectDotRefs.length > 0) {
+      errors.push(
+        `❌ Runtime-broken cn() call: \`cn(${styleObjectDotRefs[0]})\` passes a CSSProperties object to cn() ` +
+        `— cn() only accepts strings. Do NOT copy the source's \`const styles = {...}\` object into the coordinator. ` +
+        `Remove the styles object and use Tailwind strings directly: className="text-red-500 p-3".`
+      );
+    }
+
+    // Check E: cn() called with a content string argument instead of a CSS class string.
+    // cn() joins CSS class names only. Passing text labels like 'Loading...', 'header', 'container'
+    // as cn() arguments produces invalid class names at runtime: className="p-4 Loading...".
+    // Pattern: cn('css-classes', 'ContentWord') or cn('css-classes', 'text...')
+    {
+      let foundCnContent = false;
+      const cnContentStringPat = /\bcn\s*\(([^)]*)\)/g;
+      for (const m of [...content.matchAll(cnContentStringPat)]) {
+        if (foundCnContent) break;
+        const argsStr = m[1];
+        const stringLitPat = /['"]([^'"]{2,})['"]/g;
+        for (const argM of [...argsStr.matchAll(stringLitPat)]) {
+          const val = argM[1];
+          // Flag: word starting with uppercase (content text, not a CSS class) OR contains '...'
+          if (/\b[A-Z]/.test(val) || /\.{3}/.test(val)) {
+            errors.push(
+              `❌ cn() called with content string "${val}" — cn() joins CSS class names only, NOT text labels. ` +
+              `WRONG: <div className={cn('p-4', 'Loading...')}> — ` +
+              `RIGHT: <div className="p-4">Loading...</div> (use plain className string; put text in JSX children)`
+            );
+            foundCnContent = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // Check F: Empty interface definition — leftover from correction attempts.
+    // An interface with no members is dead code and indicates an incomplete LLM generation.
+    {
+      const emptyInterfacePat = /\binterface\s+(\w+)\s*\{\s*\}/g;
+      for (const m of [...content.matchAll(emptyInterfacePat)]) {
+        errors.push(
+          `❌ Empty interface '${m[1]}' — remove this unused empty interface. ` +
+          `Every interface must declare at least one member or be deleted entirely.`
+        );
+      }
+    }
+
+    // Check G: Unreferenced non-Props interface — defined but never used.
+    // Common source: correction loop leaves a Stat/Item/Config interface behind after
+    // pivoting from array props (stats: Stat[]) to scalar props (email, age).
+    {
+      const interfacePat = /\binterface\s+(\w+)\s*\{[^}]+\}/g;
+      for (const m of [...content.matchAll(interfacePat)]) {
+        const name = m[1];
+        if (name.endsWith('Props')) continue; // component Props interface is always valid
+        // Count all occurrences of this name in the file (including the definition itself)
+        const occurrences = [...content.matchAll(new RegExp(`\\b${name}\\b`, 'g'))].length;
+        if (occurrences === 1) {
+          errors.push(
+            `❌ Unreferenced interface '${name}' — defined but never used. Remove it. ` +
+            `(Leftover from a previous generation attempt that used a different prop shape.)`
+          );
+        }
+      }
+    }
+  }
+
   return errors;
 }
 

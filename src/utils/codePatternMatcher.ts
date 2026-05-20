@@ -381,6 +381,8 @@ export function findImportAndSyntaxIssuesPure(
   };
   // Arrow function params: (email) =>
   code.replace(/\(([^)]*)\)\s*=>/g, (_, params) => { addParamsCPM(params); return ''; });
+  // Single-param arrow without parens: word => word.charAt(0), s => s.trim()
+  code.replace(/\b(\w+)\s*=>/g, (_, param) => { localVariables.add(param.trim()); return ''; });
   // Named function declarations: function foo(email: string)
   code.replace(/function\s+\w*\s*\(([^)]*)\)/g, (_, params) => { addParamsCPM(params); return ''; });
 

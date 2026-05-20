@@ -305,10 +305,11 @@ export class Planner {
             : undefined;
           const sourceRelPath = foundPath ?? `src/components/${sourceFileName}`;
 
-          const hasReadForSource = sortedSteps.some(
+          const readIdx = sortedSteps.findIndex(
             s => s.action === 'read' && s.path && s.path.endsWith(sourceFileName)
           );
-          if (!hasReadForSource) {
+          if (readIdx === -1) {
+            // No READ step at all — inject at position 0
             const maxId = sortedSteps.reduce(
               (m, s) => Math.max(m, typeof s.stepId === 'number' ? s.stepId : 0),
               0
@@ -325,12 +326,21 @@ export class Planner {
               id: `injected-read-${sourceFileName.replace(/\./g, '-')}`,
               dependsOn: [],
             } as ExecutionStep;
-            // Inject at position 0 and renumber
             sortedSteps = [
               injectedRead,
               ...sortedSteps.map(s => ({ ...s, stepNumber: (s.stepNumber ?? 0) + 1 })),
             ];
             console.log(`[Planner] Injected missing decomposition READ step: ${sourceRelPath}`);
+          } else if (readIdx > 0) {
+            // READ exists but isn't first — move it to position 0 so sub-components
+            // are never generated blind. LLM sometimes places READ after WRITEs.
+            const readStep = sortedSteps.splice(readIdx, 1)[0];
+            sortedSteps = [
+              readStep,
+              ...sortedSteps,
+            ];
+            sortedSteps = sortedSteps.map((s, i) => ({ ...s, stepNumber: i + 1 }));
+            console.log(`[Planner] Moved decomposition READ step to front (was at index ${readIdx})`);
           }
 
           // Always align any WRITE step for the source file to the correct path
@@ -417,6 +427,22 @@ export class Planner {
                 s === misplacedSchema ? { ...s, path: corrected, targetFile: corrected } : s
               );
             }
+
+            // Case 3: schema-style file placed in validation/ — redirect to schemas/.
+            // LLM sometimes generates `src/validation/userSchema.ts` even when the workspace
+            // already has a `src/schemas/` directory. Always prefer schemas/ for consistency.
+            const inValidationDir = sortedSteps.find(s => {
+              if (s.action !== 'write' || !s.path) { return false; }
+              return s.path.includes('/validation/')
+                && (s.path.split('/').pop() ?? '') === requestedName;
+            });
+            if (inValidationDir && inValidationDir.path) {
+              const corrected = inValidationDir.path.replace('/validation/', '/schemas/');
+              console.log(`[Planner] Redirected schema validation/ → schemas/: ${inValidationDir.path} → ${corrected}`);
+              sortedSteps = sortedSteps.map(s =>
+                s === inValidationDir ? { ...s, path: corrected, targetFile: corrected } : s
+              );
+            }
           }
           // If the request explicitly names a .ts schema file but the LLM omitted a WRITE
           // step for it, inject a minimal schema WRITE step so it isn't silently skipped.
@@ -449,6 +475,42 @@ export class Planner {
                 ...sortedSteps.slice(insertAt).map(s => ({ ...s, stepNumber: (s.stepNumber ?? 0) + 1 })),
               ];
               console.log(`[Planner] Injected missing schema WRITE step: src/schemas/${requestedName}`);
+            }
+          }
+        }
+
+        // Schema-before-components sort: schema .ts files must precede .tsx components.
+        // The LLM often places schema last (e.g. Step 4 of 5) but components that import
+        // types from schema need schema to exist first. topologicalSort relies on dependsOn
+        // which the LLM rarely populates for schemas. Apply a stable domain-aware sort:
+        // READ → schema .ts → peer .tsx → coordinator .tsx → other writes
+        {
+          const schemaFiles = sortedSteps.filter(s => s.action === 'write' && s.path && /[Ss]chema\.ts$|[Vv]alidation\.ts$/.test(s.path));
+          const compFiles = sortedSteps.filter(s => s.action === 'write' && s.path?.endsWith('.tsx'));
+          if (schemaFiles.length > 0 && compFiles.length > 0) {
+            const schemaIdx = sortedSteps.indexOf(schemaFiles[0]);
+            const firstCompIdx = Math.min(...compFiles.map(s => sortedSteps.indexOf(s)));
+            if (schemaIdx > firstCompIdx) {
+              // Schema comes AFTER a component — wrong order. Re-sort write steps.
+              const compositionSignals = /\b(compos|orchestrat|delegat|integrat|slim|wrap.*compon|assemble)/i;
+              const coordinator = compFiles.find(s => compositionSignals.test(s.description ?? ''))
+                ?? compFiles[compFiles.length - 1];
+              const peerComps = compFiles.filter(s => s !== coordinator);
+              const reads = sortedSteps.filter(s => s.action === 'read');
+              const others = sortedSteps.filter(s =>
+                !reads.includes(s) && !schemaFiles.includes(s) && !compFiles.includes(s)
+              );
+              const reordered = [
+                ...reads,
+                ...schemaFiles,
+                ...peerComps,
+                coordinator,
+                ...others,
+              ];
+              if (reordered.length === sortedSteps.length) {
+                sortedSteps = reordered.map((s, i) => ({ ...s, stepNumber: i + 1 }));
+                console.log('[Planner] Schema-before-components sort: schema moved before component steps');
+              }
             }
           }
         }
@@ -812,6 +874,14 @@ DECOMPOSE STEP DESCRIPTION REQUIREMENTS (each WRITE step description must be spe
   WRONG: "Extract the navigation rendering logic"  ← missing data source
 - Each extracted file WRITE step must specify the contract: what it exports, what it consumes
 - The slimmed source file description MUST state what was delegated
+⚠️ CRITICAL — COMPONENT EXTRACTION PROP CONTRACT: When extracting a sub-component from an existing source file, do NOT invent or name specific prop types, field names, or data shapes in the step description. The correct props are derived by reading the source in the READ step — guessing them before reading corrupts the executor's criteria.
+  WRONG: "Extract UserStats accepting array of stats (posts, followers, join date)"  ← invents fields not in source
+  WRONG: "Extract UserAvatar accepting user object with imageUrl and name"  ← invents props, triggers SCHEMA COUPLING
+  WRONG: "Extract UserStats component, consuming data (follower count, post count) from the user schema"  ← invented fields
+  RIGHT:  "Extract UserStats — renders user statistics derived from the source component"  ← role description only
+  RIGHT:  "Extract UserAvatar — renders the user's avatar display from source"  ← no invented props
+  RIGHT:  "Extract UserProfile sub-components as defined by the source"  ← defers to source
+  BANNED PHRASES in component extraction descriptions: "accepts array", "stats array", "user object", "imageUrl", "avatarUrl", "follower count", "post count", "join date", any specific field names not yet read from source
   RIGHT: "Slim App.tsx — routing delegated to Layout, only renders <BrowserRouter><Layout /></BrowserRouter>"
   WRONG: "Update App.tsx to use new components"  ← doesn't state what changed
 

@@ -875,7 +875,7 @@ export class Executor {
 
         // Detect orchestrator/composition steps: when the step description explicitly says
         // to compose, render, or import the sub-components, sibling imports are intentional.
-        const compositionSignals = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+        const compositionSignals = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
         const isCompositionStep = compositionSignals.test(step.description ?? '') || compositionSignals.test(step.prompt ?? '');
 
         const validator = new ArchitectureValidator();
@@ -1034,7 +1034,7 @@ export class Executor {
     // Runs on every validation pass (including inner correction loop re-validations) so SmartAutoCorrection
     // cannot silently clear only the cn() error and declare victory while prop-drilling persists.
     if (filePath.endsWith('.tsx')) {
-      const compositionSignalsVGC = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+      const compositionSignalsVGC = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
       const isCoordinatorVGC = compositionSignalsVGC.test(step.description ?? '') || compositionSignalsVGC.test(step.prompt ?? '');
       if (isCoordinatorVGC) {
         const hasPropDrilledUserVGC = /(?:^|\s|\()(?:user|currentUser)\s*:\s*User\b/.test(content);
@@ -1063,10 +1063,10 @@ export class Executor {
           // Infer likely scalar props from the filename so the correction message is actionable.
           const compName = filePath.split(/[\\/]/).pop()?.replace(/\.tsx?$/, '') ?? 'Component';
           const scalarExample = /[Aa]vatar/.test(compName)
-            ? `interface ${compName}Props { imageUrl: string; name: string; className?: string; }`
+            ? `interface ${compName}Props { name: string; className?: string; }`
             : /[Ss]tat/.test(compName)
-            ? `interface ${compName}Props { name: string; email: string; age: number; className?: string; }`
-            : `interface ${compName}Props { /* scalar fields from the user object */ className?: string; }`;
+            ? `interface ${compName}Props { email: string; age: number; className?: string; }`
+            : `interface ${compName}Props { /* scalar fields from the source */ className?: string; }`;
           errors.push(
             `❌ SCHEMA COUPLING VIOLATION: this sub-component accepts a 'user' object as a prop. ` +
             `Sub-components must NEVER accept an entire user object — use scalar props instead. ` +
@@ -2054,6 +2054,12 @@ export class Executor {
     if (guardResult) return guardResult;
 
     try {
+      // Clear conversation history before each write step to prevent context accumulation
+      // from previous steps hitting the 32k token limit by steps 4-5 of a decomposition plan.
+      // Each step's prompt is self-contained (includes full source + criteria); no cross-step
+      // history is needed. Correction loops within a step still benefit from the fresh context.
+      this.config.llmClient.clearHistory();
+
       // Stage 2: Multi-step context (previously created files, READ contents, dependency scan)
       const { multiStepContext, sourceReadContents } = await this.buildMultiStepContext(step, workspaceUri);
 
@@ -2127,6 +2133,23 @@ export type ${entityCap} = z.infer<typeof ${schemaVar}>;
 
 export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
 `;
+        }
+      }
+
+      // Stage 4.5c: Pre-validation deterministic fix for bare string classNames.
+      // The validator fires when cn() is imported but className="..." is used bare.
+      // The LLM correction loop cannot reliably fix this — it reintroduces it every pass.
+      // Wrapping deterministically here costs nothing (cn('x') === 'x') and prevents the loop.
+      const importsCnModule = /import\s+\{[^}]*\bcn\b[^}]*\}\s+from\s+['"][^'"]*\/cn['"]/.test(contentAfterPreFix)
+        || /import\s+cn\s+from\s+['"][^'"]*\/cn['"]/.test(contentAfterPreFix);
+      if (importsCnModule && step.path?.match(/\.[jt]sx?$/)) {
+        const before = contentAfterPreFix;
+        contentAfterPreFix = contentAfterPreFix
+          .replace(/\bclassName\s*=\s*"([^"]*)"/g, "className={cn('$1')}")
+          .replace(/\bclassName\s*=\s*'([^']*)'/g, 'className={cn("$1")}')
+          .replace(/\bclassName\s*=\s*\{["']([^"']*)["']\}/g, "className={cn('$1')}");
+        if (contentAfterPreFix !== before) {
+          console.log(`[Executor] Pre-validation: wrapped bare string classNames in cn() for ${step.path}`);
         }
       }
 
@@ -2271,7 +2294,7 @@ export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
 
     // Detect if this step is a composition/orchestrator step — only those should import
     // previously created sibling components. Peer steps must NOT import each other.
-    const compositionSignalsCtx = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const compositionSignalsCtx = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionCtx = compositionSignalsCtx.test(step.description ?? '') || compositionSignalsCtx.test(step.prompt ?? '');
 
     for (const filePath of previouslyCreatedFiles) {
@@ -2377,16 +2400,59 @@ data from the existing hook. DO NOT add any of the following:
 - Additional imports beyond what sub-components need
 - Any functionality not present in the original source
 Correct pattern: 1) call useUser(userId), 2) pass data to <UserAvatar> and <UserStats>, done.
+NAMED HANDLERS: Extract mutation callbacks as named functions placed AFTER guard clauses and AFTER the typedUser cast — do NOT use inline lambdas in JSX, do NOT declare them before the guards.
+  WRONG: const handleUpdate = () => ...; if (loading) return ...;  // handler before guards
+  RIGHT:  if (loading) return ...; if (error) return ...; if (!user) return ...;
+          const typedUser = user as User;
+          const handleUpdate = () => updateUser({ name: 'Updated Name' });
+          <button onClick={handleUpdate}>
+NO DUPLICATE RENDERING: Each sub-component owns its own display. If UserStats renders email and age, the coordinator MUST NOT also render <p>Email: ...</p> or <p>Age: ...</p> directly. Pass the data once to the sub-component and let it handle the display. Rendering the same field in both the sub-component and the coordinator is a duplication bug.
+LAYOUT HIERARCHY: Preserve the source file's visual order in the coordinator JSX:
+  1. Header row (flex container): UserAvatar + <h1>{typedUser.name}</h1> side-by-side
+  2. Statistics section below the header: <UserStats email={typedUser.email} age={typedUser.age} />
+  3. Action buttons at the bottom
+  Do NOT put UserStats in the same flex row as UserAvatar — they serve different roles (identity vs. detail).
+  WRONG: <div className="flex"><UserAvatar .../><UserStats .../></div><h1>...</h1>
+  RIGHT:  <div className="flex items-center"><UserAvatar .../><h1>...</h1></div><UserStats .../>
 
 TYPE SAFETY RULE (mandatory for coordinator): The data hook returns an untyped value (e.g. user: unknown).
-You MUST cast it to the schema type before accessing any properties:
-  import { User } from '../schemas/userSchema';
-  const { user, loading, error } = useUser(userId);
-  const typedUser = user as User;  // ← REQUIRED: cast before accessing .name / .email / .age
-  // Then use typedUser.name, typedUser.email, typedUser.age — NOT user.name, user.email, user.age
-WRONG: <UserAvatar name={user.name} />         ← user is untyped, causes TS2339
-RIGHT:  <UserAvatar name={typedUser.name} />   ← typedUser is User, property access is safe
-NEVER pass a prop that is not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
+Use \`userSchema.safeParse()\` for safe runtime validation — this is the PREFERRED pattern because it uses the schema at runtime (not just as a type) and handles invalid data gracefully:
+  import { userSchema } from '../schemas/userSchema';
+  const { user, loading, error, updateUser } = useUser(userId);
+  if (loading) return <div className="text-sm text-gray-500">Loading...</div>;
+  if (error) return <div className="text-sm text-red-500">{String(error)}</div>;
+  if (!user) return <div className="text-sm text-gray-400">No data</div>;
+  const parsed = userSchema.safeParse(user);                     // ← AFTER null guard
+  if (!parsed.success) return <div className="text-sm text-red-500">Invalid user data</div>;
+  const typedUser = parsed.data;                                 // ← typed as User, no cast needed
+  // Then use typedUser.name, typedUser.email, typedUser.age — all correctly typed via Zod inference
+WARNING:
+  WRONG: User.safeParse(user)         ← TS ERROR — User is a TypeScript type alias, NOT a Zod schema value
+  WRONG: user as User                 ← unsafe cast — bypasses validation; use safeParse instead
+  RIGHT:  userSchema.safeParse(user)  ← userSchema IS the Zod schema object; safeParse is a real runtime method
+Place ALL guard clauses (loading/error/null/parse-fail) BEFORE accessing typedUser.
+NEVER pass a prop not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
+
+NO HARDCODED DATA: Every value passed to sub-components MUST come from the data hook return (typedUser.*).
+Do NOT build arrays with hardcoded labels or values. Build them from actual data.
+WRONG: <UserStats stats={[{label:'Total Users', value:'100'}, {label:'Status', value:'Active'}]} />
+RIGHT:  <UserStats stats={[
+  { label: 'Name',  value: typedUser.name },
+  { label: 'Email', value: typedUser.email },
+  { label: 'Age',   value: typedUser.age },
+]} />
+If a sub-component's prop type is unclear, use the scalar props directly (name={typedUser.name}).
+
+NO INLINE STYLES: The source may have a \`const styles = {...}\` object with inline styles.
+Do NOT copy it into the coordinator. Do NOT use style={{}} or style={styles.foo}.
+Do NOT write cn(styles.foo) — cn() accepts strings only, not CSSProperties objects.
+For loading/error states, use plain JSX with a simple string className (no cn()):
+  if (loading) return <div className="text-sm text-gray-500">Loading...</div>;
+  if (error) return <div className="text-sm text-red-500">{String(error)}</div>;
+NEVER pass text content as a cn() argument — cn() joins CSS class strings only:
+  WRONG: <div className={cn('p-4 bg-yellow-100', 'Loading...')}> — 'Loading...' is not a CSS class
+  RIGHT: <div className="p-4 bg-yellow-100">Loading...</div>
+The coordinator is a thin composition layer — it should have minimal or no styling of its own.
 ` : ''}`
       : '';
 
@@ -2882,7 +2948,7 @@ STRICTLY FORBIDDEN (these will be rejected):
     // dot-access) to avoid collecting style/CSS property names as false data fields.
     // This prevents LLM from using step-description-invented props (imageUrl, totalPosts,
     // followersCount, joinDate) when source only uses name/email/age.
-    const compositionSignalsSub = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+    const compositionSignalsSub = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionSub = compositionSignalsSub.test(step.description ?? '') || compositionSignalsSub.test(step.prompt ?? '');
     const isSubcomponent = step.path!.endsWith('.tsx') && step.path!.includes('/components/') && !isCompositionSub;
     let subcomponentFieldOverrideSection = '';
@@ -3358,6 +3424,10 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     hasJsxInTsError: boolean,
     acceptanceCriteria: string[]
   ): Promise<string> {
+    // Clear history before each correction pass — the correction prompt is fully self-contained
+    // (includes full current content + errors), so prior-pass messages only inflate context.
+    this.config.llmClient.clearHistory();
+
     const formattedErrors = lastCriticalErrors.map((e, i) => {
       if (e.includes('Hook') && e.includes('imported but never called')) {
         const hookMatch = e.match(/Hook '(\w+)'/);
@@ -3419,9 +3489,26 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
     const surgicalResponse = await this.config.llmClient.sendMessage(surgicalPrompt);
     if (!surgicalResponse.success) throw new Error(`Auto-correction attempt failed: ${surgicalResponse.error || 'LLM error'}`);
     const patched = this.applySurgicalValidatorPatches(currentContent, surgicalResponse.message || '');
-    if (patched) return patched;
-    // Patch parsing failed — strip fences and treat as whole-file fallback
+    // Only accept the patch if the extracted content is free of diff markers.
+    // If markers leaked into the extracted block the LLM embedded them inside the code body —
+    // fall through to the rewrite guard below.
+    if (patched && !/<<<SEARCH|>>>REPLACE/.test(patched)) return patched;
+    // Patch parsing failed or produced marker-contaminated content — treat as whole-file fallback.
     let result = surgicalResponse.message || '';
+    // Guard: if the raw response still contains unprocessed diff markers, the LLM returned
+    // a malformed patch (wrong separator, wrong block delimiters, etc.).
+    // Do NOT write diff text to disk — request a clean whole-file rewrite instead.
+    if (/<<<SEARCH|>>>REPLACE/.test(result)) {
+      this.config.onMessage?.(`⚠️ LLM returned malformed diff — requesting whole-file rewrite...`, 'info');
+      this.config.llmClient.clearHistory();
+      const rewritePrompt =
+        `Fix the following errors in: ${step.path}\n\n` +
+        `ERRORS:\n${lastCriticalErrors.map((e, i) => `${i + 1}. ${e}`).join('\n')}\n\n` +
+        `CURRENT CODE:\n${currentContent}\n\n` +
+        `Provide ONLY the complete corrected file. No diffs, no patch format, no SEARCH/REPLACE blocks, no markdown fences.`;
+      const rewriteResp = await this.config.llmClient.sendMessage(rewritePrompt);
+      result = rewriteResp.message || currentContent;
+    }
     const fence = result.match(/```(?:\w+)?\n?([\s\S]*?)\n?```/);
     if (fence) result = fence[1];
     return result;
@@ -3667,6 +3754,21 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
             `OR narrow inline: '(user as User).name'. ` +
             `DO NOT change the hook call or restructure the component. DO NOT use 'any'.\n`
           : '';
+        // TS2304 "Cannot find name 'x'" in a component usually means a prop is declared in the
+        // interface but missing from the function destructuring. The surgical fix patches the usage
+        // site, not the destructuring line — point the LLM at the right fix location.
+        const ts2304Names = tscErrors
+          .filter(e => e.includes('TS2304') || e.includes("Cannot find name"))
+          .map(e => { const m = e.match(/Cannot find name '(\w+)'/); return m?.[1]; })
+          .filter((n): n is string => !!n);
+        const ts2304Hint = ts2304Names.length > 0
+          ? `\nTS2304 FIX (Cannot find name): The variable(s) [${ts2304Names.join(', ')}] are used in the ` +
+            `JSX but are not in scope. They are almost certainly declared in the props interface ` +
+            `but missing from the function's destructuring pattern. ` +
+            `Fix: add [${ts2304Names.join(', ')}] to the destructuring on the function signature line ` +
+            `(e.g. change ({ name, className }) to ({ name, ${ts2304Names.join(', ')}, className })). ` +
+            `DO NOT delete the JSX that uses them — just add them to the destructuring.\n`
+          : '';
         const fixPrompt =
           `The following TypeScript file has compiler errors reported by tsc.\n\n` +
           `FILE: ${step.path}\n\nCURRENT CODE:\n${finalContent}\n\n` +
@@ -3676,6 +3778,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
           `use specific types or 'unknown' instead. ` +
           hookNames +
           ts2339Hint +
+          ts2304Hint +
           `Provide ONLY the corrected code. No explanations, no markdown fences.`;
         const fixResponse = await this.config.llmClient.sendMessage(fixPrompt);
         if (!fixResponse.success || !fixResponse.message?.trim()) break;
@@ -3709,7 +3812,7 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       // from hook-based data fetching to prop-drilling — even if sourceCustomHooks is empty
       // (matchingSource missing). Check structurally: user: User prop without userId: string.
       {
-        const compositionSignalsTsc = /\b(compos|orchestrat|render.*sub|import.*component|slim.*down.*composing|use.*new.*component)/i;
+        const compositionSignalsTsc = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
         const isCoordinatorTsc = (compositionSignalsTsc.test(step.description ?? '') || compositionSignalsTsc.test(step.prompt ?? '')) && step.path?.endsWith('.tsx');
         if (isCoordinatorTsc) {
           const fixIntroducedPropDrilling =
