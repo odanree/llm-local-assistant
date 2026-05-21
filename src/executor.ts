@@ -815,6 +815,49 @@ export class Executor {
    *
    * Returns validation result with errors found
    */
+  /**
+   * Strip named imports from `/schemas/` or `/validation/` paths whose imported
+   * symbols are never referenced in the rest of the file. Mechanically prevents
+   * the dead-User-import auto-correct cascade rooted in the model's Zod-idiom
+   * prior (Runs 46-52 history). Removes only schema-path imports and only the
+   * symbols the body doesn't use; everything else is preserved.
+   */
+  private stripUnusedSchemaImports(content: string): string {
+    const importRegex = /^[ \t]*import\s+(?:type\s+)?\{\s*([^}]+)\s*\}\s+from\s+(['"])([^'"]*(?:\/schemas\/|\/validation\/)[^'"]*)\2\s*;?[ \t]*$/gm;
+    const matches: Array<{ full: string; symbols: string[]; quote: string; path: string }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = importRegex.exec(content)) !== null) {
+      matches.push({
+        full: m[0],
+        symbols: m[1].split(',').map(s => s.trim()).filter(Boolean),
+        quote: m[2],
+        path: m[3],
+      });
+    }
+    if (matches.length === 0) return content;
+
+    let bodyOnly = content;
+    for (const match of matches) {
+      bodyOnly = bodyOnly.replace(match.full, '');
+    }
+
+    let result = content;
+    for (const match of matches) {
+      const usedSymbols = match.symbols.filter(s => {
+        const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`\\b${escaped}\\b`).test(bodyOnly);
+      });
+      if (usedSymbols.length === 0) {
+        result = result.replace(match.full + '\n', '');
+        result = result.replace(match.full, '');
+      } else if (usedSymbols.length < match.symbols.length) {
+        const newImport = `import { ${usedSymbols.join(', ')} } from ${match.quote}${match.path}${match.quote};`;
+        result = result.replace(match.full, newImport);
+      }
+    }
+    return result;
+  }
+
   private async validateGeneratedCode(
     filePath: string,
     content: string,
@@ -2299,6 +2342,29 @@ export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
 
     for (const filePath of previouslyCreatedFiles) {
       try {
+        const isSchemaFile = filePath.endsWith('.ts') && (filePath.includes('/schemas/') || filePath.includes('/validation/'));
+        if (isSchemaFile && isCompositionCtx) {
+          // Coordinator gets a SUMMARIZED schema contract instead of the full file dump.
+          // Full dump would expose `export type User = z.infer<typeof userSchema>;` to the LLM,
+          // which then imports User on its own initiative regardless of prompt prohibitions
+          // (Runs 47/48 failure mode — neither required-imports injection nor prompt warnings
+          // suppressed it). Cannot import what isn't visible.
+          const targetFileName = filePath.substring(filePath.lastIndexOf('/') + 1);
+          const schemaInstanceName = targetFileName.replace(/\.(ts|tsx|js|jsx)$/, '');
+          fileContracts.push(
+            `### ${filePath}\n_Runtime contract: exports \`${schemaInstanceName}\` (Zod schema). ` +
+            `Coordinators MUST import only \`${schemaInstanceName}\` and call \`${schemaInstanceName}.safeParse(user)\` for runtime validation. ` +
+            `Other exports from this file are not for coordinator use._`
+          );
+          const baseStmt = this.calculateImportStatement(step.path!, filePath);
+          if (baseStmt) {
+            const rewritten = baseStmt
+              .replace(/^import \{ [A-Za-z_]\w* \}/, `import { ${schemaInstanceName} }`)
+              .replace(/\s*\/\/.*$/, '');
+            requiredImports.push(rewritten);
+          }
+          continue;
+        }
         const contract = await this.extractFileContract(filePath, workspaceUri);
         fileContracts.push(contract);
         // For non-composition steps: skip .tsx component files in required imports.
@@ -2311,7 +2377,6 @@ export const validate${entityCap} = (data: unknown) => ${schemaVar}.parse(data);
         // For non-composition steps: skip schema/validation .ts files in required imports.
         // Adding them causes the LLM to import the User type from the schema, triggering the
         // SCHEMA COUPLING RULE — only the coordinator should import from schemas directly.
-        const isSchemaFile = filePath.endsWith('.ts') && (filePath.includes('/schemas/') || filePath.includes('/validation/'));
         if (isSchemaFile && !isCompositionCtx) {
           console.log(`[Executor] Skipping schema import for non-composition step: ${filePath}`);
           continue;
@@ -2378,7 +2443,7 @@ keep that hook call in the updated file — do NOT replace it with hardcoded moc
 objects, and do NOT convert the component from data-fetching to prop-drilling.
 The refactor task is structural (decompose into sub-components), NOT a data-source change.
 - WRONG (mock data):    const user = { id: userId, name: "John Doe", email: "..." };
-- WRONG (prop-drilling): export const UserProfile = ({ user }: { user: User }) => { ... }
+- WRONG (prop-drilling): export const UserProfile = ({ user }: { user: <TypeAlias> }) => { ... }
   This removes data-fetching from the component and breaks all existing callers.
 - WRONG (any type): user: any[] — never use 'any' as a prop type. The hook's return type is the source of truth.
 - WRONG (schema validation as replacement): do NOT call userSchema.safeParse() inside the
@@ -2400,10 +2465,12 @@ data from the existing hook. DO NOT add any of the following:
 - Additional imports beyond what sub-components need
 - Any functionality not present in the original source
 Correct pattern: 1) call useUser(userId), 2) pass data to <UserAvatar> and <UserStats>, done.
-NAMED HANDLERS: Extract mutation callbacks as named functions placed AFTER guard clauses and AFTER the typedUser cast — do NOT use inline lambdas in JSX, do NOT declare them before the guards.
+NAMED HANDLERS: Extract mutation callbacks as named functions placed AFTER guard clauses and AFTER the typedUser assignment — do NOT use inline lambdas in JSX, do NOT declare them before the guards.
   WRONG: const handleUpdate = () => ...; if (loading) return ...;  // handler before guards
   RIGHT:  if (loading) return ...; if (error) return ...; if (!user) return ...;
-          const typedUser = user as User;
+          const parsed = userSchema.safeParse(user);
+          if (!parsed.success) return <div className="text-sm text-red-500">Invalid user data</div>;
+          const typedUser = parsed.data;
           const handleUpdate = () => updateUser({ name: 'Updated Name' });
           <button onClick={handleUpdate}>
 NO DUPLICATE RENDERING: Each sub-component owns its own display. If UserStats renders email and age, the coordinator MUST NOT also render <p>Email: ...</p> or <p>Age: ...</p> directly. Pass the data once to the sub-component and let it handle the display. Rendering the same field in both the sub-component and the coordinator is a duplication bug.
@@ -2424,14 +2491,14 @@ Use \`userSchema.safeParse()\` for safe runtime validation — this is the PREFE
   if (!user) return <div className="text-sm text-gray-400">No data</div>;
   const parsed = userSchema.safeParse(user);                     // ← AFTER null guard
   if (!parsed.success) return <div className="text-sm text-red-500">Invalid user data</div>;
-  const typedUser = parsed.data;                                 // ← typed as User, no cast needed
+  const typedUser = parsed.data;                                 // ← typed via z.infer, no cast or annotation needed
   // Then use typedUser.name, typedUser.email, typedUser.age — all correctly typed via Zod inference
 WARNING:
-  WRONG: User.safeParse(user)         ← TS ERROR — User is a TypeScript type alias, NOT a Zod schema value
-  WRONG: user as User                 ← unsafe cast — bypasses validation; use safeParse instead
+  WRONG: <TypeAlias>.safeParse(user)  ← TS ERROR — type aliases (z.infer outputs) have no runtime methods
+  WRONG: user as <TypeAlias>          ← unsafe cast — bypasses validation; use safeParse instead
   RIGHT:  userSchema.safeParse(user)  ← userSchema IS the Zod schema object; safeParse is a real runtime method
 Place ALL guard clauses (loading/error/null/parse-fail) BEFORE accessing typedUser.
-NEVER pass a prop not in the schema type (e.g. imageUrl is NOT in User — do not pass it).
+NEVER pass a prop not in the schema (e.g. imageUrl is NOT in userSchema — do not pass it).
 
 NO HARDCODED DATA: Every value passed to sub-components MUST come from the data hook return (typedUser.*).
 Do NOT build arrays with hardcoded labels or values. Build them from actual data.
@@ -3126,6 +3193,17 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
       return finalContent;
     }
 
+    // Deterministic strip of unused schema-path imports BEFORE validation. The LLM
+    // has a strong Zod-idiom prior for `import { User }` alongside `userSchema` that
+    // prompt scrubbing across Runs 46-52 could not eliminate. Strip is narrow:
+    // only schema/validation-path imports, only symbols the file body never uses.
+    const stripped = this.stripUnusedSchemaImports(content);
+    if (stripped !== content) {
+      this.config.onMessage?.(`🪚 Stripped unused schema-path import(s) from ${step.path}`, 'info');
+      content = stripped;
+      finalContent = stripped;
+    }
+
     this.config.onMessage?.(`🔍 Validating ${step.path}...`, 'info');
 
     const validationResult = await this.validateGeneratedCode(step.path!, content, step, acceptanceCriteria);
@@ -3748,10 +3826,11 @@ Do NOT include: backticks, markdown, explanations, other files, instructions`;
         const ts2339Hint = hasTs2339
           ? `\nTS2339 FIX (Property does not exist on type 'unknown'): ` +
             `The hook returns 'user' typed as 'unknown'. ` +
-            `Fix by importing the User type from the schema and casting: ` +
-            `import { User } from '../schemas/userSchema'; ` +
-            `then use 'const typedUser = user as User;' before accessing properties, ` +
-            `OR narrow inline: '(user as User).name'. ` +
+            `Fix by importing the schema and validating at runtime: ` +
+            `import { userSchema } from '../schemas/userSchema'; ` +
+            `then 'const parsed = userSchema.safeParse(user); if (!parsed.success) return <div>Invalid user data</div>; const typedUser = parsed.data;' before accessing properties. ` +
+            `Place this AFTER the loading/error/!user guards. ` +
+            `DO NOT use 'user as User' (unsafe cast — bypasses validation). ` +
             `DO NOT change the hook call or restructure the component. DO NOT use 'any'.\n`
           : '';
         // TS2304 "Cannot find name 'x'" in a component usually means a prop is declared in the
