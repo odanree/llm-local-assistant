@@ -34,8 +34,9 @@ Engineers who want AI assistance but can't (or won't) ship their proprietary cod
 For a complete history of releases and detailed changelogs, see [CHANGELOG.md](CHANGELOG.md).
 
 **Recent Releases:**
-- **v2.15.0** (Current) - Pipeline Correctness: planner filter over-firing fixed, ArchitectureValidator skip/fix recommendation restored, isAutoFixable unclosed-brace classification fixed, isNonVisualWrapper shared static method
-- **v2.15.0** - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
+- **v2.16.0** (Current) - Greenfield Pipeline + Typing Indicator: chat typing dots persist across plan execution, 8 pipeline fixes (criteria gating, planner phantom READ filter, cn mandate gating, Zustand v3 import rewrite, deterministic tsc pre-pass), marketplace listing rewrite
+- **v2.15.0** - Pipeline Correctness: planner filter over-firing fixed, ArchitectureValidator skip/fix recommendation restored, isAutoFixable unclosed-brace classification fixed, isNonVisualWrapper shared static method
+- **v2.14.0** - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
 - **v2.13.1** - Reactive Orchestrator: marketplace bloat fix (18.06MB → 1.59MB)
 - **v2.13.0** - Reactive Orchestrator: 81.61% coverage, 3,637 tests, self-healing architecture with safety rails
 - **v2.12.0** - Infrastructure: Real-time streaming, interactive prompts, suspend/resume state machine
@@ -656,6 +657,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**v2.15.0** — Local AI Code Orchestrator | 🧪 2,872 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
+**v2.16.0** — Local AI Code Orchestrator | 🧪 2,872 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
 
 Created by [@odanree](https://github.com/odanree)
