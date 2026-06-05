@@ -22,7 +22,7 @@
 Engineers who want AI assistance but can't (or won't) ship their proprietary code to a third-party API: regulated industries, security-conscious teams, offline workflows, and anyone running local LLMs as a matter of principle.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.15.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.16.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
