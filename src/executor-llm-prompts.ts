@@ -182,11 +182,42 @@ export async function generateAcceptanceCriteria(
     // Short-circuit: non-coordinator .tsx sub-components always get deterministic criteria.
     // NEVER let the LLM criteria generator run for sub-components — step descriptions like
     // "accepting a user object" produce criteria that oscillate against SCHEMA COUPLING VIOLATION.
-    const compositionSignalsCriteria = /\b(compos|orchestrat|delegat|integrat|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
+    //
+    // The previous regex matched bare `integrat` which greedily caught phrases like
+    // "integrates with Zustand store" — a description of how a stateful component USES a
+    // store, not of orchestration. False positives there routed greenfield forms into the
+    // COMPOSITION COORDINATOR branch and produced criteria mandating a phantom userSchema
+    // import. `integrat` now requires a following component noun to qualify.
+    const compositionSignalsCriteria = /\b(compos|orchestrat|delegat|integrate[a-z]*\s+(?:sub-?components?|(?:the\s+)?components?)|render.*sub|render.*new.*compon|import.*component|slim|wrap.*compon|assemble|use.*new.*component)/i;
     const isCompositionStepCriteria = compositionSignalsCriteria.test(step.description ?? '') || compositionSignalsCriteria.test(step.prompt ?? '');
+    // Decomposition gate: the sub-component branch below was designed for extracted
+    // children of an existing source file (e.g. UserProfile → Avatar/Stats). Greenfield
+    // creates like "create a LoginForm with Zustand store" must NOT enter this branch —
+    // the deterministic criteria here (props-only, no hooks, no store imports) directly
+    // contradict any stateful form and cause infinite correction loops.
+    //
+    // A READ of a dependency file (store/hook/util) for context is NOT a decomposition;
+    // sourceContent alone is too weak a signal. Treat as decomposition only when EITHER:
+    //   - description uses explicit decomposition verbs (extract/decompose/split), OR
+    //   - sourceContent looks like an actual React UI component (not a store/hook/util)
+    //     — i.e. it defines a function/const component that returns JSX.
+    const decompositionVerbsRe = /\b(extract|decompose|split|break\s+up|break\s+apart|carve\s+out|refactor.*into|move.*out\s+of)\b/i;
+    const hasDecompositionVerb = decompositionVerbsRe.test(step.description ?? '')
+      || decompositionVerbsRe.test(step.prompt ?? '');
+    const sourceLooksLikeComponent = typeof sourceContent === 'string'
+      && sourceContent.trim().length > 0
+      && /(?:function|const)\s+[A-Z]\w+\s*(?:[:=]|\()/.test(sourceContent)
+      && /return\s*\(?\s*<\w/.test(sourceContent);
+    const sourceLooksLikeStoreOrHook = typeof sourceContent === 'string'
+      && (/\bcreate\s*<[^>]*>\s*\(\s*\(\s*set/.test(sourceContent)  // zustand store
+        || /\bcreate\s*\(\s*\(\s*set/.test(sourceContent)
+        || /^\s*export\s+(?:const|function)\s+use[A-Z]/m.test(sourceContent)); // hook
+    const isDecompositionTarget = hasDecompositionVerb
+      || (sourceLooksLikeComponent && !sourceLooksLikeStoreOrHook);
     const isSubcomponentCriteria = step.path?.endsWith('.tsx')
       && step.path?.includes('/components/')
-      && !isCompositionStepCriteria;
+      && !isCompositionStepCriteria
+      && isDecompositionTarget;
     if (isSubcomponentCriteria) {
       const compNameLower = stepBaseName.toLowerCase();
       const isAvatarLike = compNameLower.includes('avatar') || compNameLower.includes('photo') || compNameLower.includes('image');

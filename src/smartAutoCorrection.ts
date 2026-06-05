@@ -477,6 +477,25 @@ export class SmartAutoCorrection {
       }).join('\n');
     }
 
+    // FIRST-D: Zustand v4+ uses a named export; v3 used default. Many models (qwen2.5-coder,
+    // codellama, deepseek) still emit `import create from 'zustand'` from old training data,
+    // producing TS1192 "Module 'zustand' has no default export". Deterministic rewrite to the
+    // named-import form fixes the import AND restores typing for `(set) => ...` (the generic
+    // on create<State> can then properly infer the set parameter type).
+    const hasZustandDefaultImportError = validationErrors.some(e =>
+      /Module\s+['"][^'"]*zustand[^'"]*['"]\s+has no default export/.test(e)
+    );
+    if (hasZustandDefaultImportError || /^import\s+create\s+from\s+['"]zustand['"]/m.test(fixed)) {
+      const before = fixed;
+      fixed = fixed.replace(
+        /^import\s+create\s+from\s+(['"])zustand\1\s*;?$/gm,
+        `import { create } from $1zustand$1;`
+      );
+      if (fixed !== before) {
+        console.log('[SmartAutoCorrection] Rewrote Zustand default import → named import (v4+ syntax)');
+      }
+    }
+
     // FIRST: Merge split React imports (deterministic — no LLM needed)
     fixed = this.mergeSplitReactImports(fixed);
 

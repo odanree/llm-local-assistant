@@ -123,6 +123,58 @@ describe('generateAcceptanceCriteria', () => {
     const result = await generateAcceptanceCriteria(step, source, client, '');
     expect(result[0]).toContain('isLoggedIn');
   });
+
+  // Bug 1 regression: greenfield "create a LoginForm with Zustand" must NOT enter the
+  // sub-component decomposition branch. That branch produces props-only/no-hooks criteria
+  // designed for extracted display sub-components, which contradict any stateful form
+  // and cause infinite correction loops.
+  it('does NOT short-circuit a greenfield LoginForm — calls the LLM', async () => {
+    const client = makeLLMClient('["Uses email and password inputs","Submits via Zustand store"]');
+    const step = makeStep({
+      path: 'src/components/LoginForm.tsx',
+      description: 'Create LoginForm component with email and password inputs, validation using Zustand store',
+    });
+    const result = await generateAcceptanceCriteria(step, undefined, client, '');
+    expect((client.sendMessage as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
+    expect(result).toEqual(['Uses email and password inputs', 'Submits via Zustand store']);
+  });
+
+  it('does NOT short-circuit stats-like name (UserDetails) without sourceContent — calls LLM', async () => {
+    const client = makeLLMClient('["Renders user fields"]');
+    const step = makeStep({
+      path: 'src/components/UserDetails.tsx',
+      description: 'Create UserDetails component',
+    });
+    const result = await generateAcceptanceCriteria(step, undefined, client, '');
+    expect((client.sendMessage as ReturnType<typeof vi.fn>)).toHaveBeenCalledOnce();
+    expect(result).toEqual(['Renders user fields']);
+  });
+
+  it('enters sub-component branch when description has decomposition verbs', async () => {
+    const client = makeLLMClient();
+    const step = makeStep({
+      path: 'src/components/UserStats.tsx',
+      description: 'Extract a UserStats sub-component from UserProfile',
+    });
+    // With no source content but explicit "extract" verb, stats-like branch fires
+    // and returns deterministic criteria without calling the LLM.
+    const result = await generateAcceptanceCriteria(step, undefined, client, '');
+    expect((client.sendMessage as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.join(' ')).toContain('scalar fields');
+  });
+
+  it('enters sub-component branch when sourceContent is present (real decomposition)', async () => {
+    const client = makeLLMClient();
+    const step = makeStep({
+      path: 'src/components/UserStats.tsx',
+      description: 'Create UserStats component',
+    });
+    const source = 'function UserProfile({ user }) { return <div>{user.email} {user.age}</div>; }';
+    const result = await generateAcceptanceCriteria(step, source, client, '');
+    expect((client.sendMessage as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(result.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

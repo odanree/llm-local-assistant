@@ -162,6 +162,13 @@ export class Planner {
       // "verify your work", "view result", "see the output", etc.
       sortedSteps = this.filterNoisyReadSteps(sortedSteps);
 
+      // POST-PROCESS: Drop phantom READ steps for files that do not exist on disk
+      // and are not being created by an earlier WRITE step in this plan. The planner
+      // LLM has a strong prior toward "the existing authStore" READs even on greenfield
+      // creates; without this filter, the failed READ falls back to reading the parent
+      // directory and contaminates downstream WRITEs with hallucinated imports.
+      sortedSteps = this.filterPhantomReads(sortedSteps, workspacePath);
+
       // POST-PROCESS: Normalize READ paths that are missing file extensions.
       // The LLM sometimes emits paths like "src/stores/authStore" without a .ts extension,
       // which triggers PATH_VIOLATION immediately. Store/hook/util files are almost always .ts.
@@ -762,16 +769,18 @@ BENEFIT OF DECOUPLING:
    - WRONG: Step 4: read, Path: "manual verification", Command: "Test button in browser"
    - RIGHT: Add to plan summary: "Manual verification: Test button in browser after execution"
 
-3. **READ IS FOR EXISTING FILES**: Use READ when (a) refactoring a file that already exists, OR (b) a WRITE step needs to import from an EXISTING file whose API must be known first.
-   - DEPENDENCY READ: if the request says "using the existing X" or "integrating with X" and X is an existing file (store, hook, module), add READ X immediately BEFORE the WRITE step that imports it
-   - Example: "using the existing authStore" → Step 1: READ src/stores/authStore.ts, Step 2: WRITE the new component
-   - READ = File must exist before this step
+3. **READ IS FOR EXISTING FILES ONLY**: Use READ when (a) refactoring a file that already exists, OR (b) a WRITE step needs to import from an EXISTING file whose API must be known first.
+   - DEPENDENCY READ — STRICT TRIGGERS: Only emit a READ for a dependency file when the user request EXPLICITLY uses one of these words about that file: "existing", "current", "from the", "modify", "update", "extend", "refactor". A bare mention like "with a Zustand store" or "uses an auth store" does NOT trigger a READ — those describe NEW files the plan must CREATE with a WRITE step.
+   - WRONG: User says "create a login form with a Zustand store" → Step 1: READ src/stores/authStore.ts, Step 2: WRITE LoginForm.tsx. The store is NEW; there is nothing to read.
+   - RIGHT: User says "create a login form with a Zustand store" → Step 1: WRITE src/stores/authStore.ts, Step 2: WRITE src/components/LoginForm.tsx.
+   - RIGHT: User says "create a login form using the existing authStore" → Step 1: READ src/stores/authStore.ts, Step 2: WRITE src/components/LoginForm.tsx.
+   - READ = File must exist on disk before this step
    - WRITE = File is being created or modified
-   - If unsure whether file exists, default to WRITE (executor will handle it)
-   - CRITICAL: A READ step's path MUST NEVER be the same as any WRITE step's path. Reading a file you are also writing is always wrong — the file may not exist yet. A READ step for "authStore" must target the authStore FILE (e.g. src/stores/authStore.ts), NOT the component file being written.
+   - If unsure whether file exists, default to WRITE (never speculate that a file exists).
+   - CRITICAL: A READ step's path MUST NEVER be the same as any WRITE step's path. A READ step for a store must target the store FILE (e.g. src/stores/SomeStore.ts), NOT the component file being written.
    - EXTENSION REQUIRED: Every path MUST end with a file extension (.ts, .tsx, .js, .json, etc.).
-     WRONG: src/stores/authStore        WRONG: src/store/authStore
-     RIGHT:  src/stores/authStore.ts    (store files are almost always .ts, not .tsx)
+     WRONG: src/stores/SomeStore        WRONG: src/store/SomeStore
+     RIGHT:  src/stores/SomeStore.ts    (store files are almost always .ts, not .tsx)
 
 STEP TYPES & CONSTRAINTS (MANDATORY):
 - write: Requires path and content. Creates or modifies files.
@@ -1420,6 +1429,70 @@ Output ONLY the JSON array. No markdown. No explanations. Nothing else.`;
     const dropped = steps.length - filtered.length;
     if (dropped > 0) {
       console.log(`[Planner] Filtered ${dropped} noise READ step(s) with no downstream write`);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Drop READ steps that target files which do not exist on disk and are not being
+   * created by an earlier WRITE step in this plan.
+   *
+   * The planner LLM has a strong prior toward emitting a READ step for "the existing
+   * authStore" even when the user is creating a new auth store from scratch. When the
+   * READ fails with ENOENT, the executor's recovery falls back to reading the parent
+   * directory listing — which becomes contaminated context for the next WRITE step,
+   * causing the WRITE to import from the phantom file. The validator then loops trying
+   * to fix an import that can never resolve.
+   *
+   * This filter is a deterministic backstop: if the file doesn't exist and no earlier
+   * WRITE in this plan creates it, the READ is phantom — drop it.
+   */
+  private filterPhantomReads(steps: ExecutionStep[], workspacePath?: string): ExecutionStep[] {
+    if (!workspacePath) { return steps; }
+
+    const fs = require('fs');
+    const nodePath = require('path');
+
+    // Track files that earlier WRITE steps will create — those are valid future-reads
+    // (though in practice such a sequence is rare and usually wrong).
+    const willBeWrittenByEarlierStep = new Set<string>();
+
+    const filtered = steps.filter((step) => {
+      if (step.action !== 'read' || !step.path) {
+        if (step.action === 'write' && step.path) {
+          willBeWrittenByEarlierStep.add(step.path.replace(/\\/g, '/'));
+        }
+        return true;
+      }
+
+      const normalizedPath = step.path.replace(/\\/g, '/');
+
+      // Allow READ if an earlier WRITE in this plan creates the file
+      if (willBeWrittenByEarlierStep.has(normalizedPath)) { return true; }
+
+      // Check whether the file exists on disk
+      const absolutePath = nodePath.isAbsolute(normalizedPath)
+        ? normalizedPath
+        : nodePath.join(workspacePath, normalizedPath);
+      let exists = false;
+      try {
+        exists = fs.existsSync(absolutePath);
+      } catch {
+        exists = false;
+      }
+
+      if (!exists) {
+        console.log(`[Planner] Dropped phantom READ: ${normalizedPath} (file does not exist on disk, no earlier WRITE creates it)`);
+        return false;
+      }
+
+      return true;
+    });
+
+    const dropped = steps.length - filtered.length;
+    if (dropped > 0) {
+      console.log(`[Planner] Filtered ${dropped} phantom READ step(s) targeting non-existent files`);
     }
 
     return filtered;
