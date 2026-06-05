@@ -21,6 +21,80 @@ const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 let tokenBuffer = '';
 let bufferTimeout: ReturnType<typeof setTimeout> | null = null;
 
+// Typing indicator — visible whenever the system is actively working. Each inbound
+// message keeps it alive for IDLE_MS; if no message arrives in that window, the
+// system is considered idle and the dots fade out. Multi-step plan executions
+// stream messages continuously so the indicator persists end-to-end.
+let typingIndicator: HTMLElement | null = null;
+let typingIdleTimer: ReturnType<typeof setTimeout> | null = null;
+// Idle safety net only — primary hide signals are explicit (completion/failure text,
+// buttons appearing). This window must cover the longest possible LLM call silence
+// during auto-correction. Gemma 26B correction passes can sit silent for 15–20s
+// between messages. 60s gives genuine headroom without lingering forever on a true
+// network hang.
+const TYPING_IDLE_MS = 60000;
+
+// Phrases that mark end-of-work — the system has finished processing the user's
+// last input and is now idle. Detected in addMessage text to hide the dots
+// immediately rather than waiting for the idle timer to fire.
+const TASK_COMPLETE_PATTERNS = [
+  /Plan execution complete/i,
+  /Plan execution failed/i,
+  /steps?\s+succeeded/i,
+  /Step\s+\d+\s+failed after \d+ retry/i,
+  /All files validated for integration consistency/i,
+];
+
+function looksLikeTaskTerminator(text: string | undefined): boolean {
+  if (!text) { return false; }
+  return TASK_COMPLETE_PATTERNS.some(re => re.test(text));
+}
+
+function showTypingIndicator(): void {
+  if (!typingIndicator) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'msg assistant';
+    wrapper.setAttribute('data-type', 'typing');
+    const dots = document.createElement('div');
+    dots.className = 'typing-indicator';
+    dots.appendChild(document.createElement('span'));
+    dots.appendChild(document.createElement('span'));
+    dots.appendChild(document.createElement('span'));
+    wrapper.appendChild(dots);
+    chat.appendChild(wrapper);
+    typingIndicator = wrapper;
+    chat.scrollTop = chat.scrollHeight;
+  }
+  resetTypingIdleTimer();
+}
+
+function hideTypingIndicator(): void {
+  if (typingIdleTimer) { clearTimeout(typingIdleTimer); typingIdleTimer = null; }
+  if (!typingIndicator) { return; }
+  typingIndicator.remove();
+  typingIndicator = null;
+}
+
+function resetTypingIdleTimer(): void {
+  if (typingIdleTimer) { clearTimeout(typingIdleTimer); }
+  typingIdleTimer = setTimeout(() => {
+    typingIdleTimer = null;
+    if (typingIndicator) {
+      typingIndicator.remove();
+      typingIndicator = null;
+    }
+  }, TYPING_IDLE_MS);
+}
+
+// Re-anchor the indicator at the bottom of chat — call after appending any new
+// content so the dots remain the visually-last element.
+function reanchorTypingIndicator(): void {
+  if (!typingIndicator) { return; }
+  if (chat.lastElementChild !== typingIndicator) {
+    chat.appendChild(typingIndicator);
+  }
+}
+
 // Command history + tab autocomplete
 let commandHistory: string[] = [];
 let historyIndex = -1;
@@ -39,15 +113,29 @@ const COMMANDS = [
 
 function flushTokenBuffer(): void {
   if (!tokenBuffer) { bufferTimeout = null; return; }
-  const msgs = chat.children;
-  if (msgs.length === 0 || (msgs[msgs.length - 1] as HTMLElement).className === 'msg user') {
-    const div = document.createElement('div');
-    div.className = 'msg assistant';
-    div.setAttribute('data-type', 'streaming');
-    chat.appendChild(div);
+
+  // Find the active streaming target — most recent assistant streaming div,
+  // skipping the typing indicator. If we hit a user message first, no current
+  // streaming context exists and we create a new one. Without this, tokens
+  // would accidentally be appended into the typing indicator's wrapper div.
+  let target: HTMLElement | null = null;
+  for (let i = chat.children.length - 1; i >= 0; i--) {
+    const el = chat.children[i] as HTMLElement;
+    if (el === typingIndicator) { continue; }
+    if (el.getAttribute('data-type') === 'streaming') { target = el; break; }
+    if (el.classList.contains('user')) { break; }
   }
-  const last = chat.children[chat.children.length - 1] as HTMLElement;
-  last.textContent = (last.textContent ?? '') + tokenBuffer;
+  if (!target) {
+    target = document.createElement('div');
+    target.className = 'msg assistant';
+    target.setAttribute('data-type', 'streaming');
+    if (typingIndicator) {
+      chat.insertBefore(target, typingIndicator);
+    } else {
+      chat.appendChild(target);
+    }
+  }
+  target.textContent = (target.textContent ?? '') + tokenBuffer;
   chat.scrollTop = chat.scrollHeight;
   tokenBuffer = '';
   bufferTimeout = null;
@@ -64,6 +152,7 @@ function sendMessage(): void {
   const msg = inputEl.value.trim();
   if (!msg) { return; }
   appendUserMessage(msg);
+  showTypingIndicator();
   commandHistory.push(msg);
   historyIndex = commandHistory.length;
   inputEl.value = '';
@@ -192,6 +281,7 @@ copyBtn.addEventListener('click', () => {
 
 clearBtn.addEventListener('click', () => {
   chat.innerHTML = '';
+  typingIndicator = null;
   vscode.postMessage({ command: 'clearChat' });
 });
 
@@ -239,6 +329,26 @@ function renderMarkdown(text: string): HTMLElement {
 
 window.addEventListener('message', (e: MessageEvent<InboundMsg>) => {
   const msg = e.data;
+
+  // Indicator visibility rules:
+  //   1. Buttons appear (addMessage/question with options) → system waiting on user → hide
+  //   2. addMessage text OR error matches a task-terminator phrase → system done → hide
+  //   3. Anything else (including non-terminal step failures that will be retried) →
+  //      keep alive, reset idle timer
+  //
+  // Note: a step failure mid-plan ("Step 2 failed. Retrying...") is NOT terminal — the
+  // executor will retry. Only the final "Plan execution complete/failed" addMessage is.
+  const hasButtons = (msg.command === 'addMessage' || msg.command === 'question') &&
+                     ((msg as AddMessageMsg).options?.length ?? 0) > 0;
+  const addMsg = msg.command === 'addMessage' ? (msg as AddMessageMsg) : null;
+  const isTerminator = addMsg !== null &&
+                       (looksLikeTaskTerminator(addMsg.text) ||
+                        looksLikeTaskTerminator(addMsg.error));
+  if (hasButtons || isTerminator) {
+    hideTypingIndicator();
+  } else if (typingIndicator) {
+    resetTypingIdleTimer();
+  }
 
   switch (msg.command) {
     case 'streamToken': {
@@ -289,12 +399,17 @@ window.addEventListener('message', (e: MessageEvent<InboundMsg>) => {
             btn.className = 'question-btn';
             btn.textContent = APPROVAL_LABELS[option] ?? option;
             btn.style.marginRight = '8px';
-            btn.onclick = () => vscode.postMessage({ command: 'buttonPressed', buttonName: option });
+            btn.onclick = () => {
+              // System about to start working again — bring the dots back.
+              showTypingIndicator();
+              vscode.postMessage({ command: 'buttonPressed', buttonName: option });
+            };
             btns.appendChild(btn);
           } else if (option.startsWith('Execute: ')) {
             const cmd = option.slice('Execute: '.length);
             btns.appendChild(makeCommandRow(cmd, () => {
               appendUserMessage(cmd);
+              showTypingIndicator();
               commandHistory.push(cmd);
               historyIndex = commandHistory.length;
               vscode.postMessage({ command: 'sendMessage', text: cmd });
@@ -321,7 +436,12 @@ window.addEventListener('message', (e: MessageEvent<InboundMsg>) => {
       const em = document.createElement('em');
       em.textContent = msg.text;
       div.appendChild(em);
-      chat.appendChild(div);
+      // Keep the typing indicator anchored at the bottom — slot status messages above it.
+      if (typingIndicator) {
+        chat.insertBefore(div, typingIndicator);
+      } else {
+        chat.appendChild(div);
+      }
       chat.scrollTop = chat.scrollHeight;
       break;
     }
@@ -340,14 +460,18 @@ window.addEventListener('message', (e: MessageEvent<InboundMsg>) => {
       for (const option of msg.options) {
         if (option.startsWith('Execute: ')) {
           const cmd = option.slice('Execute: '.length);
-          btns.appendChild(makeCommandRow(cmd,
-            () => vscode.postMessage({ command: 'answerQuestion', answer: '🔧 Refactor Now' })
-          ));
+          btns.appendChild(makeCommandRow(cmd, () => {
+            showTypingIndicator();
+            vscode.postMessage({ command: 'answerQuestion', answer: '🔧 Refactor Now' });
+          }));
         } else {
           const btn = document.createElement('button');
           btn.className = 'question-btn';
           btn.textContent = option;
-          btn.onclick = () => vscode.postMessage({ command: 'answerQuestion', answer: option });
+          btn.onclick = () => {
+            showTypingIndicator();
+            vscode.postMessage({ command: 'answerQuestion', answer: option });
+          };
           btns.appendChild(btn);
         }
       }
@@ -358,6 +482,9 @@ window.addEventListener('message', (e: MessageEvent<InboundMsg>) => {
       break;
     }
   }
+
+  // Keep the dots visually last so they read as "more is coming".
+  reanchorTypingIndicator();
 });
 
 inputEl.focus();
