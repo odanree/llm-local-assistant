@@ -1,21 +1,33 @@
-# LLM Local Assistant - VS Code Extension
+# LLM Local Assistant — a 100% local Copilot alternative for VS Code
+
+**Private, offline AI coding assistant.** Multi-step planner, AST-based refactor analyzer, and RAG codebase context — running entirely on your own machine via Ollama, LM Studio, or vLLM. Your code never leaves your hardware.
+
+<!-- TODO: replace with hero.gif — see docs/MARKETING_ASSETS.md for capture spec -->
+![Demo](docs/assets/hero.gif)
+
+### Why this over Copilot / Cursor / Continue
+
+- **Truly local.** No API keys, no telemetry, no cloud calls. Works on a plane. Works behind an air-gapped corporate firewall.
+- **Multi-step, not single-shot.** `/plan` decomposes a task into validated steps with cross-file contract checks — not a one-prompt code dump that breaks on the next file.
+- **Knows your codebase.** Incremental RAG embeddings persist to disk; only changed files re-index. Grounds generation in *your* code, not generic patterns.
+
+### Install
+
+1. **Start a local LLM** — `ollama run qwen2.5-coder` (or LM Studio / vLLM)
+2. **Install** — VS Code → Extensions → search **"LLM Local Assistant"**
+3. **Try it** — open chat, run `/plan create a login form with Zustand`
+
+### Who it's for
+
+Engineers who want AI assistance but can't (or won't) ship their proprietary code to a third-party API: regulated industries, security-conscious teams, offline workflows, and anyone running local LLMs as a matter of principle.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.15.0-blue.svg)](CHANGELOG.md)
-[![VS Code Version](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
-[![Node Version](https://img.shields.io/badge/node-%5E18.0.0-green)](https://nodejs.org/)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant)
+[![Version](https://img.shields.io/badge/version-2.16.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
-[![Code Style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
-[![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
+[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
+[![TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 
-**Local AI Code Orchestrator** - Multi-step planning, architecture validation, RAG-powered codebase context, and Zustand/React Hook auditing. 2,872 tests. All running on your local LLM with zero cloud dependencies.
-
-**🚀 v2.15.0: Pipeline Correctness — planner filters, architecture validator, and auto-correction hardened**
-
-> **Latest Release**: v2.15.0 - **Pipeline Correctness**: Fixed four deterministic bugs in the planner step filters, architecture validator recommendation logic, and `isAutoFixable` classification. `isNonVisualWrapper` extracted to shared static method. 2,872 tests passing.
-> **Advanced Capabilities**: Real-time Streaming, Interactive Prompts, RAG Embeddings, Suspend/Resume State Machine, Three-Layer Self-Healing
-> **Status**: 2,872 tests passing. Production-ready with enterprise reliability.
+> ⭐ **Like it? Please leave a rating on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=odanree.llm-local-assistant).** Three ratings unlock the next install bump.
 
 ## 📚 Release History
 

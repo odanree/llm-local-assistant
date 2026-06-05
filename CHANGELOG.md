@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0] - 2026-06-05 - "Greenfield Pipeline + Typing Indicator"
+
+### Added
+- **Typing indicator** in the chat panel — animated bouncing dots show whenever the system is actively working. Appears on user send and approval button clicks; persists across status updates, stream tokens, and per-step results during multi-step plan execution; hides immediately when buttons appear (waiting on user) or on terminator phrases (`Plan execution complete`, `Plan execution failed`, etc.). 60s idle safety net for catch-all hangs.
+
+### Bug Fixes — pipeline correctness for greenfield writes
+
+**Criteria generation (`executor-llm-prompts.ts`)**
+- Gated the sub-component criteria short-circuit on actual decomposition intent (description verbs OR sourceContent that looks like a React UI component, NOT a Zustand store or hook). Previously any `.tsx` under `/components/` entered the deterministic display-component branch, producing props-only/no-hooks criteria that contradicted any stateful form and caused infinite correction loops.
+- Tightened the composition-signal regex so bare `integrate` no longer matches. `integrates with Zustand store` no longer falsely enters the COMPOSITION COORDINATOR branch and demands a phantom `userSchema` import.
+
+**Criteria persistence (`executor.ts`)**
+- Acceptance criteria are now cached on `step.metadata` and reused across the outer retry loop. Previously the architect regenerated criteria on every retry, producing contradictory requirements between rounds (e.g. "use the store" → "no store imports") that no model could satisfy.
+
+**Planner — phantom READ filter (`planner.ts`)**
+- Tightened the `DEPENDENCY READ` rule in the planner prompt — READ steps now require explicit "existing/current/from the/modify/update/extend/refactor" wording. Removed the canonical `authStore.ts` example that was priming the model to emit phantom READs.
+- New `filterPhantomReads` post-processor deterministically drops READ steps for files that don't exist on disk AND aren't created by an earlier WRITE step in the same plan.
+
+**cn() mandate (`executor.ts`)**
+- Gated the hardcoded `import { cn } from '@/utils/cn'` prompt section on `projectProfile.cnUtilityPath` being set. On workspaces with no cn utility, the prompt now explicitly tells the LLM NOT to import cn and to use plain string classNames.
+
+**Deterministic auto-correction (`smartAutoCorrection.ts`, `executor.ts`)**
+- `SmartAutoCorrection.fixCommonPatterns` learns the Zustand v3 → v4 import rewrite: `import create from 'zustand'` → `import { create } from 'zustand'`. Many coder models still emit the v3 default-import syntax from old training data, producing `TS1192` plus cascading implicit-any errors.
+- Wired `SmartAutoCorrection` as a deterministic pre-pass into the post-write tsc correction loop. Previously only ran in the pre-write validator path.
+
+### Changed
+- **Marketplace listing** — short description rewritten to lead with differentiation (private, offline, multi-step planner, RAG). Added `Machine Learning` category. Keywords expanded from 7 to 20 covering Ollama / LM Studio / vLLM / Copilot-alternative discovery searches.
+- **README hero** — one-line pitch, hero GIF, three differentiators vs Copilot/Cursor/Continue, three-step install, "who it's for" section, marketplace rating CTA. Badges trimmed from 9 → 5.
+
 ## [2.15.0] - 2026-04-15 - "Pipeline Correctness"
 
 ### Refactor

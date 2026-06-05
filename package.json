@@ -1,8 +1,8 @@
 {
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
-  "description": "Local LLM code generation, refactoring, and explanation",
-  "version": "2.15.0",
+  "description": "Private offline AI coding assistant for Ollama / LM Studio / vLLM — multi-step planner, AST refactor analyzer, RAG context. Zero cloud, zero telemetry.",
+  "version": "2.16.0",
   "publisher": "odanree",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -14,18 +14,32 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Machine Learning",
     "Programming Languages",
     "Formatters",
     "Other"
   ],
   "keywords": [
-    "llm",
-    "local",
+    "ollama",
+    "lm-studio",
+    "vllm",
+    "llama",
+    "copilot-alternative",
+    "github-copilot-alternative",
+    "private-ai",
+    "local-ai",
+    "local-llm",
+    "ai-pair-programming",
+    "code-completion",
     "code-generation",
     "refactoring",
-    "chatgpt",
-    "claude",
-    "offline"
+    "rag",
+    "codellama",
+    "qwen",
+    "deepseek",
+    "mistral",
+    "offline",
+    "llm"
   ],
   "activationEvents": [
     "onStartupFinished"

@@ -213,6 +213,26 @@ export function getWebviewContent(): string {
             background: transparent;
             color: #e0e0e0;
           }
+          .typing-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 0;
+          }
+          .typing-indicator span {
+            width: 5px;
+            height: 5px;
+            background: var(--vscode-textLink-foreground, #4ec9b0);
+            border-radius: 50%;
+            display: inline-block;
+            animation: typing-bounce 1.2s infinite ease-in-out both;
+          }
+          .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+          .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+          @keyframes typing-bounce {
+            0%, 80%, 100% { transform: scale(0.5); opacity: 0.3; }
+            40%           { transform: scale(1);   opacity: 1;   }
+          }
           .question-buttons {
             display: flex;
             flex-direction: column;
