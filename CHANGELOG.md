@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.0] - 2026-06-05 - "Quiet Activation"
+
+### Changed
+- **Lazy workspace context initialization** — RAG scan, embedding generation, and project-profile detection are now deferred until the user opens the chat panel for the first time. Previously the extension fired all three on `onStartupFinished`, which:
+  - Pinged the user's Ollama endpoint on every VS Code launch (annoying for users who installed the extension but don't actively use it).
+  - Wrote `.lla-embeddings.json`, `.lla-index.json`, and `.lla-profile.json` into every workspace on first activation, often appearing as unexpected diffs.
+  - Spent CPU/memory on workspaces the user never intended to operate on with the assistant.
+- The new `ensureWorkspaceContextReady()` helper is called from `openLLMChat()` and is idempotent — reopening the chat panel does not retrigger the scan.
+
 ## [2.16.0] - 2026-06-05 - "Greenfield Pipeline + Typing Indicator"
 
 ### Added

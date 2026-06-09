@@ -117,11 +117,62 @@ function postChatMessage(message: any): void {
 }
 
 /**
+ * Run the workspace scan + embedding + profile detection exactly once per session.
+ * Called lazily on the first chat open. Subsequent calls are a no-op so reopening
+ * the chat panel doesn't trigger another full scan.
+ *
+ * Kept non-blocking: returns immediately after kicking off the pipeline so the
+ * chat panel renders without waiting for embeddings. RAG-dependent commands wait
+ * on codebaseIndex.waitForReady() internally.
+ */
+let workspaceContextInitialized = false;
+function ensureWorkspaceContextReady(): void {
+  if (workspaceContextInitialized) { return; }
+  if (!wsFolder || !codebaseIndex || !embeddingClient || !projectProfile) { return; }
+  workspaceContextInitialized = true;
+
+  const cacheFile = path.join(wsFolder.fsPath, '.lla-embeddings.json');
+  const metaFile = path.join(wsFolder.fsPath, '.lla-index.json');
+  const profileCacheFile = path.join(wsFolder.fsPath, '.lla-profile.json');
+
+  // Load cached state synchronously — no network needed.
+  codebaseIndex.loadMetadataIndex(metaFile);
+  const profileCached = projectProfile.load(profileCacheFile);
+  if (!profileCached) {
+    console.log('[Extension] No project profile cache — will scan after codebase index');
+  }
+
+  console.log('[Extension] First chat open — scanning workspace + embedding...');
+  codebaseIndex.scan().then(async () => {
+    console.log('[Extension] ✅ Codebase index scanned');
+    codebaseIndex!.saveMetadataIndex(metaFile);
+    const restored = codebaseIndex!.loadEmbeddingsCache(cacheFile);
+    if (restored > 0) {
+      console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
+    }
+    await projectProfile!.scan();
+    projectProfile!.save(profileCacheFile);
+    return codebaseIndex!.embedAll(embeddingClient!);
+  }).then(() => {
+    codebaseIndex!.saveEmbeddingsCache(cacheFile);
+    codebaseIndex!.setEmbeddingClient(embeddingClient!);
+    codebaseIndex!.markReady();
+    console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text) — incremental indexing active');
+  }).catch((err: unknown) => {
+    console.warn('[Extension] RAG embed skipped (Ollama unavailable?):', err);
+    codebaseIndex!.markReady();
+  });
+}
+
+/**
  * Open the LLM Chat panel
  */
 function openLLMChat(context: vscode.ExtensionContext): void {
   console.log('[openChat] Starting chat panel...');
-  
+
+  // Trigger the workspace scan + embedding pipeline on first open. Idempotent.
+  ensureWorkspaceContextReady();
+
   if (chatPanel) {
     console.log('[openChat] Chat panel already exists, revealing...');
     chatPanel.reveal(vscode.ViewColumn.Two);
@@ -1943,44 +1994,15 @@ export async function activate(context: vscode.ExtensionContext) {
   wsFolder = getActiveWorkspace();
   console.log(`[Extension] Workspace: ${wsFolder?.fsPath || 'none'}`);
 
-  // RAG: scan + embed the workspace index in the background (non-blocking)
+  // RAG / project profile: instantiate lightweight handles only. The actual workspace
+  // scan + embedding + profile detection is deferred to first chat open — running on
+  // every VS Code startup spins up Ollama and writes `.lla-embeddings.json` /
+  // `.lla-index.json` / `.lla-profile.json` files into the user's repo even when they
+  // never invoke the assistant. Lazy init keeps the extension dormant until used.
   if (wsFolder) {
     embeddingClient = new EmbeddingClient({ endpoint: config.endpoint });
     codebaseIndex = new CodebaseIndex(wsFolder.fsPath);
-    const cacheFile = path.join(wsFolder.fsPath, '.lla-embeddings.json');
-    const metaFile = path.join(wsFolder.fsPath, '.lla-index.json');
-    // Fast startup: load metadata index immediately (no Ollama needed)
-    codebaseIndex.loadMetadataIndex(metaFile);
-
-    // ProjectProfile: load from cache immediately, re-scan after codebase scan
     projectProfile = new ProjectProfile(wsFolder.fsPath);
-    const profileCacheFile = path.join(wsFolder.fsPath, '.lla-profile.json');
-    const profileCached = projectProfile.load(profileCacheFile);
-    if (!profileCached) {
-      console.log('[Extension] No project profile cache — will scan after codebase index');
-    }
-
-    codebaseIndex.scan().then(async () => {
-      console.log('[Extension] ✅ Codebase index scanned');
-      codebaseIndex.saveMetadataIndex(metaFile);
-      const restored = codebaseIndex.loadEmbeddingsCache(cacheFile);
-      if (restored > 0) {
-        console.log(`[Extension] ✅ Loaded ${restored} cached embeddings — skipping re-embed for those files`);
-      }
-      // Re-scan profile after every codebase scan (picks up new Tailwind config, cn utility, etc.)
-      await projectProfile.scan();
-      projectProfile.save(profileCacheFile);
-      return codebaseIndex.embedAll(embeddingClient);
-    }).then(() => {
-      codebaseIndex.saveEmbeddingsCache(cacheFile);
-      codebaseIndex.setEmbeddingClient(embeddingClient);
-      codebaseIndex.markReady();
-      console.log('[Extension] ✅ Codebase embeddings ready (nomic-embed-text) — incremental indexing active');
-    }).catch((err: unknown) => {
-      console.warn('[Extension] RAG embed skipped (Ollama unavailable?):', err);
-      // Even if embedAll fails, mark ready so waitForReady() doesn't hang forever
-      codebaseIndex.markReady();
-    });
   }
 
   // Initialize Executor (Planner is now created per-command, stateless)
