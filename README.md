@@ -22,7 +22,7 @@
 Engineers who want AI assistance but can't (or won't) ship their proprietary code to a third-party API: regulated industries, security-conscious teams, offline workflows, and anyone running local LLMs as a matter of principle.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.16.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.17.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-2872%20passing-brightgreen.svg)](https://github.com/odanree/llm-local-assistant/actions)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-blue)](https://code.visualstudio.com/)
 [![TypeScript](https://img.shields.io/badge/language-TypeScript-blue.svg)](https://www.typescriptlang.org/)
@@ -34,7 +34,8 @@ Engineers who want AI assistance but can't (or won't) ship their proprietary cod
 For a complete history of releases and detailed changelogs, see [CHANGELOG.md](CHANGELOG.md).
 
 **Recent Releases:**
-- **v2.16.0** (Current) - Greenfield Pipeline + Typing Indicator: chat typing dots persist across plan execution, 8 pipeline fixes (criteria gating, planner phantom READ filter, cn mandate gating, Zustand v3 import rewrite, deterministic tsc pre-pass), marketplace listing rewrite
+- **v2.17.0** (Current) - Quiet Activation: RAG scan, embeddings, and project-profile detection now defer until the chat panel is opened. Installing the extension no longer writes `.lla-embeddings.json` / `.lla-index.json` / `.lla-profile.json` or pings Ollama for users who haven't tried it yet.
+- **v2.16.0** - Greenfield Pipeline + Typing Indicator: chat typing dots persist across plan execution, 8 pipeline fixes (criteria gating, planner phantom READ filter, cn mandate gating, Zustand v3 import rewrite, deterministic tsc pre-pass), marketplace listing rewrite
 - **v2.15.0** - Pipeline Correctness: planner filter over-firing fixed, ArchitectureValidator skip/fix recommendation restored, isAutoFixable unclosed-brace classification fixed, isNonVisualWrapper shared static method
 - **v2.14.0** - Lean Edition: Babel removed, 0 runtime deps, .vsix 1.06MB → 79KB, SOLID improvements, RAG incremental indexing
 - **v2.13.1** - Reactive Orchestrator: marketplace bloat fix (18.06MB → 1.59MB)
@@ -657,6 +658,6 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**v2.16.0** — Local AI Code Orchestrator | 🧪 2,872 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
+**v2.17.0** — Local AI Code Orchestrator | 🧪 2,872 Tests Passing | 📦 79KB Install | 🔒 100% Private | Zero-Telemetry
 
 Created by [@odanree](https://github.com/odanree)
