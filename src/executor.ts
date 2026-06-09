@@ -161,6 +161,26 @@ export class Executor {
   }
 
   /**
+   * Rebind the workspace-scoped handles after the user opens the chat panel in
+   * a different folder (multi-root workspace). Cheaper than tearing down and
+   * recreating the executor; the per-command planner is stateless so no in-flight
+   * state needs to be preserved.
+   */
+  public setWorkspaceContext(opts: {
+    workspace: vscode.Uri;
+    codebaseIndex?: CodebaseIndex;
+    embeddingClient?: EmbeddingClient;
+    projectProfile?: ProjectProfile;
+    gitClient?: GitClient;
+  }): void {
+    this.config.workspace = opts.workspace;
+    if (opts.codebaseIndex)   { this.config.codebaseIndex   = opts.codebaseIndex;   this.codebaseIndex = opts.codebaseIndex; }
+    if (opts.embeddingClient) { this.config.embeddingClient = opts.embeddingClient; }
+    if (opts.projectProfile)  { this.config.projectProfile  = opts.projectProfile;  }
+    if (opts.gitClient)       { this.config.gitClient       = opts.gitClient;       }
+  }
+
+  /**
    * Return the actual source of a previously-written file as a typed code block.
    * Showing real code is more reliable than regex-derived summaries: the LLM sees
    * the exact export names, hook signatures, and prop types it needs to integrate with.

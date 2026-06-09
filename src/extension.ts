@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import { LLMClient, LLMConfig } from './llmClient';
 import { GitClient } from './gitClient';
-import { Planner } from './planner';
+import { Planner, TaskPlan } from './planner';
 import GatekeeperValidator from './gatekeeperValidator';
 import { Executor } from './executor';
 import CodebaseIndex, { EmbeddingClient } from './codebaseIndex';
@@ -104,7 +104,7 @@ function getLLMConfig(): LLMConfig {
  */
 function postChatMessage(message: any): void {
   chatPanel?.webview.postMessage(message);
-  
+
   // Store in chat history for persistence across panel switches
   // Skip storage if message has skipHistory flag (e.g., startup help text)
   if (message.command === 'addMessage' && message.text && !message.skipHistory) {
@@ -117,23 +117,79 @@ function postChatMessage(message: any): void {
 }
 
 /**
- * Run the workspace scan + embedding + profile detection exactly once per session.
- * Called lazily on the first chat open. Subsequent calls are a no-op so reopening
- * the chat panel doesn't trigger another full scan.
- *
- * Kept non-blocking: returns immediately after kicking off the pipeline so the
- * chat panel renders without waiting for embeddings. RAG-dependent commands wait
- * on codebaseIndex.waitForReady() internally.
+ * Render a generated plan in the chat: store the plan on the panel so /execute
+ * can find it, format the steps into the standard markdown block, and post the
+ * Execute Plan / Reject Plan buttons. Single source of truth for all entry points
+ * that produce a plan (direct /plan, RAG-aware /plan, multi-root workspace picker).
  */
-let workspaceContextInitialized = false;
-function ensureWorkspaceContextReady(): void {
-  if (workspaceContextInitialized) { return; }
-  if (!wsFolder || !codebaseIndex || !embeddingClient || !projectProfile) { return; }
-  workspaceContextInitialized = true;
+function postPlanReady(plan: TaskPlan): void {
+  if (chatPanel) {
+    (chatPanel as any)._currentPlan = plan;
+  }
+  const planDisplay = plan.steps.map(s =>
+    `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
+    `${s.description}\n` +
+    (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
+    `✅ Expected: ${s.expectedOutcome}`
+  ).join('\n\n');
+  postChatMessage({
+    command: 'addMessage',
+    text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
+    success: true,
+    options: ['Execute', 'Reject'],
+  });
+}
 
-  const cacheFile = path.join(wsFolder.fsPath, '.lla-embeddings.json');
-  const metaFile = path.join(wsFolder.fsPath, '.lla-index.json');
-  const profileCacheFile = path.join(wsFolder.fsPath, '.lla-profile.json');
+/** Companion to postPlanReady — surfaces a plan generation failure in the chat. */
+function postPlanError(err: unknown): void {
+  postChatMessage({
+    command: 'addMessage',
+    error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
+    success: false,
+  });
+}
+
+/**
+ * Run the workspace scan + embedding + profile detection on first chat open.
+ * Tracks which workspace folder the cached scan belongs to — if the user opens
+ * the chat in a different folder (multi-root workspace), the handles get rebuilt
+ * to point at the new folder before the scan kicks off.
+ *
+ * Non-blocking: returns immediately after starting the pipeline. RAG-dependent
+ * commands wait on codebaseIndex.waitForReady() internally.
+ */
+let initializedWorkspacePath: string | null = null;
+
+function ensureWorkspaceContextReady(context: vscode.ExtensionContext): void {
+  // Re-evaluate active workspace at open-time so multi-root setups pick the folder
+  // the user is currently working in, not whichever folder was active at startup.
+  const activeWorkspace = getActiveWorkspace();
+  if (!activeWorkspace) { return; }
+
+  const targetPath = activeWorkspace.fsPath;
+  if (initializedWorkspacePath === targetPath) { return; }
+
+  // Workspace folder differs from the one we initialized at activation (or this is
+  // the first open). Rebuild the per-workspace handles and rebind the executor to
+  // them — the executor's RAG resolver and project-profile constraints are
+  // workspace-scoped, so stale references would silently target the wrong tree.
+  wsFolder = activeWorkspace;
+  codebaseIndex = new CodebaseIndex(targetPath);
+  projectProfile = new ProjectProfile(targetPath);
+  if (executor) {
+    executor.setWorkspaceContext({
+      workspace: activeWorkspace,
+      codebaseIndex,
+      embeddingClient: embeddingClient ?? undefined,
+      projectProfile,
+      gitClient: new GitClient(activeWorkspace),
+    });
+  }
+  initializedWorkspacePath = targetPath;
+
+  const cacheFile = path.join(targetPath, '.lla-embeddings.json');
+  const metaFile = path.join(targetPath, '.lla-index.json');
+  const profileCacheFile = path.join(targetPath, '.lla-profile.json');
 
   // Load cached state synchronously — no network needed.
   codebaseIndex.loadMetadataIndex(metaFile);
@@ -170,8 +226,10 @@ function ensureWorkspaceContextReady(): void {
 function openLLMChat(context: vscode.ExtensionContext): void {
   console.log('[openChat] Starting chat panel...');
 
-  // Trigger the workspace scan + embedding pipeline on first open. Idempotent.
-  ensureWorkspaceContextReady();
+  // Trigger the workspace scan + embedding pipeline on first open. Idempotent
+  // for the same workspace, but rebuilds handles + executor if the user opens
+  // chat in a different folder within a multi-root workspace.
+  ensureWorkspaceContextReady(context);
 
   if (chatPanel) {
     console.log('[openChat] Chat panel already exists, revealing...');
@@ -360,32 +418,9 @@ function openLLMChat(context: vscode.ExtensionContext): void {
                     ragContext                  // RAG: relevant files for this task
                   );
                   
-                  // Store plan for /execute command
-                  (chatPanel as any)._currentPlan = plan;
-
-                  // Format plan for display
-                  let planDisplay = plan.steps
-                    .map(
-                      (s) =>
-                        `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
-                        `${s.description}\n` +
-                        (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
-                        `✅ Expected: ${s.expectedOutcome}`
-                    )
-                    .join('\n\n');
-
-                  postChatMessage({
-                    command: 'addMessage',
-                    text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
-                    success: true,
-                    options: ['Execute', 'Reject'],
-                  });
+                  postPlanReady(plan);
                 } catch (err) {
-                  postChatMessage({
-                    command: 'addMessage',
-                    error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
-                    success: false,
-                  });
+                  postPlanError(err);
                 }
               } catch (err) {
                 postChatMessage({
@@ -1698,35 +1733,14 @@ ${fileContent}
                   projectContext              // CONTEXT-AWARE: Pass project context
                 );
 
-                (chatPanel as any)._currentPlan = plan;
+                postPlanReady(plan);
 
-                // Format plan for display
-                let planDisplay = plan.steps
-                  .map(
-                    (s) =>
-                      `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n` +
-                      `${s.description}\n` +
-                      (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
-                      `✅ Expected: ${s.expectedOutcome}`
-                  )
-                  .join('\n\n');
-
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Use \`/execute\` to run this plan, or \`/reject\` to discard it.`,
-                  success: true,
-                });
-                
                 // Clear state
                 (chatPanel as any)._planFolders = null;
                 (chatPanel as any)._pendingPlanRequest = null;
                 break;
               } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Error: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
+                postPlanError(err);
                 (chatPanel as any)._planFolders = null;
                 (chatPanel as any)._pendingPlanRequest = null;
                 break;
@@ -1878,24 +1892,9 @@ ${fileContent}
                   projectContext,
                   ragContext
                 );
-                (chatPanel as any)._currentPlan = plan;
-                const planDisplay = plan.steps.map(s =>
-                  `**[Step ${s.stepNumber}] ${s.action.toUpperCase()}**\n${s.description}\n` +
-                  (s.targetFile ? ` Target: \`${s.targetFile}\`\n` : '') +
-                  `✅ Expected: ${s.expectedOutcome}`
-                ).join('\n\n');
-                postChatMessage({
-                  command: 'addMessage',
-                  text: `✨ Plan generated successfully!\n\n${planDisplay}\n\n**Next:** Click a button below or use \`/execute\` to run, \`/reject\` to discard.`,
-                  success: true,
-                  options: ['Execute', 'Reject'],
-                });
+                postPlanReady(plan);
               } catch (err) {
-                postChatMessage({
-                  command: 'addMessage',
-                  error: `Error generating plan: ${err instanceof Error ? err.message : String(err)}`,
-                  success: false,
-                });
+                postPlanError(err);
               }
             }
             break;
