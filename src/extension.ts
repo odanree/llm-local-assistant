@@ -95,6 +95,7 @@ function getLLMConfig(): LLMConfig {
     contextWindow: config.get('contextWindow', 32768), // num_ctx: Gemma 4 e4b supports 128K; Ollama default is ~2K
     timeout: config.get('timeout', 120000), // 120s timeout for planning operations
     stream: true,
+    durationThresholdMs: config.get('durationThresholdMs', 60000),
   };
 }
 

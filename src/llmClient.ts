@@ -37,6 +37,7 @@ export interface LLMConfig {
   stream?: boolean;
   architectureRules?: string; // Project-specific rules (.cursorrules content)
   onContextUsage?: (warning: string) => void; // called when prompt tokens ≥ 85% of contextWindow
+  durationThresholdMs?: number; // append elapsed-time line to message when run exceeds this; 0/undefined disables
 }
 
 export interface LLMResponse {
@@ -46,6 +47,15 @@ export interface LLMResponse {
   tokensUsed?: number;
   promptTokens?: number;      // input tokens used (from usage.prompt_tokens)
   contextUsage?: string;      // always set: "X / Y tokens (N%)" — warning prefix added at ≥85%
+  durationMs?: number;        // wall-clock elapsed for the LLM call
+}
+
+function formatDuration(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) { return `${totalSec}s`; }
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
 export type StreamCallback = (token: string, complete: boolean) => Promise<void>;
@@ -197,6 +207,7 @@ export class LLMClient {
     userMessage: string,
     onToken: StreamCallback
   ): Promise<LLMResponse> {
+    const startTs = Date.now();
     try {
       // Add user message to history
       this.conversationHistory.push({ role: 'user', content: userMessage });
@@ -302,18 +313,33 @@ export class LLMClient {
         }
       }
 
+      // Add CLEAN assistant response to history first — duration suffix is display-only
+      // and must not leak into conversationHistory (model would see its own elapsed time).
+      this.conversationHistory.push({ role: 'assistant', content: assistantMessage });
+
+      const durationMs = Date.now() - startTs;
+      const threshold = this.config.durationThresholdMs ?? 0;
+      const shouldShowDuration = threshold > 0 && durationMs >= threshold;
+
+      // Emit the duration as a final visible token so callers that build display text
+      // from streamed tokens (the common pattern) pick it up automatically.
+      if (shouldShowDuration) {
+        const suffix = `\n\n⏱️ Took ${formatDuration(durationMs)}`;
+        await onToken(suffix, false);
+      }
+
       // Signal completion
       await onToken('', true);
 
-      // Add assistant response to history
-      this.conversationHistory.push({ role: 'assistant', content: assistantMessage });
-
       return {
         success: true,
-        message: assistantMessage,
+        message: shouldShowDuration
+          ? `${assistantMessage}\n\n⏱️ Took ${formatDuration(durationMs)}`
+          : assistantMessage,
         tokensUsed: streamPromptTokens,
         promptTokens: streamPromptTokens,
         contextUsage: this.checkContextUsage(streamPromptTokens),
+        durationMs,
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -335,6 +361,7 @@ export class LLMClient {
    * Send message without streaming
    */
   async sendMessage(userMessage: string): Promise<LLMResponse> {
+    const startTs = Date.now();
     try {
       // Add user message to history
       this.conversationHistory.push({ role: 'user', content: userMessage });
@@ -402,16 +429,23 @@ export class LLMClient {
         throw new Error('No response from LLM server');
       }
 
-      // Add assistant response to history
+      // Add assistant response to history (kept clean — duration suffix is display-only)
       this.conversationHistory.push({ role: 'assistant', content: message });
 
       const promptTokens = (data.usage?.prompt_tokens as number) || 0;
+      const durationMs = Date.now() - startTs;
+      const threshold = this.config.durationThresholdMs ?? 0;
+      const displayMessage = threshold > 0 && durationMs >= threshold
+        ? `${message}\n\n⏱️ Took ${formatDuration(durationMs)}`
+        : message;
+
       return {
         success: true,
-        message,
+        message: displayMessage,
         tokensUsed: (data.usage?.total_tokens as number) || 0,
         promptTokens,
         contextUsage: this.checkContextUsage(promptTokens),
+        durationMs,
       };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
