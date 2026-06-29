@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.3] - 2026-06-28 - "Grounded /explain + Duration Display"
+
+### Added
+- **Elapsed-time suffix on long-running LLM calls** — responses that exceed `llm-assistant.durationThresholdMs` (default 60000ms, set 0 to disable) now end with `⏱️ Took 1m 23s`. Applied at the streaming layer so every command (`/explain`, `/plan`, `/refactor`, chat) picks it up automatically. The duration is display-only — `conversationHistory` stays clean so the model never sees its own elapsed time in follow-up turns.
+- **`/explain` now inlines relative-import sources** into the prompt, framed as ground truth the model must cite from. Previously it sent only the target file's contents and the model guessed at imported symbols — confidently misidentifying Kysely as Drizzle ORM in testing. Only follows `./` / `../` imports (skips bare module specifiers), one level deep, per-file cap 4KB, total cap 12KB.
+- **Grounding rules** appended to the `/explain` prompt: cite specific identifiers from the source, omit unsupported claims, prefer concrete analogies (e.g. tRPC is RPC, not "GraphQL-like"), name exported types and how downstream code consumes them. Eliminates the "in a real system…" speculation and surfaces details like `AppRouter` that prior runs missed.
+
+### Changed
+- **Import inliner ranks specs by signal before applying the byte budget** — types/schemas → db/trpc/hooks/config → index files → sibling components. When the cap fills on import-heavy files (e.g. a React component pulling in ~10 siblings), low-signal sibling components drop first, so hooks and types reliably make it into the prompt.
+- **`llm-assistant.maxTokens` default 4096 → 2048**, with a clearer description. Generation time is linear in output length; 2048 fits a full `/explain` on every file tested without truncation.
+
+### Measured impact (Gemma 4 e4b on local Ollama)
+| File | Before | After |
+|---|---|---|
+| `router.ts` (small) | 4m 7s, drifted to "Drizzle ORM" | **13s**, correctly identifies Kysely + cites `AppRouter` |
+| `App.tsx` (import-heavy) | ~4 min, truncated mid-section | **3m 6s**, complete output, cites concrete `useDeferredValue` / `filterAndEnrichTickets` details |
+
 ## [2.17.0] - 2026-06-05 - "Quiet Activation"
 
 ### Changed
