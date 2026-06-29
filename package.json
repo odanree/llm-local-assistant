@@ -2,7 +2,7 @@
   "name": "llm-local-assistant",
   "displayName": "LLM Local Assistant",
   "description": "Private offline AI coding assistant for Ollama / LM Studio / vLLM — multi-step planner, AST refactor analyzer, RAG context. Zero cloud, zero telemetry.",
-  "version": "2.17.0",
+  "version": "2.18.3",
   "publisher": "odanree",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -99,10 +99,10 @@
         },
         "llm-assistant.maxTokens": {
           "type": "integer",
-          "default": 4096,
+          "default": 2048,
           "minimum": 256,
           "maximum": 32000,
-          "description": "Maximum tokens in LLM response",
+          "description": "Maximum tokens in LLM response. Lower = faster generation but risks truncating mid-sentence on long answers. 2048 fits a full /explain on most files; raise for very large outputs.",
           "scope": "resource"
         },
         "llm-assistant.contextWindow": {
@@ -118,6 +118,13 @@
           "default": 60000,
           "minimum": 5000,
           "description": "Request timeout in milliseconds",
+          "scope": "resource"
+        },
+        "llm-assistant.durationThresholdMs": {
+          "type": "integer",
+          "default": 60000,
+          "minimum": 0,
+          "description": "Append elapsed time to a response when it took longer than this many milliseconds. Set to 0 to disable.",
           "scope": "resource"
         }
       }
