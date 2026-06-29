@@ -113,8 +113,8 @@ async function readRelativeImports(
   fileContent: string,
   opts: { perFileBytes?: number; totalBytes?: number } = {}
 ): Promise<Array<{ relPath: string; content: string }>> {
-  const PER_FILE = opts.perFileBytes ?? 8192;
-  const TOTAL = opts.totalBytes ?? 32768;
+  const PER_FILE = opts.perFileBytes ?? 4096;
+  const TOTAL = opts.totalBytes ?? 12288;
 
   const importRe = /\bfrom\s+['"](\.\.?\/[^'"]+)['"]/g;
   const specs = new Set<string>();
@@ -122,6 +122,17 @@ async function readRelativeImports(
   while ((m = importRe.exec(fileContent)) !== null) {
     specs.add(m[1]);
   }
+
+  // Prioritize imports whose source actually grounds the explanation:
+  // type defs, db/trpc clients, hooks, config — over sibling UI components,
+  // which only bloat prefill without telling the model anything new.
+  const score = (spec: string): number => {
+    if (/\b(types?|schema|interfaces?|model|enums?)\b/i.test(spec)) { return 0; }
+    if (/\b(db|database|client|trpc|api|hooks?|config|constants?|utils?|lib)\b/i.test(spec)) { return 1; }
+    if (/\bindex\b/.test(spec)) { return 2; }
+    return 3; // likely a sibling component (Header.tsx, TicketList.tsx, etc.)
+  };
+  const ranked = [...specs].sort((a, b) => score(a) - score(b));
 
   const parentDir = vscode.Uri.joinPath(fileUri, '..');
   const out: Array<{ relPath: string; content: string }> = [];
@@ -135,7 +146,7 @@ async function readRelativeImports(
     ];
   };
 
-  for (const spec of specs) {
+  for (const spec of ranked) {
     if (totalBytes >= TOTAL) { break; }
     for (const candidate of candidatesFor(spec)) {
       const uri = vscode.Uri.joinPath(parentDir, candidate);
