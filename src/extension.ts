@@ -99,6 +99,64 @@ function getLLMConfig(): LLMConfig {
   };
 }
 
+/**
+ * Resolve relative-import paths from a source file and read their contents.
+ * Reduces hallucinations in /explain by letting the model see the actual code
+ * behind imported symbols rather than guessing from method names.
+ *
+ * - Only follows `./` or `../` imports (skips bare module specifiers).
+ * - One level deep — does not recurse into imports-of-imports.
+ * - Per-file cap and total cap protect the context window.
+ */
+async function readRelativeImports(
+  fileUri: vscode.Uri,
+  fileContent: string,
+  opts: { perFileBytes?: number; totalBytes?: number } = {}
+): Promise<Array<{ relPath: string; content: string }>> {
+  const PER_FILE = opts.perFileBytes ?? 8192;
+  const TOTAL = opts.totalBytes ?? 32768;
+
+  const importRe = /\bfrom\s+['"](\.\.?\/[^'"]+)['"]/g;
+  const specs = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = importRe.exec(fileContent)) !== null) {
+    specs.add(m[1]);
+  }
+
+  const parentDir = vscode.Uri.joinPath(fileUri, '..');
+  const out: Array<{ relPath: string; content: string }> = [];
+  let totalBytes = 0;
+
+  const candidatesFor = (spec: string): string[] => {
+    if (/\.(ts|tsx|js|jsx|mts|cts)$/.test(spec)) { return [spec]; }
+    return [
+      `${spec}.ts`, `${spec}.tsx`, `${spec}.js`, `${spec}.jsx`,
+      `${spec}/index.ts`, `${spec}/index.tsx`, `${spec}/index.js`,
+    ];
+  };
+
+  for (const spec of specs) {
+    if (totalBytes >= TOTAL) { break; }
+    for (const candidate of candidatesFor(spec)) {
+      const uri = vscode.Uri.joinPath(parentDir, candidate);
+      try {
+        const data = await vscode.workspace.fs.readFile(uri);
+        let text = new TextDecoder('utf-8').decode(data);
+        if (text.length > PER_FILE) {
+          text = `${text.slice(0, PER_FILE)}\n…(truncated, ${text.length - PER_FILE} more bytes)`;
+        }
+        out.push({ relPath: candidate, content: text });
+        totalBytes += text.length;
+        break;
+      } catch {
+        // try next candidate extension
+      }
+    }
+  }
+
+  return out;
+}
+
 
 /**
  * Helper to post message to chat and store in history
@@ -1502,10 +1560,19 @@ Keep the response focused and practical.`;
               try {
                 const data = await vscode.workspace.fs.readFile(fileUri);
                 const fileContent = new TextDecoder('utf-8').decode(data);
-                
+
+                // Inline relative-import sources so the model can cite concrete code
+                // (e.g. resolve "is this Kysely or Drizzle?") instead of guessing.
+                const imports = await readRelativeImports(fileUri, fileContent);
+                const importsStr = imports.length > 0
+                  ? `\n\nReferenced local modules (resolved from relative imports — use these as ground truth, do not guess):\n${
+                      imports.map(i => `\n— ${i.relPath} —\n\`\`\`\n${i.content}\n\`\`\``).join('\n')
+                    }\n`
+                  : '';
+
                 // Build explanation prompt with context
                 const contextStr = llmClient.getHistory().length > 0
-                  ? `\n\nConversation context:\n${llmClient.getHistory().slice(-4).map((m: any) => 
+                  ? `\n\nConversation context:\n${llmClient.getHistory().slice(-4).map((m: any) =>
                       `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`
                     ).join('\n')}\n`
                   : '';
@@ -1517,7 +1584,13 @@ Keep the response focused and practical.`;
 4. Any notable edge cases or error handling
 5. How it fits into the larger system (if context available)
 
-Keep the explanation clear and concise, suitable for a developer reviewing the code.${contextStr}
+Keep the explanation clear and concise, suitable for a developer reviewing the code.
+
+Grounding rules — follow strictly:
+- Cite specific identifiers, line numbers, or exact tokens from the provided source. Do not generalize or describe what code of this kind "typically" does.
+- If a claim is not directly supported by the source or the referenced local modules below, omit it. No speculation about authentication, error-code mapping, or hypothetical real-world variants.
+- Prefer concrete analogies over loose ones (e.g. tRPC is RPC, not "GraphQL-like").
+- When relevant, name exported types and how downstream code consumes them.${contextStr}${importsStr}
 
 Code from ${relPath}:
 \`\`\`
